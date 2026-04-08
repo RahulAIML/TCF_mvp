@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from ai_service import analyze_learn_content, evaluate_learn_answer, extract_text_from_image_bytes, generate_more_exercises
+from tcf_ai_service import analyze_learn_content, evaluate_learn_answer, extract_text_from_image_bytes, generate_more_exercises
 from auth import get_optional_user
 from database import get_db
 from models import LearnSession, User

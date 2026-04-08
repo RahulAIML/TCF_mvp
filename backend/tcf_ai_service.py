@@ -1,35 +1,49 @@
 """
 TCF Canada AI Service
 =====================
-Parallel AI service for the TCF Canada exam platform.
-Mirrors the structure of ai_service.py but with TCF-specific:
-  - Reading: 39 questions, 4 CEFR-levelled parts (A1→C2)
-  - Listening: 39 questions, progressive A1→C2 difficulty
+Standalone AI service for the TCF Canada exam platform.
+  - Reading: 39 questions, 4 CEFR-levelled parts (A1->C2)
+  - Listening: 39 questions, progressive A1->C2 difficulty, with TTS audio
   - Writing: 3 tasks (short message, description, opinion+justification)
   - Speaking: 3 task types (basic_interaction, role_play, opinion)
-
-The legacy ai_service.py module is kept for shared helper utilities.
 """
 from __future__ import annotations
 
 import hashlib
+import io
+import logging
 import os
 import random
 import re
 import uuid
+import wave
 from collections import deque
 from typing import Any, Dict, Tuple
 
 import google.generativeai as genai
+import requests
 from dotenv import load_dotenv
-from pydantic import ValidationError
+from google import genai as genai_client
+from google.genai import types
 
 from schemas import TcfExamQuestion, ListeningQuestionResponse
 
 load_dotenv()
 
+logger = logging.getLogger("tcf.tts")
+_ELEVENLABS_SESSION = requests.Session()
+
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("OPENAI_API_KEY")
+API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID")
+GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
+ELEVENLABS_OUTPUT_FORMAT = os.getenv("ELEVENLABS_OUTPUT_FORMAT", "mp3_22050_32")
+ELEVENLABS_OPTIMIZE_LATENCY = int(os.getenv("ELEVENLABS_OPTIMIZE_LATENCY", "4"))
+AUDIO_STORAGE_PATH = os.getenv(
+    "AUDIO_STORAGE_PATH",
+    os.path.join(os.path.dirname(__file__), "data", "audio")
+)
 
 # ── Shared scenario pools (reused for variety) ──────────────────────────────
 
@@ -295,10 +309,10 @@ TCF_ROLE_PLAYS = [
 ]
 
 TCF_OPINION_TOPICS = [
-    "Le teletravail est-il benefique pour tous les travailleurs e",
-    "Faut-il interdire les voitures en centre-ville pour reduire la pollution e",
-    "Les reseaux sociaux ont-ils un impact globalement positif sur la societe e",
-    "Devrait-on rendre les transports en commun entierement gratuits e",
+    "Le teletravail est-il benefique pour tous les travailleurs ?",
+    "Faut-il interdire les voitures en centre-ville pour reduire la pollution ?",
+    "Les reseaux sociaux ont-ils un impact globalement positif sur la societe ?",
+    "Devrait-on rendre les transports en commun entierement gratuits ?",
 ]
 
 
@@ -324,6 +338,8 @@ _tcf_listening_hashes_global: deque[str] = deque(maxlen=200)
 _tcf_listening_hashes_all_global: deque[str] = deque(maxlen=200)
 _tcf_listening_script_hashes_global: deque[str] = deque(maxlen=200)
 
+_TCF_PASSAGE_HASHES: deque[str] = deque(maxlen=25)
+
 _last_domain: str | None = None
 
 
@@ -332,8 +348,101 @@ _last_domain: str | None = None
 def _ensure_api_key() -> None:
     if not API_KEY:
         raise RuntimeError(
-            "Missing API key. Set GEMINI_API_KEY (preferred) or OPENAI_API_KEY in backend/.env."
+            "Missing API key. Set GEMINI_API_KEY in backend/.env."
         )
+
+
+def _ensure_elevenlabs_config() -> None:
+    if not ELEVENLABS_API_KEY:
+        raise RuntimeError("Missing ELEVENLABS_API_KEY for ElevenLabs TTS.")
+    if not ELEVENLABS_VOICE_ID:
+        raise RuntimeError("Missing ELEVENLABS_VOICE_ID for ElevenLabs TTS.")
+
+
+def _generate_gemini_tts_audio(script: str, question_number: int, session_id: str | None) -> str:
+    _ensure_api_key()
+    os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
+    client = genai_client.Client(api_key=API_KEY)
+    try:
+        response = client.models.generate_content(
+            model=GEMINI_TTS_MODEL,
+            contents=script,
+            config=types.GenerateContentConfig(
+                response_modalities=["AUDIO"],
+                speech_config=types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                            voice_name="Kore"
+                        )
+                    )
+                )
+            )
+        )
+    except Exception as error:
+        logger.error("Gemini TTS request failed: %s", error)
+        raise RuntimeError(f"Gemini TTS failed with model '{GEMINI_TTS_MODEL}': {error}") from error
+
+    try:
+        inline_data = response.candidates[0].content.parts[0].inline_data
+        audio_bytes = inline_data.data
+    except Exception as error:
+        logger.error("Gemini TTS returned no audio data: %s", error)
+        raise RuntimeError("Gemini TTS returned no audio data.") from error
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(24000)
+        wf.writeframes(audio_bytes)
+    wav_bytes = buffer.getvalue()
+
+    file_name = f"tcf_audio_{question_number}_{session_id or 'global'}_{uuid.uuid4().hex[:8]}.wav"
+    file_path = os.path.join(AUDIO_STORAGE_PATH, file_name)
+    with open(file_path, "wb") as audio_file:
+        audio_file.write(wav_bytes)
+
+    logger.info("Gemini TTS success: bytes=%s file=%s", len(wav_bytes), file_name)
+    return f"/audio/{file_name}"
+
+
+def _generate_tts_audio(script: str, question_number: int, session_id: str | None) -> str:
+    """Generate TTS audio. Tries ElevenLabs first, falls back to Gemini TTS."""
+    if not ELEVENLABS_API_KEY or not ELEVENLABS_VOICE_ID:
+        return _generate_gemini_tts_audio(script, question_number, session_id)
+
+    os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
+    payload = {
+        "text": script,
+        "model_id": "eleven_multilingual_v2",
+        "optimize_streaming_latency": ELEVENLABS_OPTIMIZE_LATENCY,
+        "output_format": ELEVENLABS_OUTPUT_FORMAT
+    }
+    headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
+
+    logger.info(
+        "ElevenLabs TTS request: question=%s session=%s chars=%s",
+        question_number, session_id or "global", len(script)
+    )
+
+    try:
+        response = _ELEVENLABS_SESSION.post(url, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+    except requests.RequestException as error:
+        logger.warning("ElevenLabs TTS failed: %s. Falling back to Gemini TTS.", error)
+        return _generate_gemini_tts_audio(script, question_number, session_id)
+
+    file_name = f"tcf_audio_{question_number}_{session_id or 'global'}_{uuid.uuid4().hex[:8]}.mp3"
+    file_path = os.path.join(AUDIO_STORAGE_PATH, file_name)
+    with open(file_path, "wb") as audio_file:
+        audio_file.write(response.content)
+
+    logger.info(
+        "ElevenLabs TTS success: status=%s bytes=%s file=%s",
+        response.status_code, len(response.content), file_name
+    )
+    return f"/audio/{file_name}"
 
 
 def _freshness_token() -> str:
@@ -448,6 +557,23 @@ def _normalize_listening_question(payload: Dict[str, Any]) -> Dict[str, Any]:
         "options": options,
         "correct_answer": normalized_answer,
         "explanation": str(payload.get("explanation", "")).strip()
+    }
+
+
+def _normalize_passage_question(payload: Dict[str, Any]) -> Dict[str, Any]:
+    options_raw = payload.get("options", [])
+    options = [str(item) for item in options_raw][:4]
+    while len(options) < 4:
+        options.append("Option manquante")
+    options = [_normalize_option(opt, i) for i, opt in enumerate(options)]
+    raw_answer = str(payload.get("correct_answer", "")).strip().upper()
+    match = re.match(r"([A-D])", raw_answer)
+    normalized_answer = match.group(1) if match else "A"
+    return {
+        "question": str(payload.get("question", "")).strip(),
+        "options": options,
+        "correct_answer": normalized_answer,
+        "explanation": str(payload.get("explanation", "")).strip(),
     }
 
 
@@ -664,8 +790,6 @@ Regles :
   "explanation": "..."
 }}
 """
-
-    from ai_service import _generate_tts_audio  # reuse shared TTS function
 
     last_error: Exception | None = None
     for _ in range(3):
@@ -903,8 +1027,6 @@ def generate_tcf_speaking_reply(
     Generate an AI examiner reply for TCF Canada speaking.
     task_type: 'basic_interaction' | 'role_play' | 'opinion'
     """
-    from ai_service import _generate_tts_audio  # reuse TTS
-
     if task_type == "basic_interaction":
         scenario = random.choice(TCF_BASIC_INTERACTIONS)
         system_context = (
@@ -987,7 +1109,7 @@ def evaluate_tcf_speaking_conversation(
 
     prompt = f"""Tu es evaluateur TCF Canada pour l'expression orale.
 
-Type de teche : {task_label}
+Type de tache : {task_label}
 
 Conversation :
 {history_text}
@@ -1013,8 +1135,8 @@ EXEMPLE DE SORTIE (ne pas reproduire cet exemple) :
 }}
 
 Regles :
-- Scores entiers 0e10.
-- 3 e 5 points de feedback concrets.
+- Scores entiers 0 a 10.
+- 3 a 5 points de feedback concrets.
 - improved_response : exemple d'une meilleure reponse du candidat.
 - Sortie : JSON valide uniquement.
 """
@@ -1040,3 +1162,343 @@ Regles :
         "feedback": feedback,
         "improved_response": str(payload.get("improved_response", "")).strip(),
     }
+
+
+# ── Shared utility functions (dictionary, passage, learn) ───────────────────
+
+def explain_text(text: str) -> Dict[str, str]:
+    clean = text.strip()
+    prompt = f"""Explique ce texte francais clairement pour un apprenant TCF.
+
+Retourne un JSON avec :
+meaning
+explanation
+translation
+example
+
+Texte : {clean}
+
+Regles :
+- meaning : 1 a 2 phrases simples en francais.
+- explanation : explication courte en francais, vocabulaire accessible.
+- translation : courte traduction en anglais.
+- example : phrase d'exemple simple en francais.
+- Sortie : JSON valide uniquement.
+"""
+    payload = _generate_json(prompt, temperature=0.4)
+    return {
+        "meaning": str(payload.get("meaning", "")).strip(),
+        "explanation": str(payload.get("explanation", "")).strip(),
+        "translation": str(payload.get("translation", "")).strip(),
+        "example": str(payload.get("example", "")).strip(),
+    }
+
+
+def translate_passage(text: str) -> str:
+    clean = text.strip()
+    prompt = (
+        "Translate the following French text to English. "
+        "Output only the English translation — no explanations, no labels.\n\n"
+        f"French text:\n{clean}"
+    )
+    return _generate_text(prompt, temperature=0.2).strip()
+
+
+def explain_word(word: str) -> Any:
+    from schemas import WordMeaningResponse
+    clean = word.strip()
+    prompt = f"""Explique le mot ou l'expression francais pour un apprenant niveau B2.
+
+Retourne un JSON avec :
+word
+part_of_speech
+definition_simple
+french_explanation
+english_translation
+example_sentence
+synonyms
+
+Mot ou expression : {clean}
+
+Regles :
+- Sorties concises et adaptees aux apprenants.
+- example_sentence doit etre en francais.
+- synonyms : tableau JSON de 3 a 6 synonymes en francais.
+- Le champ "word" doit correspondre exactement a : {clean}
+- Sortie : JSON valide uniquement.
+"""
+    payload = _generate_json(prompt, temperature=0.4)
+    synonyms = payload.get("synonyms", [])
+    if isinstance(synonyms, str):
+        synonyms = [s.strip() for s in synonyms.split(",") if s.strip()]
+    payload["synonyms"] = [str(s).strip() for s in synonyms]
+    payload["word"] = clean
+    try:
+        return WordMeaningResponse.model_validate(payload)
+    except Exception as error:
+        raise RuntimeError(f"Word lookup validation failed: {error}") from error
+
+
+def generate_passage() -> Any:
+    from schemas import PassageResponse
+    last_error: Exception | None = None
+    for _ in range(3):
+        domain = _pick_domain()
+        token = _freshness_token()
+        place, context = _scenario_from_seed(token)
+        prompt = f"""Genere un passage de lecture TCF Canada en francais.
+
+Retourne un JSON avec :
+title
+passage
+
+Regles :
+- Longueur : 100 a 150 mots.
+- Domaine : {domain}. Lieu : {place}. Contexte : {context}.
+- Le passage doit commencer par une phrase complete (pas un titre comme "Avis").
+- Jeton de fraicheur : {token} (ne pas inclure dans la sortie).
+- Sortie : JSON valide uniquement.
+{{
+  "title": "...",
+  "passage": "..."
+}}
+"""
+        try:
+            payload = _generate_json(prompt, temperature=0.85)
+            passage = PassageResponse.model_validate(payload)
+            fp = _fingerprint(passage.title + passage.passage)
+            if fp in _TCF_PASSAGE_HASHES:
+                last_error = RuntimeError("Duplicate passage; retrying.")
+                continue
+            _TCF_PASSAGE_HASHES.append(fp)
+            return passage
+        except Exception as error:
+            last_error = error
+    raise RuntimeError(f"Passage generation failed: {last_error}") from last_error
+
+
+def generate_passage_quiz() -> Any:
+    from schemas import PassageQuizResponse
+    last_error: Exception | None = None
+    for _ in range(5):
+        domain = _pick_domain()
+        token = _freshness_token()
+        place, context = _scenario_from_seed(token)
+        prompt = f"""Genere un passage de lecture TCF Canada en francais avec 10 questions de comprehension.
+
+Retourne un JSON avec :
+title
+passage
+questions (tableau de 10)
+
+Chaque question doit inclure :
+question
+4 options
+correct_answer
+explanation
+
+Regles :
+- Longueur du passage : 200 a 250 mots.
+- Domaine : {domain}. Lieu : {place}. Contexte : {context}.
+- Jeton de fraicheur : {token} (ne pas inclure dans la sortie).
+- correct_answer doit etre l'une des lettres A, B, C ou D.
+- Sortie : JSON valide uniquement.
+{{
+  "title": "...",
+  "passage": "...",
+  "questions": [
+    {{
+      "question": "...",
+      "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+      "correct_answer": "A",
+      "explanation": "..."
+    }}
+  ]
+}}
+"""
+        try:
+            payload = _generate_json(prompt, temperature=0.85)
+            payload["questions"] = [
+                _normalize_passage_question(q) for q in payload.get("questions", [])
+            ]
+            quiz = PassageQuizResponse.model_validate(payload)
+            fp = _fingerprint(quiz.title + quiz.passage)
+            if fp in _TCF_PASSAGE_HASHES:
+                last_error = RuntimeError("Duplicate passage quiz; retrying.")
+                continue
+            _TCF_PASSAGE_HASHES.append(fp)
+            return quiz
+        except Exception as error:
+            last_error = error
+    raise RuntimeError(f"Passage quiz generation failed: {last_error}") from last_error
+
+
+def generate_tcf_listening_audio(script: str, question_number: int, session_id: str | None = None) -> str:
+    """Public wrapper for TTS — used by the listening route's audio endpoint."""
+    return _generate_tts_audio(script, question_number, session_id)
+
+
+def analyze_learn_content(text: str) -> Dict[str, Any]:
+    clean = text.strip()
+    prompt = f"""Tu es un tuteur TCF Canada. Analyse ce texte francais et genere des exercices d'apprentissage.
+
+Texte :
+{clean}
+
+Retourne un JSON avec :
+{{
+  "topic": "sujet en quelques mots",
+  "level": "A1/A2/B1/B2/C1",
+  "summary": "resume en 2-3 phrases",
+  "key_points": ["point 1", "point 2", "point 3"],
+  "vocabulary": [
+    {{"word": "...", "definition": "...", "example": "..."}}
+  ],
+  "exercises": [
+    {{
+      "type": "mcq",
+      "question": "...",
+      "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+      "correct_answer": "...",
+      "explanation": "..."
+    }}
+  ]
+}}
+
+Regles :
+- 3 a 5 points cles.
+- 3 a 5 mots de vocabulaire avec definition et exemple en francais.
+- 3 a 5 exercices varies (mcq, fill_blank, sentence_correction, writing_task, speaking_prompt).
+- Sortie : JSON valide uniquement.
+"""
+    payload = _generate_json(prompt, temperature=0.6)
+    vocab = payload.get("vocabulary", [])
+    if not isinstance(vocab, list):
+        vocab = []
+    exercises = payload.get("exercises", [])
+    if not isinstance(exercises, list):
+        exercises = []
+    return {
+        "topic": str(payload.get("topic", "")).strip(),
+        "level": str(payload.get("level", "B1")).strip(),
+        "summary": str(payload.get("summary", "")).strip(),
+        "key_points": [str(p).strip() for p in payload.get("key_points", []) if str(p).strip()],
+        "vocabulary": vocab,
+        "exercises": exercises,
+    }
+
+
+def evaluate_learn_answer(
+    exercise_type: str,
+    question: str,
+    correct_answer: str,
+    user_answer: str,
+    context: str = ""
+) -> Dict[str, Any]:
+    prompt = f"""Tu es evaluateur TCF Canada. Evalue la reponse d'un apprenant.
+
+Type d'exercice : {exercise_type}
+Question : {question}
+Reponse correcte : {correct_answer}
+Reponse de l'apprenant : {user_answer}
+Contexte : {context}
+
+Retourne un JSON avec :
+{{
+  "score": 0-10,
+  "grammar": 0-10,
+  "vocabulary": 0-10,
+  "structure": 0-10,
+  "fluency": 0-10,
+  "is_correct": true/false,
+  "feedback": ["..."],
+  "improved_answer": "...",
+  "explanation": "..."
+}}
+
+Regles :
+- Scores entiers 0 a 10.
+- 2 a 4 points de feedback concrets.
+- Sortie : JSON valide uniquement.
+"""
+    payload = _generate_json(prompt, temperature=0.3)
+
+    def _clamp(v: object) -> int:
+        try:
+            return max(0, min(10, int(float(v))))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 0
+
+    feedback = payload.get("feedback", [])
+    if isinstance(feedback, str):
+        feedback = [f.strip() for f in feedback.split("-") if f.strip()]
+    feedback = [str(f).strip() for f in feedback if str(f).strip()]
+
+    return {
+        "score": _clamp(payload.get("score")),
+        "grammar": _clamp(payload.get("grammar")),
+        "vocabulary": _clamp(payload.get("vocabulary")),
+        "structure": _clamp(payload.get("structure")),
+        "fluency": _clamp(payload.get("fluency")),
+        "is_correct": bool(payload.get("is_correct", False)),
+        "feedback": feedback,
+        "improved_answer": str(payload.get("improved_answer", "")).strip(),
+        "explanation": str(payload.get("explanation", "")).strip(),
+    }
+
+
+def generate_more_exercises(topic: str, level: str, summary: str) -> list[Dict[str, Any]]:
+    prompt = f"""Tu es tuteur TCF Canada. Genere des exercices supplementaires en francais.
+
+Sujet : {topic}
+Niveau : {level}
+Resume : {summary}
+
+Retourne un JSON : tableau de 5 exercices varies.
+Chaque exercice doit avoir le format :
+{{
+  "type": "mcq | fill_blank | sentence_correction | writing_task | speaking_prompt",
+  "question": "...",
+  "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+  "correct_answer": "...",
+  "hint": "...",
+  "explanation": "..."
+}}
+
+Regles :
+- Varier les types d'exercices.
+- Adapter la difficulte au niveau {level}.
+- Sortie : JSON valide uniquement (tableau, pas d'objet enveloppe).
+"""
+    payload_raw = _generate_json(prompt, temperature=0.7)
+    if isinstance(payload_raw, list):
+        return payload_raw
+    # Some models wrap in an object
+    for key in ("exercises", "items", "data"):
+        if key in payload_raw and isinstance(payload_raw[key], list):
+            return payload_raw[key]
+    return []
+
+
+def extract_text_from_image_bytes(raw: bytes, content_type: str) -> str:
+    """Extract text from an image using Gemini vision."""
+    import base64
+    _ensure_api_key()
+    genai.configure(api_key=API_KEY)
+    model = genai.GenerativeModel(MODEL_NAME)
+    b64 = base64.b64encode(raw).decode("utf-8")
+    mime = content_type or "image/jpeg"
+    try:
+        response = model.generate_content(
+            [
+                {"mime_type": mime, "data": b64},
+                "Extract all readable text from this image. Output plain text only."
+            ],
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.1,
+                response_mime_type="text/plain"
+            )
+        )
+        return str(response.text).strip() if getattr(response, "text", None) else ""
+    except Exception as error:
+        raise RuntimeError(f"Image text extraction failed: {error}") from error

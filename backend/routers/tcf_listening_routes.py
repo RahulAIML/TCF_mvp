@@ -1,7 +1,7 @@
 ﻿from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from ai_service import generate_listening_audio
+from tcf_ai_service import generate_tcf_listening_audio
 from auth import get_optional_user
 from database import get_db
 from models import ListeningAttempt, User
@@ -31,7 +31,7 @@ async def post_generate_listening_audio(
   payload: TcfGenerateListeningAudioRequest,
   _user: User = Depends(get_optional_user)
 ) -> GenerateListeningAudioResponse:
-  audio_url = generate_listening_audio(payload.script, payload.question_number, payload.session_id)
+  audio_url = generate_tcf_listening_audio(payload.script, payload.question_number, payload.session_id)
   return GenerateListeningAudioResponse(audio_url=audio_url)
 
 

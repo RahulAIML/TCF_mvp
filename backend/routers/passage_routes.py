@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from ai_service import generate_passage, generate_passage_quiz
+from tcf_ai_service import generate_passage, generate_passage_quiz
 from auth import get_optional_user
 from models import User
 from schemas import PassageQuizResponse, PassageResponse

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from fastapi import Body
-from ai_service import explain_word, explain_text, translate_passage
+from tcf_ai_service import explain_word, explain_text, translate_passage
 from auth import get_optional_user
 from models import User
 from schemas import WordMeaningRequest, WordMeaningResponse, ExplainTextRequest, ExplainTextResponse
