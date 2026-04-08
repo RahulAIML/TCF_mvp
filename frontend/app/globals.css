@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 210 20% 98%;
+  --foreground: 215 42% 13%;
+  --card: 0 0% 100%;
+  --card-foreground: 215 42% 13%;
+  --border: 214 26% 87%;
+  --muted: 210 24% 95%;
+  --muted-foreground: 215 16% 42%;
+  --primary: 238 84% 61%;
+  --primary-foreground: 210 40% 98%;
+}
+
+* {
+  @apply border-border;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-background text-foreground antialiased;
+  font-family: var(--font-sans), sans-serif;
+}
+
+
+.reading-serif {
+  font-family: var(--font-serif), serif;
+}
