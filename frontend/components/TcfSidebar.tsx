@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -43,7 +43,7 @@ const parentMap: Record<string, string> = {
 
 export default function TcfSidebar() {
   const pathname = usePathname();
-  const activePath = parentMap[pathname] -- pathname;
+  const activePath = parentMap[pathname] ?? pathname;
 
   return (
     <aside className="hidden w-60 flex-col border-r border-slate-100 bg-white lg:flex">
@@ -73,12 +73,12 @@ export default function TcfSidebar() {
                     href={item.href}
                     className={`group flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150
                       ${isActive
-                        - "bg-emerald-50 text-emerald-700"
+                        ? "bg-emerald-50 text-emerald-700"
                         : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                       }`}
                   >
                     <div className="flex items-center gap-3">
-                      <Icon className={`h-4 w-4 ${isActive - "text-emerald-600" : "text-slate-400 group-hover:text-slate-600"}`} />
+                      <Icon className={`h-4 w-4 ${isActive ? "text-emerald-600" : "text-slate-400 group-hover:text-slate-600"}`} />
                       {item.label}
                     </div>
                     {isActive && <ChevronRight className="h-3 w-3 text-emerald-400" />}

@@ -20,11 +20,10 @@ from schemas import (
 router = APIRouter(tags=["performance"])
 
 QUESTION_TYPE_LABELS = {
-  "everyday_life": "Everyday-life documents",
-  "gap_fill": "Incomplete sentences",
-  "rapid_reading": "Rapid reading",
-  "administrative": "Administrative documents",
-  "press": "Press articles"
+  "part1_a1a2": "Part 1 (A1-A2)",
+  "part2_a2b1": "Part 2 (A2-B1)",
+  "part3_b1b2": "Part 3 (B1-B2)",
+  "part4_b2c2": "Part 4 (B2-C2)"
 }
 
 

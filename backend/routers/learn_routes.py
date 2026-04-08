@@ -20,7 +20,7 @@ from schemas import (
   LearnSessionSummary
 )
 
-logger = logging.getLogger("tef.learn")
+logger = logging.getLogger("tcf.learn")
 router = APIRouter(prefix="/learn", tags=["learn"])
 
 

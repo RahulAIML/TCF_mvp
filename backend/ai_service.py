@@ -23,7 +23,7 @@ from schemas import ExamQuestion, PassageQuizResponse, PassageResponse, WordMean
 
 load_dotenv()
 
-logger = logging.getLogger('tef.tts')
+logger = logging.getLogger('tcf.tts')
 ELEVENLABS_SESSION = requests.Session()
 
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
@@ -474,7 +474,7 @@ def _generate_gemini_tts_audio(script: str, question_number: int, session_id: st
     wf.setnchannels(1)
     wf.setsampwidth(2)
     wf.setframerate(24000)
-    wf.writeframes(audio_bytes)
+    wf.writcframes(audio_bytes)
   wav_bytes = buffer.getvalue()
 
   file_name = f"listening_q{question_number}_{session_id or 'global'}_{uuid.uuid4().hex[:8]}.wav"
@@ -524,7 +524,7 @@ def generate_exam_question(question_number: int, session_id: str | None = None) 
   }[question_type]
 
   prompt = f"""
-Generate one TEF Canada reading question in French.
+Generate one TCF Canada reading question in French.
 
 Return JSON with:
 text
@@ -603,7 +603,7 @@ def generate_listening_question(question_number: int, session_id: str | None = N
   freshness_token = _freshness_token()
   place, context = _scenario_from_seed(freshness_token)
   prompt = f"""
-Generate one TEF Canada listening question in French.
+Generate one TCF Canada listening question in French.
 
 Return JSON with:
 script
@@ -678,7 +678,7 @@ def generate_passage() -> PassageResponse:
     freshness_token = _freshness_token()
     place, context = _scenario_from_seed(freshness_token)
     prompt = f"""
-Generate a TEF Canada B2 reading passage in French.
+Generate a TCF Canada B2 reading passage in French.
 
 Return JSON with:
 title
@@ -728,7 +728,7 @@ def generate_passage_quiz() -> PassageQuizResponse:
     freshness_token = _freshness_token()
     place, context = _scenario_from_seed(freshness_token)
     prompt = f"""
-Generate a TEF Canada B2 reading passage in French with 10 comprehension questions.
+Generate a TCF Canada B2 reading passage in French with 10 comprehension questions.
 
 Return JSON with:
 title
@@ -794,7 +794,7 @@ Rules:
 def explain_text(text: str) -> Dict[str, str]:
   clean_text = text.strip()
   prompt = f"""
-Explain this French text clearly for a TEF learner.
+Explain this French text clearly for a TCF learner.
 
 Return JSON with:
 meaning
@@ -883,7 +883,7 @@ Rules:
 
 def generate_writing_tasks() -> dict[str, str]:
   prompt = """
-Generate TEF Canada writing Task 1 and Task 2 prompts in French.
+Generate TCF Canada writing Task 1 and Task 2 prompts in French.
 
 Task 1: Informative message (60-120 words), formal or semi-formal tone.
 Task 2: Argumentative text (120-200 words) with a clear opinion prompt.
@@ -915,7 +915,7 @@ def evaluate_writing_task(task_type: str, prompt_text: str, response_text: str) 
     word_range = "120-200 words"
 
   prompt = f"""
-You are a TEF Canada writing evaluator.
+You are a TCF Canada writing evaluator.
 
 Task type: {task_type}
 Word range: {word_range}
@@ -979,7 +979,7 @@ Rules:
 
 def evaluate_writing_step(task_type: str, step: str, prompt_text: str, text: str) -> dict[str, object]:
   prompt = f"""
-You are a TEF writing coach. Provide feedback for a single step of a writing task.
+You are a TCF writing coach. Provide feedback for a single step of a writing task.
 
 Task type: {task_type}
 Step: {step}
@@ -1064,7 +1064,7 @@ def _generate_gemini_tts_audio_for_speaking(script: str, file_stub: str) -> str:
     wf.setnchannels(1)
     wf.setsampwidth(2)
     wf.setframerate(24000)
-    wf.writeframes(audio_bytes)
+    wf.writcframes(audio_bytes)
   wav_bytes = buffer.getvalue()
 
   file_name = f"{file_stub}.wav"
@@ -1135,7 +1135,7 @@ def generate_speaking_reply(
   if starter in {"", "__START__"}:
     scenario = _pick_speaking_prompt(task_type)
     prompt = f"""
-You are a TEF Canada speaking examiner conducting a real oral exam.
+You are a TCF Canada speaking examiner conducting a real oral exam.
 
 Rules:
 - Respond ONLY in French
@@ -1154,7 +1154,7 @@ Open the conversation naturally as a real examiner would. Ask your first questio
   else:
     history_text = _format_conversation_history(history)
     prompt = f"""
-You are a TEF Canada speaking examiner conducting a real oral exam.
+You are a TCF Canada speaking examiner conducting a real oral exam.
 
 Rules:
 - Respond ONLY in French
@@ -1197,7 +1197,7 @@ Respond naturally as a real examiner. Acknowledge what the user said, then ask y
 def evaluate_speaking_conversation(history: list[dict[str, str]], task_type: str) -> dict[str, object]:
   history_text = _format_conversation_history(history)
   prompt = f"""
-You are a TEF Canada speaking examiner.
+You are a TCF Canada speaking examiner.
 
 Evaluate the candidate's spoken performance for task type: {task_type}.
 
@@ -1250,7 +1250,7 @@ Rules:
 def analyze_learn_content(text: str) -> Dict[str, Any]:
   """Analyze text and generate structured learning content with exercises."""
   safe_text = text[:4000]
-  prompt = f"""You are a French language learning coach for TEF Canada B2 preparation.
+  prompt = f"""You are a French language learning coach for TCF Canada B2 preparation.
 
 Analyze the following text and create structured learning material.
 
@@ -1359,7 +1359,7 @@ def evaluate_learn_answer(
       "WRITING TASK RULES:\n"
       "- The student must write 3–4 complete French sentences addressing the prompt.\n"
       "- A single sentence that does NOT address the prompt: score ≤ 2, structure=0–2.\n"
-      "- Evaluate grammar, vocabulary, structure, and fluency strictly based on TEF B1–B2 standards.\n"
+      "- Evaluate grammar, vocabulary, structure, and fluency strictly based on TCF B1–B2 standards.\n"
       "- Do not reward effort if content does not match what was asked."
     ),
     "speaking_prompt": (
@@ -1367,11 +1367,11 @@ def evaluate_learn_answer(
       "- The student must speak in French for 1–2 minutes on the topic.\n"
       "- If the response is not in French, or is a single unrelated phrase: all scores=0–1.\n"
       "- If the response is in French but very short: score ≤ 3.\n"
-      "- Evaluate tone, pronunciation, fluency, vocabulary, and grammar based on TEF standards."
+      "- Evaluate tone, pronunciation, fluency, vocabulary, and grammar based on TCF standards."
     )
   }.get(exercise_type, "Evaluate based on correctness, grammar, and relevance to the prompt.")
 
-  prompt = f"""You are a strict TEF Canada French examiner evaluating a student's exercise answer.
+  prompt = f"""You are a strict TCF Canada French examiner evaluating a student's exercise answer.
 Apply professional examination standards — do NOT inflate scores to be encouraging.
 
 Exercise type: {exercise_type}
@@ -1474,7 +1474,7 @@ Return only valid JSON. No markdown. No commentary."""
 
 def generate_more_exercises(topic: str, level: str, summary: str) -> list:
   """Generate 5 fresh exercises on the same topic (different from previous set)."""
-  prompt = f"""You are a French language learning coach for TEF Canada B2 preparation.
+  prompt = f"""You are a French language learning coach for TCF Canada B2 preparation.
 
 Generate 5 NEW practice exercises on this topic. Make them DIFFERENT from typical first-set exercises.
 
@@ -1550,7 +1550,7 @@ def extract_text_from_image_bytes(image_bytes: bytes, mime_type: str = "image/jp
 
 
 def ai_chat_reply(message: str, context: str = "", language: str = "en") -> str:
-  """Global AI assistant: translate, explain, answer questions about French/TEF content."""
+  """Global AI assistant: translate, explain, answer questions about French/TCF content."""
   context_block = f"\n\nContext (current passage or question):\n{context[:1500]}" if context.strip() else ""
   lang_instruction = (
     "Respond in English unless the user asks in French or asks for French output."
@@ -1558,10 +1558,10 @@ def ai_chat_reply(message: str, context: str = "", language: str = "en") -> str:
     else "Respond in French."
   )
 
-  prompt = f"""You are an expert TEF Canada preparation assistant. You help students:
+  prompt = f"""You are an expert TCF Canada preparation assistant. You help students:
 - Translate French text to English and vice versa
 - Explain French grammar, vocabulary, and idiomatic expressions
-- Answer questions about TEF exam topics (Reading, Listening, Speaking, Writing)
+- Answer questions about TCF exam topics (Reading, Listening, Speaking, Writing)
 - Provide pronunciation guidance and phonetic breakdowns
 - Explain why certain answers are correct/incorrect
 - Give study tips and learning strategies

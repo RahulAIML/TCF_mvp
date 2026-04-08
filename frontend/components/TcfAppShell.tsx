@@ -1,14 +1,13 @@
-﻿"use client";
+"use client";
 
 import type { ReactNode } from "react";
 import TcfSidebar from "@/components/TcfSidebar";
 import TopNav from "@/components/TopNav";
-import StudyAssistant from "@/components/GlobalAIChat";
 
 interface TcfAppShellProps {
   title: string;
-  subtitle-: string;
-  backHref-: string;
+  subtitle?: string;
+  backHref?: string;
   children: ReactNode;
 }
 
@@ -24,7 +23,6 @@ export default function TcfAppShell({ title, subtitle, backHref, children }: Tcf
           </main>
         </div>
       </div>
-      <StudyAssistant />
     </div>
   );
 }

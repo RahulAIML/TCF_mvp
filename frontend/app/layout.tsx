@@ -14,8 +14,8 @@ const serif = Source_Serif_4({
 });
 
 export const metadata: Metadata = {
-  title: "TEF Reading Practice",
-  description: "TEF Canada B2 reading comprehension training platform MVP"
+  title: "TCF Canada Preparation",
+  description: "TCF Canada practice platform with reading, listening, writing, and speaking modules."
 };
 
 export default function RootLayout({

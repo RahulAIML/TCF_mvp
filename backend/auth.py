@@ -56,7 +56,7 @@ def get_current_user(
 
 
 def _get_or_create_demo_user(db: Session) -> User:
-  demo_email = "demo@tef.local"
+  demo_email = "demo@tcf.local"
   user = db.query(User).filter(User.email == demo_email).first()
   if user:
     return user

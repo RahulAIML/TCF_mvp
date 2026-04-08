@@ -23,7 +23,7 @@ export default function ExamContainer({
     <Card className="border-slate-200 shadow-sm rounded-2xl">
       <CardHeader className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <p className="text-sm text-slate-500">{title ?? "TEF Reading Mock Exam"}</p>
+          <p className="text-sm text-slate-500">{title ?? "TCF Reading Mock Exam"}</p>
           <h2 className="text-xl font-semibold text-slate-900">
             Question {currentQuestion} / {totalQuestions}
           </h2>

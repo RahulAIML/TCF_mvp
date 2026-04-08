@@ -111,8 +111,8 @@ function LearnSection({ learning }: { learning: LearnSummary }) {
     return (
       <div className="space-y-4">
         <SectionHeader
-          title="AI Learning"
-          subtitle="Sessions from the AI Learn module"
+          title="Learning"
+          subtitle="Sessions from the Learn module"
           value="No sessions yet"
         />
         <EmptyCard title="Learning Progress" />
@@ -127,7 +127,7 @@ function LearnSection({ learning }: { learning: LearnSummary }) {
   return (
     <div className="space-y-4">
       <SectionHeader
-        title="AI Learning"
+        title="Learning"
         subtitle="Exercise scores and recent sessions"
         value={`Average score ${learning.average_score.toFixed(1)}/10`}
       />
@@ -178,11 +178,11 @@ function LearnSection({ learning }: { learning: LearnSummary }) {
 
 export default function DashboardCharts({ summary }: DashboardChartsProps) {
   const readingCharts = useMemo(
-    () => buildExamCharts(summary.reading, "rgba(79,70,229,1)", "Exam", 40),
+    () => buildExamCharts(summary.reading, "rgba(79,70,229,1)", "Exam", 39),
     [summary.reading]
   );
   const listeningCharts = useMemo(
-    () => buildExamCharts(summary.listening, "rgba(15,118,110,1)", "Attempt", 40),
+    () => buildExamCharts(summary.listening, "rgba(15,118,110,1)", "Attempt", 39),
     [summary.listening]
   );
 

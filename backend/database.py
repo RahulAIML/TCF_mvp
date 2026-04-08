@@ -1,10 +1,10 @@
-﻿import os
+import os
 from typing import Generator
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./tef.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./tcf.db")
 
 connect_args = {}
 if DATABASE_URL.startswith("sqlite"):
@@ -27,4 +27,3 @@ def init_db() -> None:
   from models import ExamAttempt, ListeningAttempt, User, WritingSession, TcfWritingSession
 
   Base.metadata.create_all(bind=engine)
-

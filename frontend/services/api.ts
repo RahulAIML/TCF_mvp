@@ -1,10 +1,4 @@
-﻿import type { WordMeaningRequest, WordMeaningResponse } from "@/types/dictionary";
-import type {
-  ExamQuestion,
-  GenerateQuestionRequest,
-  SubmitExamRequest,
-  SubmitExamResponse
-} from "@/types/exam";
+import type { WordMeaningRequest, WordMeaningResponse } from "@/types/dictionary";
 import type {
   TcfExamQuestion,
   TcfGenerateQuestionRequest,
@@ -22,7 +16,6 @@ import type {
   SubmitListeningExamResponse
 } from "@/types/listening";
 import type { ExplainTextRequest, ExplainTextResponse } from "@/types/text-helper";
-import type { ConversationRequest, ConversationResponse, SpeakingEvaluationRequest, SpeakingEvaluationResponse } from "@/types/speaking";
 import type {
   TcfConversationRequest,
   TcfConversationResponse,
@@ -39,18 +32,6 @@ import type {
   LearnSaveSessionRequest,
   LearnSessionSummary
 } from "@/types/learn";
-import type {
-  GenerateWritingTasksRequest,
-  GenerateWritingTasksResponse,
-  WritingEvaluationRequest,
-  WritingEvaluationResponse,
-  WritingStepFeedbackRequest,
-  WritingStepFeedbackResponse,
-  WritingProgressRequest,
-  WritingProgressResponse,
-  WritingSubmitRequest,
-  WritingSubmitResponse
-} from "@/types/writing";
 import type {
   TcfGenerateWritingTasksRequest,
   TcfGenerateWritingTasksResponse,
@@ -101,19 +82,6 @@ export async function loginUser(payload: LoginRequest): Promise<AuthResponse> {
   return parseResponse<AuthResponse>(res);
 }
 
-
-export async function generateListeningQuestion(
-  payload: GenerateListeningQuestionRequest
-): Promise<ListeningQuestion> {
-  const res = await fetch(`${API_BASE_URL}/generate-listening-question`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(payload),
-    cache: "no-store"
-  });
-  return parseResponse<ListeningQuestion>(res);
-}
-
 export async function generateTcfListeningQuestion(
   payload: GenerateListeningQuestionRequest
 ): Promise<ListeningQuestion> {
@@ -124,19 +92,6 @@ export async function generateTcfListeningQuestion(
     cache: "no-store"
   });
   return parseResponse<ListeningQuestion>(res);
-}
-
-
-export async function generateListeningAudio(
-  payload: GenerateListeningAudioRequest
-): Promise<GenerateListeningAudioResponse> {
-  const res = await fetch(`${API_BASE_URL}/generate-listening-audio`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(payload),
-    cache: "no-store"
-  });
-  return parseResponse<GenerateListeningAudioResponse>(res);
 }
 
 export async function generateTcfListeningAudio(
@@ -151,18 +106,6 @@ export async function generateTcfListeningAudio(
   return parseResponse<GenerateListeningAudioResponse>(res);
 }
 
-export async function submitListeningExam(
-  payload: SubmitListeningExamRequest
-): Promise<SubmitListeningExamResponse> {
-  const res = await fetch(`${API_BASE_URL}/submit-listening-exam`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(payload),
-    cache: "no-store"
-  });
-  return parseResponse<SubmitListeningExamResponse>(res);
-}
-
 export async function submitTcfListeningExam(
   payload: SubmitListeningExamRequest
 ): Promise<SubmitListeningExamResponse> {
@@ -175,18 +118,6 @@ export async function submitTcfListeningExam(
   return parseResponse<SubmitListeningExamResponse>(res);
 }
 
-export async function generateQuestion(
-  payload: GenerateQuestionRequest
-): Promise<ExamQuestion> {
-  const res = await fetch(`${API_BASE_URL}/generate-question`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(payload),
-    cache: "no-store"
-  });
-  return parseResponse<ExamQuestion>(res);
-}
-
 export async function generateTcfQuestion(
   payload: TcfGenerateQuestionRequest
 ): Promise<TcfExamQuestion> {
@@ -197,16 +128,6 @@ export async function generateTcfQuestion(
     cache: "no-store"
   });
   return parseResponse<TcfExamQuestion>(res);
-}
-
-export async function submitExam(payload: SubmitExamRequest): Promise<SubmitExamResponse> {
-  const res = await fetch(`${API_BASE_URL}/submit-exam`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(payload),
-    cache: "no-store"
-  });
-  return parseResponse<SubmitExamResponse>(res);
 }
 
 export async function submitTcfExam(payload: TcfSubmitExamRequest): Promise<TcfSubmitExamResponse> {
@@ -236,7 +157,6 @@ export async function generatePassageQuiz(): Promise<PassageQuizResponse> {
   });
   return parseResponse<PassageQuizResponse>(res);
 }
-
 
 export async function explainText(
   payload: ExplainTextRequest
@@ -282,18 +202,6 @@ export async function getDashboardSummary(): Promise<DashboardSummaryResponse> {
   return parseResponse<DashboardSummaryResponse>(res);
 }
 
-export async function generateWritingTasks(
-  payload: GenerateWritingTasksRequest
-): Promise<GenerateWritingTasksResponse> {
-  const res = await fetch(`${API_BASE_URL}/generate-writing-tasks`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(payload),
-    cache: "no-store"
-  });
-  return parseResponse<GenerateWritingTasksResponse>(res);
-}
-
 export async function generateTcfWritingTasks(
   payload: TcfGenerateWritingTasksRequest
 ): Promise<TcfGenerateWritingTasksResponse> {
@@ -304,18 +212,6 @@ export async function generateTcfWritingTasks(
     cache: "no-store"
   });
   return parseResponse<TcfGenerateWritingTasksResponse>(res);
-}
-
-export async function evaluateWritingTask(
-  payload: WritingEvaluationRequest
-): Promise<WritingEvaluationResponse> {
-  const res = await fetch(`${API_BASE_URL}/evaluate-writing`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(payload),
-    cache: "no-store"
-  });
-  return parseResponse<WritingEvaluationResponse>(res);
 }
 
 export async function evaluateTcfWritingTask(
@@ -330,18 +226,6 @@ export async function evaluateTcfWritingTask(
   return parseResponse<TcfWritingEvaluationResponse>(res);
 }
 
-export async function evaluateWritingStep(
-  payload: WritingStepFeedbackRequest
-): Promise<WritingStepFeedbackResponse> {
-  const res = await fetch(`${API_BASE_URL}/evaluate-writing-step`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(payload),
-    cache: "no-store"
-  });
-  return parseResponse<WritingStepFeedbackResponse>(res);
-}
-
 export async function evaluateTcfWritingStep(
   payload: TcfWritingStepFeedbackRequest
 ): Promise<TcfWritingStepFeedbackResponse> {
@@ -352,18 +236,6 @@ export async function evaluateTcfWritingStep(
     cache: "no-store"
   });
   return parseResponse<TcfWritingStepFeedbackResponse>(res);
-}
-
-export async function saveWritingProgress(
-  payload: WritingProgressRequest
-): Promise<WritingProgressResponse> {
-  const res = await fetch(`${API_BASE_URL}/writing/save-progress`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(payload),
-    cache: "no-store"
-  });
-  return parseResponse<WritingProgressResponse>(res);
 }
 
 export async function saveTcfWritingProgress(
@@ -378,18 +250,6 @@ export async function saveTcfWritingProgress(
   return parseResponse<TcfWritingProgressResponse>(res);
 }
 
-export async function submitWriting(
-  payload: WritingSubmitRequest
-): Promise<WritingSubmitResponse> {
-  const res = await fetch(`${API_BASE_URL}/writing/submit`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(payload),
-    cache: "no-store"
-  });
-  return parseResponse<WritingSubmitResponse>(res);
-}
-
 export async function submitTcfWriting(
   payload: TcfWritingSubmitRequest
 ): Promise<TcfWritingSubmitResponse> {
@@ -402,19 +262,6 @@ export async function submitTcfWriting(
   return parseResponse<TcfWritingSubmitResponse>(res);
 }
 
-
-export async function sendConversation(
-  payload: ConversationRequest
-): Promise<ConversationResponse> {
-  const res = await fetch(`${API_BASE_URL}/conversation`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(payload),
-    cache: "no-store"
-  });
-  return parseResponse<ConversationResponse>(res);
-}
-
 export async function sendTcfConversation(
   payload: TcfConversationRequest
 ): Promise<TcfConversationResponse> {
@@ -425,18 +272,6 @@ export async function sendTcfConversation(
     cache: "no-store"
   });
   return parseResponse<TcfConversationResponse>(res);
-}
-
-export async function evaluateSpeaking(
-  payload: SpeakingEvaluationRequest
-): Promise<SpeakingEvaluationResponse> {
-  const res = await fetch(`${API_BASE_URL}/evaluate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(payload),
-    cache: "no-store"
-  });
-  return parseResponse<SpeakingEvaluationResponse>(res);
 }
 
 export async function evaluateTcfSpeaking(
@@ -499,20 +334,6 @@ export async function generateMoreExercises(
   return parseResponse<LearnExercise[]>(res);
 }
 
-export async function chatWithAI(payload: {
-  message: string;
-  context?: string;
-  language?: string;
-}): Promise<{ reply: string }> {
-  const res = await fetch(`${API_BASE_URL}/ai-chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(payload),
-    cache: "no-store"
-  });
-  return parseResponse<{ reply: string }>(res);
-}
-
 export async function saveLearnSession(
   payload: LearnSaveSessionRequest
 ): Promise<LearnSessionSummary> {
@@ -524,4 +345,3 @@ export async function saveLearnSession(
   });
   return parseResponse<LearnSessionSummary>(res);
 }
-

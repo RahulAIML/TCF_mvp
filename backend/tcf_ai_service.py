@@ -8,7 +8,7 @@ Mirrors the structure of ai_service.py but with TCF-specific:
   - Writing: 3 tasks (short message, description, opinion+justification)
   - Speaking: 3 task types (basic_interaction, role_play, opinion)
 
-The TEF ai_service.py is NOT modified.
+The legacy ai_service.py module is kept for shared helper utilities.
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ load_dotenv()
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("OPENAI_API_KEY")
 
-# ── Shared scenario pools (same as TEF, reused for variety) ─────────────────
+# ── Shared scenario pools (reused for variety) ──────────────────────────────
 
 DOMAINS = [
     "culture et arts",
@@ -302,7 +302,7 @@ TCF_OPINION_TOPICS = [
 ]
 
 
-# ── Deduplication caches (separate from TEF) ────────────────────────────────
+# ── Deduplication caches (separate from other services) ─────────────────────
 
 _TCF_EXAM_HASHES_PER_SESSION = 50
 _TCF_EXAM_HASHES_PER_SESSION_ALL = 250

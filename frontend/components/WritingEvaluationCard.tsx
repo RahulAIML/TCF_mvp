@@ -1,11 +1,11 @@
-﻿"use client";
+"use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { WritingEvaluationResponse } from "@/types/writing";
+import type { TcfWritingEvaluationResponse } from "@/types/tcf-writing";
 
 interface WritingEvaluationCardProps {
   title: string;
-  evaluation: WritingEvaluationResponse;
+  evaluation: TcfWritingEvaluationResponse;
 }
 
 export default function WritingEvaluationCard({ title, evaluation }: WritingEvaluationCardProps) {
@@ -54,4 +54,3 @@ export default function WritingEvaluationCard({ title, evaluation }: WritingEval
     </Card>
   );
 }
-

@@ -1,11 +1,11 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import type { ConversationMessage } from "@/types/speaking";
+import type { TcfConversationMessage } from "@/types/tcf-speaking";
 
 interface SpeakingChatProps {
-  history: ConversationMessage[];
+  history: TcfConversationMessage[];
   isThinking?: boolean;
   currentTranscript?: string;
   exchangeCount?: number;
@@ -46,7 +46,7 @@ export default function SpeakingChat({
 
         <div className="max-h-[420px] space-y-3 overflow-y-auto pr-2">
           {history.length === 0 && !isThinking && (
-            <p className="text-sm text-slate-500">Press Start — the examiner will speak first.</p>
+            <p className="text-sm text-slate-500">Press Start - the examiner will speak first.</p>
           )}
           {history.map((message, index) => (
             <div
@@ -81,4 +81,3 @@ export default function SpeakingChat({
     </Card>
   );
 }
-

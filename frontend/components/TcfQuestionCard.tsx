@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import type { AnswerOption } from "@/types/exam";
 import type { TcfExamQuestion } from "@/types/tcf-exam";
@@ -7,7 +7,7 @@ interface TcfQuestionCardProps {
   question: TcfExamQuestion;
   selectedAnswer: AnswerOption | "";
   onSelect: (value: AnswerOption) => void;
-  disabled-: boolean;
+  disabled?: boolean;
 }
 
 export default function TcfQuestionCard({
@@ -26,16 +26,16 @@ export default function TcfQuestionCard({
         <div className="mt-3 space-y-2">
           {question.options.map((option, index) => {
             const label = option.trim();
-            const value = (["A", "B", "C", "D"][index] as AnswerOption) -- "A";
+            const value = (["A", "B", "C", "D"][index] as AnswerOption) ?? "A";
             const isSelected = selectedAnswer === value;
             return (
               <label
                 key={`${question.question_number}-option-${index}`}
                 className={`flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 text-sm transition ${
                   isSelected
-                    - "border-emerald-600 bg-emerald-600 text-white"
+                    ? "border-emerald-600 bg-emerald-600 text-white"
                     : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                } ${disabled - "cursor-not-allowed opacity-70" : ""}`}
+                } ${disabled ? "cursor-not-allowed opacity-70" : ""}`}
               >
                 <input
                   type="radio"
