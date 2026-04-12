@@ -911,12 +911,13 @@ export default function WritingPage() {
               </div>
             )}
             </div>
-            <WritingAssistantPanel
-              contextLabel={assistantContextLabel}
-              contextText={assistantContext}
-              draftText={assistantDraft}
-            />
-          </div>
+          )}
+        </div>
+        <WritingAssistantPanel
+          contextLabel={assistantContextLabel}
+          contextText={assistantContext}
+          draftText={assistantDraft}
+        />
       </div>
     </TcfAppShell>
   );
