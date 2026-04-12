@@ -51,6 +51,8 @@ export default function SpeakingPage() {
   const recorderRef = useRef<SpeakingRecorderHandle | null>(null);
   const pendingEvaluateRef = useRef(false);
   const convStateRef = useRef<ConvState>("idle");
+  // Always points to the latest handleEvaluate — safe to call from async audio callbacks.
+  const handleEvaluateRef = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => { historyRef.current = history; }, [history]);
   useEffect(() => { convStateRef.current = convState; }, [convState]);
@@ -64,6 +66,12 @@ export default function SpeakingPage() {
       audioRef.current.src = "";
     }
     if (convStateRef.current === "speaking") setConvState("idle");
+    // If the user manually stops audio on the last exchange, the onended event
+    // won't fire — trigger the pending evaluation directly from here.
+    if (pendingEvaluateRef.current) {
+      pendingEvaluateRef.current = false;
+      window.setTimeout(() => void handleEvaluateRef.current(), 400);
+    }
   }, []);
 
   const startListening = useCallback(() => {
@@ -131,13 +139,22 @@ export default function SpeakingPage() {
       setError("Please select a task before evaluating.");
       return;
     }
+    // Stop any ongoing recording without emitting a partial transcript.
+    recorderRef.current?.cancel();
+    // Stop audio immediately — this also clears pendingEvaluateRef so we
+    // don't accidentally schedule a second evaluation.
+    pendingEvaluateRef.current = false;
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
     setError("");
     setConvState("processing");
-    recorderRef.current?.cancel();
-    stopAudio();
+    // Snapshot history now before resetAfterEvaluation wipes it.
+    const historySnapshot = [...historyRef.current];
     try {
       const result = await evaluateTcfSpeaking({
-        history: historyRef.current,
+        history: historySnapshot,
         task_type: taskType,
         mode
       });
@@ -149,7 +166,10 @@ export default function SpeakingPage() {
     } finally {
       setConvState("idle");
     }
-  }, [taskType, mode, stopAudio, resetAfterEvaluation]);
+  }, [taskType, mode, resetAfterEvaluation]);
+
+  // Keep the ref up-to-date so audio callbacks always call the latest version.
+  handleEvaluateRef.current = handleEvaluate;
 
   const playAudio = useCallback((audioUrl: string, onEnded?: () => void) => {
     if (!audioRef.current) return;
@@ -257,7 +277,9 @@ export default function SpeakingPage() {
     setHistory(nextHistory);
     setConvState("processing");
 
-    await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    // Brief pause so the UI updates to "Examiner is thinking…" before the
+    // request fires. The API call itself provides most of the natural delay.
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
 
     try {
       const response = await sendTcfConversation({
@@ -275,18 +297,20 @@ export default function SpeakingPage() {
 
       const audioUrl = buildAudioUrl(response.audio_url);
       if (audioUrl) {
+        // Mark last-turn BEFORE playing so stopAudio() can pick it up if needed.
         if (isLastTurn) pendingEvaluateRef.current = true;
         playAudio(audioUrl, () => {
           if (pendingEvaluateRef.current) {
             pendingEvaluateRef.current = false;
-            window.setTimeout(() => void handleEvaluate(), 400);
+            // Use ref so we always call the latest handleEvaluate even if deps changed.
+            window.setTimeout(() => void handleEvaluateRef.current(), 400);
           } else if (handsFreeEnabled) {
             window.setTimeout(() => startListening(), 800);
           }
         });
       } else if (isLastTurn) {
         setConvState("idle");
-        window.setTimeout(() => void handleEvaluate(), 400);
+        window.setTimeout(() => void handleEvaluateRef.current(), 400);
       } else {
         setConvState("idle");
         if (handsFreeEnabled) {
@@ -298,7 +322,7 @@ export default function SpeakingPage() {
       setConvState("idle");
     }
   }, [mode, isExamStarted, userTurnCount, taskType, hintsEnabled, handsFreeEnabled,
-      stopAudio, handleEvaluate, startListening, playAudio]);
+      stopAudio, startListening, playAudio]);
 
   const handleTimerExpire = () => {
     if (!isExamStarted) return;

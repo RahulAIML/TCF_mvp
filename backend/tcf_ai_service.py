@@ -1213,13 +1213,10 @@ def evaluate_tcf_speaking_conversation(
     """
     Evaluate a complete TCF Canada speaking session.
     """
+    # Use ALL candidate turns combined for quality check — a short final reply
+    # should not zero-score an otherwise full conversation.
     candidate_text = _speaking_candidate_text(history)
-    last_user_text = next(
-        (str(item.get("content", "")).strip() for item in reversed(history) if item.get("role") == "user"),
-        ""
-    )
-    probe_text = last_user_text or candidate_text
-    is_low, low_reason = _is_speaking_low_response(probe_text)
+    is_low, low_reason = _is_speaking_low_response(candidate_text)
     if is_low:
         feedback_map = {
             "empty": [
