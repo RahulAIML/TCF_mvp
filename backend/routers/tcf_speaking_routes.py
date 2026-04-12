@@ -25,7 +25,8 @@ async def post_conversation(
       task_type=payload.task_type,
       mode=payload.mode or "practice",
       hints=payload.hints,
-      session_id=payload.session_id
+      session_id=payload.session_id,
+      session_topic=payload.session_topic
     )
   except RuntimeError as error:
     raise HTTPException(status_code=500, detail=str(error)) from error

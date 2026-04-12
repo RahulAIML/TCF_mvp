@@ -13,11 +13,13 @@ export interface TcfConversationRequest {
   mode?: TcfSpeakingMode;
   hints?: boolean;
   session_id?: string;
+  session_topic?: string;
 }
 
 export interface TcfConversationResponse {
   reply: string;
   audio_url?: string | null;
+  session_topic?: string | null;
 }
 
 export interface TcfSpeakingEvaluationRequest {

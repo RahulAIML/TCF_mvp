@@ -15,10 +15,10 @@ ExamQuestionType = Literal[
 ]
 
 TcfExamQuestionType = Literal[
-  "part1_a1a2",
-  "part2_a2b1",
+  "part1_c2",
+  "part2_b2c1",
   "part3_b1b2",
-  "part4_b2c2"
+  "part4_a2"
 ]
 
 
@@ -151,6 +151,7 @@ class TcfExamResultItem(BaseModel):
 class TcfSubmitExamResponse(BaseModel):
   score: int
   total: int
+  attempted: int = 0
   accuracy: float
   completion_time: int
   results: List[TcfExamResultItem]
@@ -523,11 +524,13 @@ class TcfConversationRequest(BaseModel):
   mode: TcfSpeakingMode | None = None
   hints: bool = False
   session_id: str | None = None
+  session_topic: str | None = None
 
 
 class TcfConversationResponse(BaseModel):
   reply: str
   audio_url: str | None = None
+  session_topic: str | None = None
 
 
 class TcfSpeakingEvaluationRequest(BaseModel):

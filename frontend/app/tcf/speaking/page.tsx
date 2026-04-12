@@ -46,6 +46,7 @@ export default function SpeakingPage() {
 
   const historyRef = useRef<TcfConversationMessage[]>([]);
   const sessionIdRef = useRef<string | null>(null);
+  const sessionTopicRef = useRef<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recorderRef = useRef<SpeakingRecorderHandle | null>(null);
   const pendingEvaluateRef = useRef(false);
@@ -96,6 +97,7 @@ export default function SpeakingPage() {
     setIsExamStarted(false);
     setUserTurnCount(0);
     sessionIdRef.current = null;
+    sessionTopicRef.current = null;
   }, [stopAudio]);
 
   const buildAudioUrl = (audioUrl?: string | null) => {
@@ -160,6 +162,9 @@ export default function SpeakingPage() {
         hints: mode === "practice" && hintsEnabled,
         session_id: sessionIdRef.current ?? undefined
       });
+      if (response.session_topic) {
+        sessionTopicRef.current = response.session_topic;
+      }
       const assistantMessage: TcfConversationMessage = { role: "assistant", content: response.reply };
       setHistory([assistantMessage]);
 
@@ -227,7 +232,8 @@ export default function SpeakingPage() {
         task_type: taskType,
         mode,
         hints: mode === "practice" && hintsEnabled,
-        session_id: sessionIdRef.current ?? undefined
+        session_id: sessionIdRef.current ?? undefined,
+        session_topic: sessionTopicRef.current ?? undefined
       });
 
       const assistantMessage: TcfConversationMessage = { role: "assistant", content: response.reply };

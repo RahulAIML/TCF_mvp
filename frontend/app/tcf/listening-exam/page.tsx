@@ -27,10 +27,10 @@ const PREFETCH_AHEAD = 1;
 const MAX_PLAYS = 1;
 
 const levelLabel = (questionNumber: number) => {
-  if (questionNumber <= 10) return "A1-A2";
-  if (questionNumber <= 20) return "A2-B1";
+  if (questionNumber <= 10) return "C2";
+  if (questionNumber <= 20) return "B2-C1";
   if (questionNumber <= 30) return "B1-B2";
-  return "B2-C2";
+  return "A2-B1";
 };
 
 export default function ListeningExamPage() {
@@ -266,11 +266,13 @@ export default function ListeningExamPage() {
       });
 
       const total = questionList.length;
-      const accuracy = total ? (correct / total) * 100 : 0;
+      const attempted = questionList.filter(({ number }) => (answers[number] ?? "") !== "").length;
+      const accuracy = attempted ? (correct / attempted) * 100 : 0;
 
       const payload: ListeningSubmitResult = {
         score: correct,
         total,
+        attempted,
         accuracy,
         results: detailed
       };
@@ -615,6 +617,7 @@ export default function ListeningExamPage() {
           <ListeningResults
             score={results.score}
             total={results.total}
+            attempted={results.attempted}
             accuracy={results.accuracy}
             results={results.results}
           />

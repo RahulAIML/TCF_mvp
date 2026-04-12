@@ -21,10 +21,10 @@ const EXAM_DURATION_SECONDS = 60 * 60;
 const PREFETCH_AHEAD = 5;
 
 const partLabel = (questionNumber: number) => {
-  if (questionNumber <= 10) return "Part 1 - A1-A2";
-  if (questionNumber <= 20) return "Part 2 - A2-B1";
+  if (questionNumber <= 10) return "Part 1 - C2";
+  if (questionNumber <= 20) return "Part 2 - B2-C1";
   if (questionNumber <= 30) return "Part 3 - B1-B2";
-  return "Part 4 - B2-C2";
+  return "Part 4 - A2";
 };
 
 export default function MockExamPage() {

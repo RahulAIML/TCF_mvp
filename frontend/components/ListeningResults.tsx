@@ -4,15 +4,19 @@ import { Card, CardContent } from "@/components/ui/card";
 interface ListeningResultsProps {
   score: number;
   total: number;
+  attempted: number;
   accuracy: number;
   results: ListeningResultItem[];
 }
 
-export default function ListeningResults({ score, total, accuracy, results }: ListeningResultsProps) {
+export default function ListeningResults({ score, total, attempted, accuracy, results }: ListeningResultsProps) {
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-        Score: {score} / {total} ? Accuracy: {accuracy.toFixed(1)}%
+      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 flex flex-wrap gap-4">
+        <span>Generated: <strong>{total}</strong></span>
+        <span>Attempted: <strong>{attempted}</strong></span>
+        <span>Correct: <strong>{score}</strong></span>
+        <span>Accuracy: <strong>{accuracy.toFixed(1)}%</strong></span>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         {results.map((item) => (

@@ -1,10 +1,10 @@
 ﻿import type { AnswerOption } from "@/types/exam";
 
 export type TcfExamQuestionType =
-  | "part1_a1a2"
-  | "part2_a2b1"
+  | "part1_c2"
+  | "part2_b2c1"
   | "part3_b1b2"
-  | "part4_b2c2";
+  | "part4_a2";
 
 export interface TcfGenerateQuestionRequest {
   question_number: number;
@@ -47,6 +47,7 @@ export interface TcfExamResultItem {
 export interface TcfSubmitExamResponse {
   score: number;
   total: number;
+  attempted: number;
   accuracy: number;
   completion_time: number;
   results: TcfExamResultItem[];

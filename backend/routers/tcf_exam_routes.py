@@ -74,7 +74,8 @@ async def post_submit_exam(
     )
 
   completion_time = max(int((payload.completed_at - payload.started_at).total_seconds()), 0)
-  accuracy = round(score / total * 100, 2) if total else 0.0
+  attempted = sum(1 for n in questions_by_number if payload.answers.get(n, "").strip())
+  accuracy = round(score / attempted * 100, 2) if attempted else 0.0
 
   attempt = ExamAttempt(
     user_id=user.id,
@@ -90,6 +91,7 @@ async def post_submit_exam(
   return TcfSubmitExamResponse(
     score=score,
     total=total,
+    attempted=attempted,
     accuracy=accuracy,
     completion_time=completion_time,
     results=results

@@ -81,60 +81,61 @@ SCENARIO_CONTEXTS = [
 # ── TCF Reading question profiles (CEFR-levelled parts) ─────────────────────
 # (start, end, key, cefr_label, description)
 TCF_QUESTION_PROFILES = [
-    (1, 10, "part1_a1a2", "A1-A2", "Documents simples de la vie quotidienne"),
-    (11, 20, "part2_a2b1", "A2-B1", "Textes courants et fonctionnels"),
+    (1, 10, "part1_c2", "C2", "Articles analytiques, textes littéraires ou éditoriaux complexes"),
+    (11, 20, "part2_b2c1", "B2-C1", "Articles de presse, rapports argumentatifs"),
     (21, 30, "part3_b1b2", "B1-B2", "Documents informatifs ou argumentatifs"),
-    (31, 39, "part4_b2c2", "B2-C2", "Articles de presse et textes complexes"),
+    (31, 39, "part4_a2", "A2", "Documents simples de la vie quotidienne"),
 ]
 
 TCF_PART_GUIDANCE = {
-    "part1_a1a2": (
-        "Niveau A1-A2. Utilisez un document simple de la vie quotidienne : "
-        "affiche, SMS, panneau, menu, horaire, petite annonce, courte instruction. "
-        "Vocabulaire tres simple, phrases courtes."
+    "part1_c2": (
+        "Niveau C2. Utilisez un article de presse soutenu, extrait litteraire, editorial "
+        "ou rapport analytique complexe. Vocabulaire tres soutenu, structure argumentative complexe, "
+        "references culturelles et nuances stylistiques."
     ),
-    "part2_a2b1": (
-        "Niveau A2-B1. Utilisez un texte courant : email informel, notice, article "
-        "court de magazine, brochure, lettre simple. Vocabulaire accessible."
+    "part2_b2c1": (
+        "Niveau B2-C1. Utilisez un article de presse, rapport argumentatif, essai ou "
+        "texte journalistique. Vocabulaire soutenu, connecteurs logiques, argumentation developpee."
     ),
     "part3_b1b2": (
         "Niveau B1-B2. Utilisez un document informatif ou argumentatif : "
         "article de blog, rapport resume, lettre officielle, description de projet. "
         "Nuances et connecteurs logiques attendus."
     ),
-    "part4_b2c2": (
-        "Niveau B2-C2. Utilisez un article de presse, extrait litteraire, editorial "
-        "ou rapport analytique. Vocabulaire soutenu, structure argumentative complexe."
+    "part4_a2": (
+        "Niveau A2. Utilisez un document simple de la vie quotidienne : "
+        "affiche, SMS, panneau, menu, horaire, petite annonce, courte instruction. "
+        "Vocabulaire simple et accessible, phrases courtes et directes."
     ),
 }
 
 TCF_READING_EXAMPLES = {
-    "part1_a1a2": """Question 1
+    "part1_c2": """Question 5
 Texte :
-Interdit de stationner.
+Dans cet essai percutant, l'auteur deconstruit les mecanismes de la rhetorique populiste en montrant comment elle instrumentalise l'affect collectif pour contourner la rationalite deliberative. Il soutient que la legitimite democratique ne peut s'affranchir d'une epistemologie citoyenne minimale.
 
 Question :
-Que signifie ce message ?
+Quelle these centrale l'auteur defend-il ?
 
-A) On peut stationner
-B) Il est interdit de stationner
-C) Il faut payer
-D) Le parking est ferme
+A) La democratie est incompatible avec les emotions collectives
+B) La rhetorique populiste exploite les sentiments pour eviter la raison
+C) Les citoyens doivent rejeter toute forme de discours politique
+D) La legitimite democratique depend uniquement des elections
 
 Bonne reponse : B""",
-    "part2_a2b1": """Question 12
+    "part2_b2c1": """Question 15
 Texte :
-Bonjour Lea, la reunion du club est deplacee a jeudi a 18 h. Peux-tu apporter les documents e Merci.
+Selon ce rapport journalistique, la montee du teletravail a profondement remodele l'organisation urbaine. Les villes secondaires connaissent un afflux de nouveaux residents qui fuient la saturation metropolitaine, tandis que les centres-villes traditionnels peinent a maintenir leur attractivite economique.
 
 Question :
-Que doit faire Lea ?
+Quel phenomene est decrit dans ce rapport ?
 
-A) Annuler la reunion
-B) Apporter des documents
-C) Appeler le club
-D) Arriver a 20 h
+A) La disparition des grandes metropoles
+B) Le declin du teletravail dans les villes secondaires
+C) La migration vers les villes secondaires due au teletravail
+D) La renovation des centres-villes metropolitains
 
-Bonne reponse : B""",
+Bonne reponse : C""",
     "part3_b1b2": """Question 24
 Texte :
 La ville lance un nouveau projet de velos partages pour reduire la circulation. Les usagers pourront emprunter un velo pour 30 minutes gratuitement, puis payer un tarif reduit.
@@ -148,23 +149,23 @@ C) Fermer les routes du centre
 D) Creer un nouveau parking
 
 Bonne reponse : B""",
-    "part4_b2c2": """Question 35
+    "part4_a2": """Question 35
 Texte :
-Dans son editorial, l'auteur souligne que la transition energetique ne peut reussir sans une coordination entre Etat, entreprises et citoyens. Il insiste sur la necessite d'investissements durables et d'une fiscalite plus lisible.
+Interdit de stationner.
 
 Question :
-Que demande l'auteur pour reussir la transition energetique ?
+Que signifie ce message ?
 
-A) Une baisse des investissements
-B) Une coordination entre acteurs
-C) La suppression des taxes
-D) L'arret des energies renouvelables
+A) On peut stationner
+B) Il est interdit de stationner
+C) Il faut payer
+D) Le parking est ferme
 
 Bonne reponse : B""",
 }
 
 TCF_READING_PROMPT_TEMPLATES = {
-    "part1_a1a2": """Tu es un concepteur d'epreuves TCF Canada. Genere UNE question de comprehension ecrite.
+    "part1_c2": """Tu es un concepteur d'epreuves TCF Canada. Genere UNE question de comprehension ecrite de niveau C2 (avance).
 
 Numero de question : {question_number} sur 39
 Partie : {cefr_label} - {part_desc}
@@ -182,7 +183,73 @@ EXEMPLE DE FORMAT ATTENDU (ne pas reproduire cet exemple) :
 Regles :
 - Langue : francais uniquement.
 - Le texte doit etre unique, ancre dans {place} / {context}.
-- Longueur du texte : 40 a 80 mots.
+- Longueur du texte : 150 a 220 mots.
+- Vocabulaire tres soutenu, structure argumentative complexe, references culturelles.
+- La question doit tester la comprehension analytique et l'inference, PAS la comprehension litterale.
+- La bonne reponse doit etre l'une des lettres A, B, C ou D.
+- Sortie : JSON valide uniquement (pas de Markdown, pas de commentaire).
+- Forme exacte du JSON :
+{{
+  "text": "...",
+  "question": "...",
+  "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+  "correct_answer": "A",
+  "explanation": "...",
+  "question_type": "{question_type}"
+}}
+""",
+    "part2_b2c1": """Tu es un concepteur d'epreuves TCF Canada. Genere UNE question de comprehension ecrite de niveau B2-C1.
+
+Numero de question : {question_number} sur 39
+Partie : {cefr_label} - {part_desc}
+Consigne de difficulte : {guidance}
+Lieu de mise en scene : {place}
+Contexte narratif : {context}
+Jeton de fraicheur : {freshness_token} (ne pas inclure dans la sortie)
+
+---
+EXEMPLE DE FORMAT ATTENDU (ne pas reproduire cet exemple) :
+
+{example}
+---
+
+Regles :
+- Langue : francais uniquement.
+- Le texte doit etre unique, ancre dans {place} / {context}.
+- Longueur du texte : 100 a 160 mots.
+- Vocabulaire soutenu, connecteurs logiques, argumentation developpee.
+- La question doit tester la comprehension de l'argument principal ou d'une nuance du texte.
+- La bonne reponse doit etre l'une des lettres A, B, C ou D.
+- Sortie : JSON valide uniquement (pas de Markdown, pas de commentaire).
+- Forme exacte du JSON :
+{{
+  "text": "...",
+  "question": "...",
+  "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+  "correct_answer": "A",
+  "explanation": "...",
+  "question_type": "{question_type}"
+}}
+""",
+    "part3_b1b2": """Tu es un concepteur d'epreuves TCF Canada. Genere UNE question de comprehension ecrite de niveau B1-B2.
+
+Numero de question : {question_number} sur 39
+Partie : {cefr_label} - {part_desc}
+Consigne de difficulte : {guidance}
+Lieu de mise en scene : {place}
+Contexte narratif : {context}
+Jeton de fraicheur : {freshness_token} (ne pas inclure dans la sortie)
+
+---
+EXEMPLE DE FORMAT ATTENDU (ne pas reproduire cet exemple) :
+
+{example}
+---
+
+Regles :
+- Langue : francais uniquement.
+- Le texte doit etre unique, ancre dans {place} / {context}.
+- Longueur du texte : 70 a 120 mots.
 - Complexite linguistique adaptee au niveau {cefr_label}.
 - La bonne reponse doit etre l'une des lettres A, B, C ou D.
 - Sortie : JSON valide uniquement (pas de Markdown, pas de commentaire).
@@ -196,7 +263,7 @@ Regles :
   "question_type": "{question_type}"
 }}
 """,
-    "part2_a2b1": """Tu es un concepteur d'epreuves TCF Canada. Genere UNE question de comprehension ecrite.
+    "part4_a2": """Tu es un concepteur d'epreuves TCF Canada. Genere UNE question de comprehension ecrite de niveau A2 (debutant).
 
 Numero de question : {question_number} sur 39
 Partie : {cefr_label} - {part_desc}
@@ -214,72 +281,9 @@ EXEMPLE DE FORMAT ATTENDU (ne pas reproduire cet exemple) :
 Regles :
 - Langue : francais uniquement.
 - Le texte doit etre unique, ancre dans {place} / {context}.
-- Longueur du texte : 60 a 100 mots.
-- Complexite linguistique adaptee au niveau {cefr_label}.
-- La bonne reponse doit etre l'une des lettres A, B, C ou D.
-- Sortie : JSON valide uniquement (pas de Markdown, pas de commentaire).
-- Forme exacte du JSON :
-{{
-  "text": "...",
-  "question": "...",
-  "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
-  "correct_answer": "A",
-  "explanation": "...",
-  "question_type": "{question_type}"
-}}
-""",
-    "part3_b1b2": """Tu es un concepteur d'epreuves TCF Canada. Genere UNE question de comprehension ecrite.
-
-Numero de question : {question_number} sur 39
-Partie : {cefr_label} - {part_desc}
-Consigne de difficulte : {guidance}
-Lieu de mise en scene : {place}
-Contexte narratif : {context}
-Jeton de fraicheur : {freshness_token} (ne pas inclure dans la sortie)
-
----
-EXEMPLE DE FORMAT ATTENDU (ne pas reproduire cet exemple) :
-
-{example}
----
-
-Regles :
-- Langue : francais uniquement.
-- Le texte doit etre unique, ancre dans {place} / {context}.
-- Longueur du texte : 80 a 140 mots.
-- Complexite linguistique adaptee au niveau {cefr_label}.
-- La bonne reponse doit etre l'une des lettres A, B, C ou D.
-- Sortie : JSON valide uniquement (pas de Markdown, pas de commentaire).
-- Forme exacte du JSON :
-{{
-  "text": "...",
-  "question": "...",
-  "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
-  "correct_answer": "A",
-  "explanation": "...",
-  "question_type": "{question_type}"
-}}
-""",
-    "part4_b2c2": """Tu es un concepteur d'epreuves TCF Canada. Genere UNE question de comprehension ecrite.
-
-Numero de question : {question_number} sur 39
-Partie : {cefr_label} - {part_desc}
-Consigne de difficulte : {guidance}
-Lieu de mise en scene : {place}
-Contexte narratif : {context}
-Jeton de fraicheur : {freshness_token} (ne pas inclure dans la sortie)
-
----
-EXEMPLE DE FORMAT ATTENDU (ne pas reproduire cet exemple) :
-
-{example}
----
-
-Regles :
-- Langue : francais uniquement.
-- Le texte doit etre unique, ancre dans {place} / {context}.
-- Longueur du texte : 120 a 200 mots.
-- Complexite linguistique adaptee au niveau {cefr_label}.
+- Longueur du texte : 30 a 60 mots.
+- Vocabulaire simple et accessible, phrases courtes et directes.
+- La question doit etre facile et directe, testant la comprehension litterale.
 - La bonne reponse doit etre l'une des lettres A, B, C ou D.
 - Sortie : JSON valide uniquement (pas de Markdown, pas de commentaire).
 - Forme exacte du JSON :
@@ -728,23 +732,23 @@ def generate_tcf_listening_question(
     39 questions, 35 minutes, progressive difficulty A1→C2.
     Audio generation is delegated to the shared TTS helpers in ai_service.py.
     """
-    # Determine CEFR band from question number
+    # Determine CEFR band from question number (hard → easy, C2 first)
     if question_number <= 10:
-        cefr = "A1–A2"
-        style = "annonce simple, dialogue quotidien ou message court"
-        complexity = "vocabulaire de base, phrases courtes"
+        cefr = "C2"
+        style = "débat académique, extrait de documentaire complexe ou conférence spécialisée"
+        complexity = "vocabulaire très soutenu, argumentation dense, références culturelles implicites"
     elif question_number <= 20:
-        cefr = "A2–B1"
-        style = "conversation informelle, interview courte ou annonce publique"
-        complexity = "vocabulaire courant, quelques expressions idiomatiques"
+        cefr = "B2–C1"
+        style = "débat, interview journalistique ou émission de radio argumentative"
+        complexity = "vocabulaire soutenu, argumentation développée, registre formel"
     elif question_number <= 30:
         cefr = "B1–B2"
         style = "reportage radio, entretien professionnel ou émission culturelle"
         complexity = "vocabulaire varié, registres formel et informel"
     else:
-        cefr = "B2–C2"
-        style = "débat, conférence courte ou extrait de documentaire"
-        complexity = "vocabulaire soutenu, argumentation complexe"
+        cefr = "A2–B1"
+        style = "annonce simple, dialogue quotidien ou message court"
+        complexity = "vocabulaire courant, phrases simples et directes"
 
     domain = _pick_domain()
     freshness_token = _freshness_token()
@@ -1021,28 +1025,31 @@ def generate_tcf_speaking_reply(
     task_type: str,
     mode: str = "practice",
     hints: bool = False,
-    session_id: str | None = None
+    session_id: str | None = None,
+    session_topic: str | None = None
 ) -> dict[str, object]:
     """
     Generate an AI examiner reply for TCF Canada speaking.
     task_type: 'basic_interaction' | 'role_play' | 'opinion'
+    session_topic: locked topic for the session (passed back from first reply)
     """
+    chosen_topic: str
     if task_type == "basic_interaction":
-        scenario = random.choice(TCF_BASIC_INTERACTIONS)
+        chosen_topic = session_topic if session_topic else random.choice(TCF_BASIC_INTERACTIONS)
         system_context = (
-            f"Tu es examinateur TCF Canada. Scénario : {scenario} "
+            f"Tu es examinateur TCF Canada. Scénario : {chosen_topic} "
             "Engage une interaction basique et naturelle, réponses courtes."
         )
     elif task_type == "role_play":
-        scenario = random.choice(TCF_ROLE_PLAYS)
+        chosen_topic = session_topic if session_topic else random.choice(TCF_ROLE_PLAYS)
         system_context = (
-            f"Tu es examinateur TCF Canada. Jeu de rôle : {scenario} "
+            f"Tu es examinateur TCF Canada. Jeu de rôle : {chosen_topic} "
             "Joue le rôle indiqué, pose des questions pertinentes."
         )
     else:  # opinion
-        topic = random.choice(TCF_OPINION_TOPICS)
+        chosen_topic = session_topic if session_topic else random.choice(TCF_OPINION_TOPICS)
         system_context = (
-            f"Tu es examinateur TCF Canada. Sujet d'opinion : {topic} "
+            f"Tu es examinateur TCF Canada. Sujet d'opinion : {chosen_topic} "
             "Stimule la discussion, demande des justifications."
         )
 
@@ -1087,7 +1094,7 @@ Réponds en tant qu'examinateur en français (2 à 4 phrases maximum). Sortie : 
     except Exception:
         pass
 
-    return {"reply": reply_text, "audio_url": audio_url}
+    return {"reply": reply_text, "audio_url": audio_url, "session_topic": chosen_topic}
 
 
 def evaluate_tcf_speaking_conversation(

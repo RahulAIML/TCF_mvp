@@ -37,6 +37,7 @@ export interface ListeningResultItem {
 export interface ListeningSubmitResult {
   score: number;
   total: number;
+  attempted: number;
   accuracy: number;
   results: ListeningResultItem[];
 }
