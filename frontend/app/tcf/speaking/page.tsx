@@ -31,7 +31,7 @@ const initialHints = [
 
 export default function SpeakingPage() {
   const [mode, setMode] = useState<TcfSpeakingMode>("practice");
-  const [taskType, setTaskType] = useState<TcfSpeakingTaskType>("role_play");
+  const [taskType, setTaskType] = useState<TcfSpeakingTaskType | null>("role_play");
   const [history, setHistory] = useState<TcfConversationMessage[]>([]);
   const [transcript, setTranscript] = useState("");
   const [convState, setConvState] = useState<ConvState>("idle");
@@ -100,6 +100,22 @@ export default function SpeakingPage() {
     sessionTopicRef.current = null;
   }, [stopAudio]);
 
+  const resetAfterEvaluation = useCallback(() => {
+    recorderRef.current?.cancel();
+    stopAudio();
+    pendingEvaluateRef.current = false;
+    setHistory([]);
+    setTranscript("");
+    setError("");
+    setConvState("idle");
+    setTimerActive(false);
+    setIsExamStarted(false);
+    setUserTurnCount(0);
+    sessionIdRef.current = null;
+    sessionTopicRef.current = null;
+    setTaskType(null);
+  }, [stopAudio]);
+
   const buildAudioUrl = (audioUrl?: string | null) => {
     if (!audioUrl) return null;
     if (audioUrl.startsWith("http")) return audioUrl;
@@ -109,6 +125,10 @@ export default function SpeakingPage() {
   const handleEvaluate = useCallback(async () => {
     if (historyRef.current.length === 0) {
       setError("No conversation to evaluate yet.");
+      return;
+    }
+    if (!taskType) {
+      setError("Please select a task before evaluating.");
       return;
     }
     setError("");
@@ -123,12 +143,13 @@ export default function SpeakingPage() {
       });
       setEvaluation(result);
       setTimerActive(false);
+      resetAfterEvaluation();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to evaluate speaking.");
     } finally {
       setConvState("idle");
     }
-  }, [taskType, mode, stopAudio]);
+  }, [taskType, mode, stopAudio, resetAfterEvaluation]);
 
   const playAudio = useCallback((audioUrl: string, onEnded?: () => void) => {
     if (!audioRef.current) return;
@@ -149,6 +170,11 @@ export default function SpeakingPage() {
   }, []);
 
   const startExaminer = useCallback(async () => {
+    if (!taskType) {
+      setError("Please select a task to begin.");
+      setConvState("idle");
+      return;
+    }
     setError("");
     setEvaluation(null);
     setTranscript("");
@@ -188,6 +214,10 @@ export default function SpeakingPage() {
   }, [taskType, mode, hintsEnabled, handsFreeEnabled, playAudio, startListening]);
 
   const startSession = () => {
+    if (!taskType) {
+      setError("Please select a task to begin.");
+      return;
+    }
     resetSession();
     sessionIdRef.current = buildSessionId();
     if (mode === "exam") {
@@ -206,6 +236,10 @@ export default function SpeakingPage() {
     if (userTurnCount >= MAX_EXCHANGES) return;
     if (mode === "exam" && !isExamStarted) {
       setError("Please start the exam first.");
+      return;
+    }
+    if (!taskType) {
+      setError("Please select a task to continue.");
       return;
     }
 
@@ -284,6 +318,7 @@ export default function SpeakingPage() {
   }, [convState, handsFreeEnabled, mode, isExamStarted, isSessionActive]);
 
   const taskLabel = useMemo(() => {
+    if (!taskType) return "Select a task";
     if (taskType === "basic_interaction") return "Task 1: Basic interaction";
     if (taskType === "role_play") return "Task 2: Role-play";
     return "Task 3: Opinion";
@@ -480,8 +515,8 @@ export default function SpeakingPage() {
                     {[
                       { label: "Fluency", val: evaluation.fluency },
                       { label: "Grammar", val: evaluation.grammar },
-                      { label: "Vocabulary", val: evaluation.vocabulary },
-                      { label: "Interaction", val: evaluation.interaction }
+                      { label: "Relevance", val: evaluation.vocabulary },
+                      { label: "Completeness", val: evaluation.interaction }
                     ].map(({ label, val }) => (
                       <div key={label} className="rounded-xl bg-slate-50 p-3">
                         <p className="text-xs uppercase text-slate-400">{label}</p>

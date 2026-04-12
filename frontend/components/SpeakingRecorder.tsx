@@ -81,7 +81,10 @@ const SpeakingRecorder = forwardRef<SpeakingRecorderHandle, SpeakingRecorderProp
     const [isListening, setIsListening] = useState(false);
     const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
     const bufferRef = useRef<string[]>([]);
+    const interimRef = useRef<string>("");
     const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const stopTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pendingEmitRef = useRef(false);
     const manualSubmitRef = useRef(manualSubmit);
     const silenceTimeoutMsRef = useRef(silenceTimeoutMs);
     manualSubmitRef.current = manualSubmit;
@@ -94,26 +97,50 @@ const SpeakingRecorder = forwardRef<SpeakingRecorderHandle, SpeakingRecorderProp
       }
     }, []);
 
+    const clearStopTimeout = useCallback(() => {
+      if (stopTimeoutRef.current !== null) {
+        clearTimeout(stopTimeoutRef.current);
+        stopTimeoutRef.current = null;
+      }
+    }, []);
+
+    const finalizeStop = useCallback(
+      (emit: boolean) => {
+        clearSilenceTimer();
+        clearStopTimeout();
+        setIsListening(false);
+        onListeningChange?.(false);
+        const combined = [...bufferRef.current, interimRef.current]
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .join(" ")
+          .trim();
+        bufferRef.current = [];
+        interimRef.current = "";
+        pendingEmitRef.current = false;
+        if (emit && combined) {
+          onTranscript(combined);
+        }
+      },
+      [clearSilenceTimer, clearStopTimeout, onListeningChange, onTranscript]
+    );
+
     // Emit buffer and stop recognition
     const doStop = useCallback(
       (emit: boolean) => {
         clearSilenceTimer();
+        pendingEmitRef.current = emit;
         const rec = recognitionRef.current;
         recognitionRef.current = null; // prevent onend restart
         if (rec) {
-          try { rec.abort(); } catch { /* ignore */ }
+          try { rec.stop(); } catch { try { rec.abort(); } catch { /* ignore */ } }
+          clearStopTimeout();
+          stopTimeoutRef.current = setTimeout(() => finalizeStop(pendingEmitRef.current), 500);
+          return;
         }
-        setIsListening(false);
-        onListeningChange?.(false);
-        if (emit && bufferRef.current.length > 0) {
-          const text = bufferRef.current.join(" ").trim();
-          bufferRef.current = [];
-          if (text) onTranscript(text);
-        } else {
-          bufferRef.current = [];
-        }
+        finalizeStop(emit);
       },
-      [clearSilenceTimer, onListeningChange, onTranscript]
+      [clearSilenceTimer, clearStopTimeout, finalizeStop]
     );
 
     const resetSilenceTimer = useCallback(() => {
@@ -154,8 +181,11 @@ const SpeakingRecorder = forwardRef<SpeakingRecorderHandle, SpeakingRecorderProp
             const text = result[0].transcript.trim();
             if (text) {
               bufferRef.current.push(text);
+              interimRef.current = "";
               resetSilenceTimer(); // restart silence countdown on each final result
             }
+          } else {
+            interimRef.current = result[0].transcript.trim();
           }
         }
       };
@@ -180,8 +210,7 @@ const SpeakingRecorder = forwardRef<SpeakingRecorderHandle, SpeakingRecorderProp
         if (recognitionRef.current === recognition) {
           try { recognition.start(); } catch { /* ignore if already started */ }
         } else {
-          setIsListening(false);
-          onListeningChange?.(false);
+          finalizeStop(pendingEmitRef.current);
         }
       };
 

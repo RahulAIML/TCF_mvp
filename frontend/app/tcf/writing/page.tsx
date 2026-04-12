@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import TcfAppShell from "@/components/TcfAppShell";
 import WritingStepper, { WritingStep } from "@/components/WritingStepper";
 import WritingEvaluationCard from "@/components/WritingEvaluationCard";
+import WritingAssistantPanel from "@/components/WritingAssistantPanel";
 import TimerClock from "@/components/TimerClock";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -209,6 +210,31 @@ export default function WritingPage() {
   const task1Combined = useMemo(() => buildCombinedText(TASK1_STEPS, task1Values), [task1Values]);
   const task2Combined = useMemo(() => buildCombinedText(TASK2_STEPS, task2Values), [task2Values]);
   const task3Combined = useMemo(() => buildCombinedText(TASK3_STEPS, task3Values), [task3Values]);
+  const assistantContext = useMemo(() => {
+    if (!mode) return "";
+    if (mode === "exam") {
+      return examTask === "task1" ? task1Prompt : examTask === "task2" ? task2Prompt : task3Prompt;
+    }
+    return task1Prompt || task2Prompt || task3Prompt;
+  }, [mode, examTask, task1Prompt, task2Prompt, task3Prompt]);
+
+  const assistantContextLabel = useMemo(() => {
+    if (!mode) return "";
+    if (mode === "exam") {
+      return examTask === "task1" ? "Task 1 Prompt" : examTask === "task2" ? "Task 2 Prompt" : "Task 3 Prompt";
+    }
+    return "Task Prompt";
+  }, [mode, examTask]);
+
+  const assistantDraft = useMemo(() => {
+    if (!mode) return "";
+    if (mode === "exam") {
+      return examTask === "task1" ? task1Draft : examTask === "task2" ? task2Draft : task3Draft;
+    }
+    if (task1Combined) return task1Combined;
+    if (task2Combined) return task2Combined;
+    return task3Combined;
+  }, [mode, examTask, task1Draft, task2Draft, task3Draft, task1Combined, task2Combined, task3Combined]);
 
   const resetState = useCallback(() => {
     setTask1Prompt("");
@@ -578,8 +604,9 @@ export default function WritingPage() {
   );
 
   return (
-    <TcfAppShell title="Writing Module" subtitle="Guided learning and exam simulation for TCF writing">
-      <div className="space-y-6">
+      <TcfAppShell title="Writing Module" subtitle="Guided learning and exam simulation for TCF writing">
+        <div className="grid gap-6 lg:grid-cols-[2.2fr_1fr]">
+          <div className="space-y-6">
         {!mode || !isStarted ? (
           <div className="grid gap-6 lg:grid-cols-2">
             <Card className="border-slate-200 shadow-sm">
@@ -601,8 +628,8 @@ export default function WritingPage() {
               </CardContent>
             </Card>
           </div>
-        ) : (
-          <div className="space-y-6">
+          ) : (
+            <div className="space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-semibold text-slate-900">TCF Writing Tasks</h2>
@@ -883,8 +910,13 @@ export default function WritingPage() {
                 )}
               </div>
             )}
+            </div>
+            <WritingAssistantPanel
+              contextLabel={assistantContextLabel}
+              contextText={assistantContext}
+              draftText={assistantDraft}
+            />
           </div>
-        )}
       </div>
     </TcfAppShell>
   );

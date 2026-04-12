@@ -474,6 +474,21 @@ class TcfWritingSubmitResponse(BaseModel):
   task3: TcfWritingEvaluationResponse
 
 
+TcfWritingAssistantAction = Literal["translate", "grammar", "suggestions", "example"]
+TcfWritingTranslationDirection = Literal["fr-en", "en-fr"]
+
+
+class TcfWritingAssistantRequest(BaseModel):
+  message: str = Field(min_length=1)
+  action: TcfWritingAssistantAction
+  direction: TcfWritingTranslationDirection | None = None
+  context: str | None = None
+
+
+class TcfWritingAssistantResponse(BaseModel):
+  reply: str
+
+
 
 SpeakingTaskType = Literal["role_play", "opinion"]
 SpeakingMode = Literal["practice", "exam"]
@@ -626,4 +641,3 @@ class LearnSaveSessionRequest(BaseModel):
   structure: float | None = None
   exercises_total: int = 0
   exercises_completed: int = 0
-

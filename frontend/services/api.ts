@@ -35,6 +35,8 @@ import type {
 import type {
   TcfGenerateWritingTasksRequest,
   TcfGenerateWritingTasksResponse,
+  TcfWritingAssistantRequest,
+  TcfWritingAssistantResponse,
   TcfWritingEvaluationRequest,
   TcfWritingEvaluationResponse,
   TcfWritingStepFeedbackRequest,
@@ -260,6 +262,18 @@ export async function submitTcfWriting(
     cache: "no-store"
   });
   return parseResponse<TcfWritingSubmitResponse>(res);
+}
+
+export async function sendTcfWritingAssistant(
+  payload: TcfWritingAssistantRequest
+): Promise<TcfWritingAssistantResponse> {
+  const res = await fetch(`${API_BASE_URL}/tcf/writing/assistant`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+    cache: "no-store"
+  });
+  return parseResponse<TcfWritingAssistantResponse>(res);
 }
 
 export async function sendTcfConversation(

@@ -15,6 +15,7 @@ interface ListeningQuestionCardProps {
   maxPlays?: number;
   playCount?: number;
   onPlay?: () => void;
+  /** Called when audio needs to be fetched on-demand (question loaded with defer_audio) */
   onRequestAudio?: (question: ListeningQuestion) => Promise<string | undefined>;
   showTranscript: boolean;
   onToggleTranscript?: () => void;
@@ -129,23 +130,30 @@ export default function ListeningQuestionCard({
   }, [currentWordIndex, showTranscript, autoScroll]);
 
   const handlePlayClick = async () => {
-    if (!audioRef.current || !canPlay) return;
-    const audio = audioRef.current;
+    if (!audioRef.current) return;
 
-    if (!audioSrc && onRequestAudio) {
+    // Lazy-load audio if not yet available
+    let effectiveSrc = audioSrc;
+    if (!effectiveSrc && onRequestAudio) {
       setIsBuffering(true);
       try {
-        const url = await onRequestAudio(question);
-        if (url) {
-          const resolved = url.startsWith("http") ? url : `${apiBase}${url}`;
+        const fetched = await onRequestAudio(question);
+        if (fetched) {
+          const resolved = fetched.startsWith("http") ? fetched : `${apiBase}${fetched}`;
           setLocalAudioUrl(resolved);
-          audio.src = resolved;
-          audio.load();
+          effectiveSrc = resolved;
         }
       } catch {
         setIsBuffering(false);
         return;
       }
+    }
+
+    if (!effectiveSrc || (remainingPlays !== null && remainingPlays <= 0)) return;
+
+    const audio = audioRef.current;
+    if (audio.src !== effectiveSrc) {
+      audio.src = effectiveSrc;
     }
 
     if (audio.readyState < 3) {
@@ -226,7 +234,15 @@ export default function ListeningQuestionCard({
           <p className="text-sm font-medium text-slate-700">Audio Controls</p>
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <Button onClick={handlePlayClick} disabled={!canPlay}>
-              {isBuffering ? "Loading audio..." : !audioSrc ? "Generate audio" : remainingPlays === null ? "Play" : remainingPlays > 0 ? `Play (${remainingPlays} left)` : "Play limit reached"}
+              {isBuffering
+                ? "Loading audio..."
+                : remainingPlays !== null && remainingPlays <= 0
+                  ? "Play limit reached"
+                  : !audioSrc && !onRequestAudio
+                    ? "Audio unavailable"
+                    : remainingPlays === null
+                      ? "Play"
+                      : `Play (${remainingPlays} left)`}
             </Button>
             <Button variant="secondary" onClick={handlePauseClick} disabled={!audioSrc && !isPlaying}>
               {isPlaying ? "Pause" : "Resume"}

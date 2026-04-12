@@ -18,20 +18,25 @@ export interface GenerateListeningAudioResponse {
 
 export interface ListeningQuestion {
   script: string;
+  transcript?: string | null;
   audio_url?: string | null;
   question: string;
   options: string[];
   correct_answer: AnswerOption;
   explanation: string;
+  user_answer?: AnswerOption | "";
 }
 
 export interface ListeningResultItem {
   question_number: number;
   question: string;
+  options: string[];
   correct_answer: AnswerOption;
   user_answer: AnswerOption | "";
   is_correct: boolean;
   explanation: string;
+  audio_url?: string | null;
+  transcript?: string | null;
 }
 
 export interface ListeningSubmitResult {

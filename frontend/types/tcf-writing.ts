@@ -72,3 +72,17 @@ export interface TcfWritingSubmitResponse {
   task2: TcfWritingEvaluationResponse;
   task3: TcfWritingEvaluationResponse;
 }
+
+export type TcfWritingAssistantAction = "translate" | "grammar" | "suggestions" | "example";
+export type TcfWritingTranslationDirection = "fr-en" | "en-fr";
+
+export interface TcfWritingAssistantRequest {
+  message: string;
+  action: TcfWritingAssistantAction;
+  direction?: TcfWritingTranslationDirection;
+  context?: string;
+}
+
+export interface TcfWritingAssistantResponse {
+  reply: string;
+}

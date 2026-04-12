@@ -319,6 +319,14 @@ TCF_OPINION_TOPICS = [
     "Devrait-on rendre les transports en commun entierement gratuits ?",
 ]
 
+_SPEAKING_STOPWORDS = {
+    "je", "tu", "il", "elle", "on", "nous", "vous", "ils", "elles",
+    "le", "la", "les", "un", "une", "des", "de", "du", "au", "aux",
+    "et", "ou", "mais", "en", "a", "à", "est", "suis", "sont",
+    "etre", "être", "avoir", "pas", "ne", "non", "oui", "merci",
+    "bonjour", "salut", "daccord", "ok", "okay"
+}
+
 
 # ── Deduplication caches (separate from other services) ─────────────────────
 
@@ -872,6 +880,72 @@ Regles :
     }
 
 
+def assist_tcf_writing(
+    action: str,
+    message: str,
+    direction: str | None = None,
+    context: str | None = None
+) -> str:
+    clean = message.strip()
+    if not clean:
+        return "Veuillez fournir un texte pour continuer."
+
+    context_block = f"\nContexte de la consigne :\n{context}\n" if context else ""
+
+    if action == "translate":
+        if direction == "en-fr":
+            prompt = (
+                "Translate the following English text to French. "
+                "Output only the French translation - no explanations, no labels.\n\n"
+                f"English text:\n{clean}"
+            )
+            return _generate_text(prompt, temperature=0.2).strip()
+        prompt = (
+            "Translate the following French text to English. "
+            "Output only the English translation - no explanations, no labels.\n\n"
+            f"French text:\n{clean}"
+        )
+        return _generate_text(prompt, temperature=0.2).strip()
+
+    if action == "grammar":
+        prompt = f"""Tu es correcteur de franÃ§ais. Corrige la grammaire, l'orthographe et la ponctuation.
+{context_block}
+Texte :
+{clean}
+
+RÃ©ponds uniquement avec la version corrigÃ©e, sans explications.
+"""
+        return _generate_text(prompt, temperature=0.2).strip()
+
+    if action == "suggestions":
+        prompt = f"""Tu es coach TCF Canada en expression Ã©crite. Donne 3 Ã  5 suggestions concrÃ¨tes et concises
+pour amÃ©liorer la rÃ©ponse.
+{context_block}
+Texte :
+{clean}
+
+RÃ©ponds par une liste simple (tirets), sans texte supplÃ©mentaire.
+"""
+        return _generate_text(prompt, temperature=0.3).strip()
+
+    if action == "example":
+        prompt = f"""Tu es examinateur TCF Canada. GÃ©nÃ¨re un exemple de rÃ©ponse claire et naturelle.
+{context_block}
+Consigne ou sujet :
+{clean}
+
+Contraintes :
+- 80 Ã  140 mots.
+- FranÃ§ais naturel et cohÃ©rent.
+- Pas de titres, pas de puces.
+
+RÃ©ponds uniquement avec l'exemple.
+"""
+        return _generate_text(prompt, temperature=0.4).strip()
+
+    return "Action non prise en charge."
+
+
 def evaluate_tcf_writing_task(
     task_type: str,
     prompt_text: str,
@@ -1019,6 +1093,30 @@ Regles :
     }
 
 
+def _speaking_candidate_text(history: list[dict[str, str]]) -> str:
+    return " ".join(
+        str(item.get("content", "")).strip()
+        for item in history
+        if item.get("role") == "user"
+    ).strip()
+
+
+def _speaking_tokens(text: str) -> list[str]:
+    return re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ']+", text.lower())
+
+
+def _is_speaking_low_response(text: str) -> tuple[bool, str]:
+    tokens = _speaking_tokens(text)
+    if not tokens:
+        return True, "empty"
+    if len(tokens) < 5:
+        return True, "too_short"
+    content_words = [w for w in tokens if w not in _SPEAKING_STOPWORDS and len(w) > 2]
+    if len(content_words) < 2:
+        return True, "irrelevant"
+    return False, ""
+
+
 def generate_tcf_speaking_reply(
     message: str,
     history: list[dict[str, str]],
@@ -1057,6 +1155,7 @@ def generate_tcf_speaking_reply(
         f"{'Candidat' if m['role'] == 'user' else 'Examinateur'}: {m['content']}"
         for m in history
     )
+    message_text = "" if message == "__START__" else message
     hint_instruction = (
         "\nDonne un indice court entre [crochets] si le candidat semble bloqué."
         if hints else ""
@@ -1065,10 +1164,20 @@ def generate_tcf_speaking_reply(
         "\nMode examen : reste neutre, n'aide pas, évalue implicitement."
         if mode == "exam" else ""
     )
+    followup_instruction = (
+        "\nReste STRICTEMENT sur le même sujet. Pose une question de relance "
+        "directement liée à la dernière réponse du candidat; ne change pas de scénario."
+    )
+    start_instruction = (
+        "\nSi le message du candidat est '__START__' ou si l'historique est vide, "
+        "ouvre l'échange avec une question claire liée au sujet."
+    )
 
     prompt = f"""{system_context}
 {exam_instruction}
 {hint_instruction}
+{followup_instruction}
+{start_instruction}
 
 EXEMPLE DE REPONSE (ne pas reproduire cet exemple) :
 Examinateur : Merci. Pouvez-vous donner un autre detail ?
@@ -1076,7 +1185,7 @@ Examinateur : Merci. Pouvez-vous donner un autre detail ?
 Historique de la conversation :
 {history_text}
 
-Candidat : {message}
+Candidat : {message_text}
 
 Réponds en tant qu'examinateur en français (2 à 4 phrases maximum). Sortie : texte brut uniquement.
 """
@@ -1104,6 +1213,38 @@ def evaluate_tcf_speaking_conversation(
     """
     Evaluate a complete TCF Canada speaking session.
     """
+    candidate_text = _speaking_candidate_text(history)
+    last_user_text = next(
+        (str(item.get("content", "")).strip() for item in reversed(history) if item.get("role") == "user"),
+        ""
+    )
+    probe_text = last_user_text or candidate_text
+    is_low, low_reason = _is_speaking_low_response(probe_text)
+    if is_low:
+        feedback_map = {
+            "empty": [
+                "Aucune réponse détectée.",
+                "Répondez en phrases complètes."
+            ],
+            "too_short": [
+                "Votre réponse est trop courte.",
+                "Ajoutez au moins deux idées et un exemple."
+            ],
+            "irrelevant": [
+                "La réponse est hors sujet ou trop vague.",
+                "Reformulez en répondant directement à la question."
+            ],
+        }
+        feedback = feedback_map.get(low_reason, feedback_map["too_short"])
+        return {
+            "fluency": 1,
+            "grammar": 1,
+            "vocabulary": 1,
+            "interaction": 1,
+            "feedback": feedback,
+            "improved_response": "Essayez une réponse plus complète et directement liée au sujet."
+        }
+
     history_text = "\n".join(
         f"{'Candidat' if m['role'] == 'user' else 'Examinateur'}: {m['content']}"
         for m in history
@@ -1121,7 +1262,13 @@ Type de tache : {task_label}
 Conversation :
 {history_text}
 
-evalue UNIQUEMENT les repliques du candidat. Retourne un JSON avec :
+evalue UNIQUEMENT les repliques du candidat. Notation stricte sur :
+- Fluency (aisance)
+- Grammar (grammaire)
+- Relevance (pertinence)
+- Completeness (completude)
+
+Retourne un JSON avec :
 {{
   "fluency": 0-10,
   "grammar": 0-10,
@@ -1141,11 +1288,14 @@ EXEMPLE DE SORTIE (ne pas reproduire cet exemple) :
   "improved_response": "..."
 }}
 
-Regles :
-- Scores entiers 0 a 10.
-- 3 a 5 points de feedback concrets.
-- improved_response : exemple d'une meilleure reponse du candidat.
-- Sortie : JSON valide uniquement.
+  Regles :
+  - Scores entiers 0 a 10.
+  - 3 a 5 points de feedback concrets.
+  - Si la reponse est faible, courte ou hors sujet, donne des scores entre 0 et 2.
+  - "vocabulary" doit refleter la pertinence.
+  - "interaction" doit refleter la completude de la reponse.
+  - improved_response : exemple d'une meilleure reponse du candidat.
+  - Sortie : JSON valide uniquement.
 """
 
     payload = _generate_json(prompt, temperature=0.3)
@@ -1509,3 +1659,4 @@ def extract_text_from_image_bytes(raw: bytes, content_type: str) -> str:
         return str(response.text).strip() if getattr(response, "text", None) else ""
     except Exception as error:
         raise RuntimeError(f"Image text extraction failed: {error}") from error
+

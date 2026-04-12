@@ -17,9 +17,12 @@ from schemas import (
   TcfWritingStepFeedbackRequest,
   TcfWritingStepFeedbackResponse,
   TcfWritingSubmitRequest,
-  TcfWritingSubmitResponse
+  TcfWritingSubmitResponse,
+  TcfWritingAssistantRequest,
+  TcfWritingAssistantResponse
 )
 from tcf_ai_service import (
+  assist_tcf_writing,
   evaluate_tcf_writing_step,
   evaluate_tcf_writing_task,
   generate_tcf_writing_tasks
@@ -65,6 +68,24 @@ async def post_evaluate_writing_step(
     raise HTTPException(status_code=500, detail=str(error)) from error
 
   return TcfWritingStepFeedbackResponse(**evaluation)
+
+
+@router.post("/writing/assistant", response_model=TcfWritingAssistantResponse)
+async def post_writing_assistant(
+  payload: TcfWritingAssistantRequest,
+  _user: User = Depends(get_optional_user)
+) -> TcfWritingAssistantResponse:
+  try:
+    reply = assist_tcf_writing(
+      action=payload.action,
+      message=payload.message,
+      direction=payload.direction,
+      context=payload.context
+    )
+  except RuntimeError as error:
+    raise HTTPException(status_code=500, detail=str(error)) from error
+
+  return TcfWritingAssistantResponse(reply=reply)
 
 
 @router.post("/writing/save-progress", response_model=WritingProgressResponse)
