@@ -184,7 +184,7 @@ export default function ExerciseCard({
           {exercise.type === "sentence_correction" ? (
             <div className="space-y-1">
               <p className="text-sm font-medium text-slate-700">Correct this sentence:</p>
-              <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800 line-through">
+              <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-800">
                 {exercise.incorrect}
               </p>
             </div>
