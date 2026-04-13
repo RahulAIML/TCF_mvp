@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import TcfAppShell from "@/components/TcfAppShell";
 import ExerciseCard from "@/components/ExerciseCard";
+import LearnAssistantPanel from "@/components/LearnAssistantPanel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -375,6 +376,7 @@ export default function LearnPage() {
             )}
 
             {(pageState === "exercises" || pageState === "complete") && (
+              <div className="grid gap-6 lg:grid-cols-[1fr_360px] items-start">
               <div className="space-y-6">
                 <div className="overflow-hidden rounded-2xl border border-indigo-200 bg-indigo-50 shadow-sm">
                   <div className="flex w-full items-center justify-between px-5 py-3">
@@ -467,6 +469,15 @@ export default function LearnPage() {
                     </Button>
                   </div>
                 )}
+              </div>
+
+              {/* AI Assistant sidebar */}
+              <div className="sticky top-4">
+                <LearnAssistantPanel
+                  passageText={inputText}
+                  topic={content.topic}
+                />
+              </div>
               </div>
             )}
 
