@@ -107,7 +107,7 @@ export default function LearnPage() {
     const results = await Promise.allSettled(
       exercises.map(async (state, index) => {
         const ex = state.exercise;
-        const userAnswer = state.answer.trim() || "(no answer)";
+        const userAnswer = state.answer.trim();
         const correctAnswer = ex.correct_answer ?? ex.correct ?? ex.hints?.join(", ") ?? "";
         const result = await evaluateLearnAnswer({
           exercise_type: ex.type,
@@ -138,7 +138,9 @@ export default function LearnPage() {
   const saveSession = async () => {
     if (!content || sessionSaved) return;
     setSessionSaved(true);
-    const evals = exercises.map((e) => e.evaluation).filter(Boolean) as LearnEvaluationResponse[];
+    // Only count attempted exercises (non-empty answer) in accuracy
+    const attempted = exercises.filter((e) => e.answer.trim() !== "");
+    const evals = attempted.map((e) => e.evaluation).filter(Boolean) as LearnEvaluationResponse[];
     const avg = (arr: number[]) =>
       arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : undefined;
 
@@ -212,7 +214,13 @@ export default function LearnPage() {
     setPassageOpen(true);
   };
 
-  const completedEvals = exercises.map((e) => e.evaluation).filter(Boolean) as LearnEvaluationResponse[];
+  // Only count attempted (non-blank) exercises for scoring
+  const attemptedExercises = exercises.filter((e) => e.answer.trim() !== "");
+  const completedEvals = attemptedExercises.map((e) => e.evaluation).filter(Boolean) as LearnEvaluationResponse[];
+  const correctCount = completedEvals.filter((e) => e.is_correct).length;
+  const accuracy = completedEvals.length > 0
+    ? Math.round((correctCount / completedEvals.length) * 100)
+    : null;
   const sessionScore =
     completedEvals.length > 0
       ? (completedEvals.reduce((s, e) => s + e.score, 0) / completedEvals.length).toFixed(1)
@@ -462,7 +470,7 @@ export default function LearnPage() {
               </div>
             )}
 
-            {pageState === "complete" && sessionScore && (
+            {pageState === "complete" && (
               <Card className="border-slate-200 shadow-sm">
                 <CardContent className="space-y-6 p-8 text-center">
                   <div>
@@ -471,10 +479,25 @@ export default function LearnPage() {
                       {content.topic} - Level {content.level} - Round {round}
                     </p>
                   </div>
-                  <div className="inline-block rounded-2xl bg-slate-800 px-8 py-4 text-white">
-                    <p className="text-sm uppercase tracking-wide opacity-70">Overall Score</p>
-                    <p className="mt-1 text-4xl font-bold">{sessionScore}/10</p>
+                  {/* Accuracy strip */}
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { label: "Attempted", val: `${completedEvals.length}/${exercises.length}` },
+                      { label: "Correct", val: `${correctCount}/${completedEvals.length}` },
+                      { label: "Accuracy", val: accuracy !== null ? `${accuracy}%` : "—" },
+                    ].map(({ label, val }) => (
+                      <div key={label} className="rounded-xl bg-slate-100 p-3">
+                        <p className="text-xs uppercase text-slate-400">{label}</p>
+                        <p className="mt-1 text-xl font-bold text-slate-900">{val}</p>
+                      </div>
+                    ))}
                   </div>
+                  {sessionScore && (
+                    <div className="inline-block rounded-2xl bg-slate-800 px-8 py-4 text-white">
+                      <p className="text-sm uppercase tracking-wide opacity-70">Avg Score (attempted)</p>
+                      <p className="mt-1 text-4xl font-bold">{sessionScore}/10</p>
+                    </div>
+                  )}
                   {completedEvals.length > 0 && (
                     <div className="grid grid-cols-3 gap-4 text-center">
                       {[

@@ -307,9 +307,9 @@ export default function ExerciseCard({
               ))}
             </div>
 
-            <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium
-              ${evaluation.is_correct ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
-              {evaluation.is_correct ? "✓ Correct" : "✗ Needs improvement"}
+            <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold
+              ${evaluation.is_correct ? "bg-emerald-50 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
+              {evaluation.is_correct ? "✓ Correct" : "✗ Wrong"}
             </div>
 
             {evaluation.feedback.length > 0 && (

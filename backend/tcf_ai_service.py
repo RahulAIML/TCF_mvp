@@ -1549,33 +1549,13 @@ def evaluate_learn_answer(
     user_answer: str,
     context: str = ""
 ) -> Dict[str, Any]:
-    prompt = f"""Tu es evaluateur TCF Canada. Evalue la reponse d'un apprenant.
-
-Type d'exercice : {exercise_type}
-Question : {question}
-Reponse correcte : {correct_answer}
-Reponse de l'apprenant : {user_answer}
-Contexte : {context}
-
-Retourne un JSON avec :
-{{
-  "score": 0-10,
-  "grammar": 0-10,
-  "vocabulary": 0-10,
-  "structure": 0-10,
-  "fluency": 0-10,
-  "is_correct": true/false,
-  "feedback": ["..."],
-  "improved_answer": "...",
-  "explanation": "..."
-}}
-
-Regles :
-- Scores entiers 0 a 10.
-- 2 a 4 points de feedback concrets.
-- Sortie : JSON valide uniquement.
-"""
-    payload = _generate_json(prompt, temperature=0.3)
+    """
+    Strict rule-based evaluation.
+    - Correctness is NEVER decided by AI.
+    - AI is only used to explain WHY correct/wrong.
+    - Score is always 0 (wrong/blank) or 10 (correct).
+    - Empty answers never reach AI.
+    """
 
     def _clamp(v: object) -> int:
         try:
@@ -1583,21 +1563,160 @@ Regles :
         except (TypeError, ValueError):
             return 0
 
-    feedback = payload.get("feedback", [])
-    if isinstance(feedback, str):
-        feedback = [f.strip() for f in feedback.split("-") if f.strip()]
-    feedback = [str(f).strip() for f in feedback if str(f).strip()]
+    # ── 1. Empty answer short-circuit ────────────────────────────────────────
+    if not user_answer or not user_answer.strip():
+        return {
+            "score": 0,
+            "grammar": 0,
+            "vocabulary": 0,
+            "structure": 0,
+            "fluency": 0,
+            "is_correct": False,
+            "feedback": ["No answer provided."],
+            "improved_answer": correct_answer.strip(),
+            "explanation": "You did not attempt this question. The correct answer was: " + correct_answer.strip(),
+        }
+
+    # ── 2. Rule-based correctness determination ───────────────────────────────
+    def _normalize(s: str) -> str:
+        """Lower-case, strip punctuation/spaces for comparison."""
+        import re
+        return re.sub(r"[^a-z0-9\u00c0-\u024f]", "", s.lower()).strip()
+
+    def _first_letter(s: str) -> str:
+        s = s.strip().upper()
+        if s and s[0].isalpha():
+            return s[0]
+        return ""
+
+    is_open_ended = exercise_type in ("writing_task", "speaking_prompt")
+
+    if exercise_type == "mcq":
+        # Compare by letter only (user sends "A", correct is "A" or "A. some text")
+        is_correct = _first_letter(user_answer) == _first_letter(correct_answer)
+    elif is_open_ended:
+        # Open-ended: AI will score 0-10; correctness = score >= 6
+        is_correct = None  # resolved after AI call
+    else:
+        # fill_blank / sentence_correction: normalize and compare
+        is_correct = _normalize(user_answer) == _normalize(correct_answer)
+
+    # ── 3. AI call — EXPLANATION ONLY ────────────────────────────────────────
+    if is_open_ended:
+        # For open-ended tasks AI assigns sub-scores and overall quality score
+        prompt = f"""You are a strict French language exam evaluator.
+
+Exercise type: {exercise_type}
+Question: {question}
+Student's answer: {user_answer}
+Context: {context}
+
+Evaluate the quality of the student's response IN FRENCH.
+
+Rules:
+- Be strict and clear.
+- Do NOT give generic praise.
+- Score grammar, vocabulary, structure, fluency each 0-10 based on actual quality.
+- overall_score: 0-10 reflecting combined quality.
+- feedback: 2-4 concrete improvement points.
+- improved_answer: a model answer for this question.
+- explanation: why the answer is good or what is wrong.
+
+Return valid JSON only:
+{{
+  "overall_score": 0-10,
+  "grammar": 0-10,
+  "vocabulary": 0-10,
+  "structure": 0-10,
+  "fluency": 0-10,
+  "feedback": ["...", "..."],
+  "improved_answer": "...",
+  "explanation": "..."
+}}"""
+    else:
+        # For MCQ / fill_blank / sentence_correction — explanation only, no scoring
+        correctness_label = "CORRECT" if is_correct else "INCORRECT"
+        prompt = f"""You are a strict French language exam evaluator.
+
+Exercise type: {exercise_type}
+Question: {question}
+Correct answer: {correct_answer}
+Student's answer: {user_answer}
+Verdict: The student's answer is {correctness_label}.
+
+Your job:
+1. Explain in 1-2 sentences why the correct answer is correct.
+2. If the student answered incorrectly, explain clearly why their answer is wrong.
+3. Estimate grammar and vocabulary quality of the student's answer (0-10 each).
+
+Rules:
+- Be strict and factual.
+- Do NOT praise a wrong answer.
+- Do NOT assign an overall score — that is determined separately.
+- Do NOT say the student is correct if they are not.
+
+Return valid JSON only:
+{{
+  "grammar": 0-10,
+  "vocabulary": 0-10,
+  "structure": 0-10,
+  "fluency": 0-10,
+  "feedback": ["...", "..."],
+  "improved_answer": "{correct_answer}",
+  "explanation": "..."
+}}"""
+
+    ai = _generate_json(prompt, temperature=0.2)
+
+    # ── 4. Parse AI feedback/explanation ─────────────────────────────────────
+    feedback_raw = ai.get("feedback", [])
+    if isinstance(feedback_raw, str):
+        feedback_raw = [f.strip() for f in feedback_raw.split("-") if f.strip()]
+    feedback_list = [str(f).strip() for f in feedback_raw if str(f).strip()]
+    if not feedback_list:
+        feedback_list = ["No feedback available."]
+
+    explanation = str(ai.get("explanation", "")).strip()
+    improved = str(ai.get("improved_answer", correct_answer)).strip() or correct_answer.strip()
+
+    # ── 5. ENFORCE scores — AI never overrides correctness ───────────────────
+    if is_open_ended:
+        ai_score = _clamp(ai.get("overall_score", ai.get("score", 0)))
+        is_correct = ai_score >= 6
+        final_score = ai_score
+        # If AI gave inflated score but feedback is poor, trust the score as-is
+        # (open-ended is the only place AI scoring is allowed)
+    else:
+        # Binary: correct=10, wrong=0 — AI cannot change this
+        final_score = 10 if is_correct else 0
+
+    # Sub-scores: use AI values but zero them all if answer is wrong for MCQ
+    if exercise_type == "mcq" and not is_correct:
+        grammar = vocabulary = structure = fluency = 0
+    else:
+        grammar    = _clamp(ai.get("grammar",    final_score))
+        vocabulary = _clamp(ai.get("vocabulary", final_score))
+        structure  = _clamp(ai.get("structure",  final_score))
+        fluency    = _clamp(ai.get("fluency",    final_score))
+
+    # ── 6. Safety override — never let score be positive when wrong ───────────
+    if not is_correct and not is_open_ended:
+        final_score = 0
+        grammar = vocabulary = structure = fluency = 0
+        # Prepend a clear wrong-answer notice to feedback
+        if not any("incorrect" in f.lower() or "wrong" in f.lower() or "mauvais" in f.lower() for f in feedback_list):
+            feedback_list.insert(0, f"Incorrect. The correct answer is: {correct_answer.strip()}")
 
     return {
-        "score": _clamp(payload.get("score")),
-        "grammar": _clamp(payload.get("grammar")),
-        "vocabulary": _clamp(payload.get("vocabulary")),
-        "structure": _clamp(payload.get("structure")),
-        "fluency": _clamp(payload.get("fluency")),
-        "is_correct": bool(payload.get("is_correct", False)),
-        "feedback": feedback,
-        "improved_answer": str(payload.get("improved_answer", "")).strip(),
-        "explanation": str(payload.get("explanation", "")).strip(),
+        "score": final_score,
+        "grammar": grammar,
+        "vocabulary": vocabulary,
+        "structure": structure,
+        "fluency": fluency,
+        "is_correct": bool(is_correct),
+        "feedback": feedback_list,
+        "improved_answer": improved,
+        "explanation": explanation,
     }
 
 
