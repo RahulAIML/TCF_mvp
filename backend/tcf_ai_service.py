@@ -1494,7 +1494,7 @@ def generate_tcf_listening_audio(script: str, question_number: int, session_id: 
 
 def analyze_learn_content(text: str) -> Dict[str, Any]:
     clean = text.strip()
-    prompt = f"""Tu es un tuteur TCF Canada. Analyse ce texte francais et genere des exercices d'apprentissage.
+    prompt = f"""Tu es un tuteur TCF Canada. Analyse ce texte francais et genere exactement 5 exercices d'apprentissage.
 
 Texte :
 {clean}
@@ -1511,18 +1511,44 @@ Retourne un JSON avec :
   "exercises": [
     {{
       "type": "mcq",
-      "question": "...",
+      "question": "Question de comprehension de lecture sur le texte",
       "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
-      "correct_answer": "...",
-      "explanation": "..."
+      "correct_answer": "A",
+      "explanation": "Explication pourquoi A est correct"
+    }},
+    {{
+      "type": "sentence_correction",
+      "question": "Corrigez cette phrase tirée du contexte du texte",
+      "incorrect": "Une phrase avec une faute de grammaire ou d'orthographe liee au texte",
+      "correct_answer": "La phrase correcte",
+      "explanation": "Explication de la correction"
+    }},
+    {{
+      "type": "writing_task",
+      "question": "Redigez un court paragraphe (3-4 phrases) sur un aspect du texte",
+      "correct_answer": "Exemple de reponse modele",
+      "explanation": "Ce qu'on attend"
+    }},
+    {{
+      "type": "speaking_prompt",
+      "question": "Presentez oralement votre opinion sur le sujet du texte en 1-2 minutes",
+      "correct_answer": "Points cles attendus dans la reponse",
+      "explanation": "Criteres d'evaluation"
+    }},
+    {{
+      "type": "writing_task",
+      "question": "Ecrivez un résumé du texte en vos propres mots (4-5 phrases)",
+      "correct_answer": "Exemple de résumé modele",
+      "explanation": "Ce qu'on attend dans le résumé"
     }}
   ]
 }}
 
-Regles :
+Regles STRICTES :
+- Toujours exactement 5 exercices dans cet ordre : mcq, sentence_correction, writing_task, speaking_prompt, writing_task.
+- Les exercices doivent être basés sur le contenu du texte fourni.
 - 3 a 5 points cles.
 - 3 a 5 mots de vocabulaire avec definition et exemple en francais.
-- 3 a 5 exercices varies (mcq, fill_blank, sentence_correction, writing_task, speaking_prompt).
 - Sortie : JSON valide uniquement.
 """
     payload = _generate_json(prompt, temperature=0.6)
@@ -1532,13 +1558,32 @@ Regles :
     exercises = payload.get("exercises", [])
     if not isinstance(exercises, list):
         exercises = []
+    # Enforce the 5 required types in order regardless of what AI returns
+    required_types = ["mcq", "sentence_correction", "writing_task", "speaking_prompt", "writing_task"]
+    exercises_by_type: Dict[str, list] = {}
+    for ex in exercises:
+        t = ex.get("type", "")
+        exercises_by_type.setdefault(t, []).append(ex)
+    ordered: list = []
+    used: Dict[str, int] = {}
+    for rtype in required_types:
+        pool = exercises_by_type.get(rtype, [])
+        idx = used.get(rtype, 0)
+        if idx < len(pool):
+            ordered.append(pool[idx])
+            used[rtype] = idx + 1
+        else:
+            # AI didn't return this type — keep slot as None (filtered below)
+            pass
+    # Fall back to AI list if ordering failed
+    final_exercises = ordered if len(ordered) == 5 else exercises[:5]
     return {
         "topic": str(payload.get("topic", "")).strip(),
         "level": str(payload.get("level", "B1")).strip(),
         "summary": str(payload.get("summary", "")).strip(),
         "key_points": [str(p).strip() for p in payload.get("key_points", []) if str(p).strip()],
         "vocabulary": vocab,
-        "exercises": exercises,
+        "exercises": final_exercises,
     }
 
 
@@ -1721,36 +1766,78 @@ Return valid JSON only:
 
 
 def generate_more_exercises(topic: str, level: str, summary: str) -> list[Dict[str, Any]]:
-    prompt = f"""Tu es tuteur TCF Canada. Genere des exercices supplementaires en francais.
+    prompt = f"""Tu es tuteur TCF Canada. Genere exactement 5 exercices supplementaires en francais.
 
 Sujet : {topic}
 Niveau : {level}
 Resume : {summary}
 
-Retourne un JSON : tableau de 5 exercices varies.
-Chaque exercice doit avoir le format :
-{{
-  "type": "mcq | fill_blank | sentence_correction | writing_task | speaking_prompt",
-  "question": "...",
-  "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
-  "correct_answer": "...",
-  "hint": "...",
-  "explanation": "..."
-}}
+Retourne un JSON : tableau de exactement 5 exercices dans cet ordre STRICT :
 
-Regles :
-- Varier les types d'exercices.
+[
+  {{
+    "type": "mcq",
+    "question": "Question de comprehension de lecture sur le sujet",
+    "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+    "correct_answer": "A",
+    "explanation": "Pourquoi A est correct"
+  }},
+  {{
+    "type": "sentence_correction",
+    "question": "Corrigez cette phrase",
+    "incorrect": "Une phrase avec une faute de grammaire ou d'orthographe",
+    "correct_answer": "La phrase correcte",
+    "explanation": "Explication de la correction"
+  }},
+  {{
+    "type": "writing_task",
+    "question": "Redigez un court paragraphe (3-4 phrases) sur {topic}",
+    "correct_answer": "Exemple de reponse modele",
+    "explanation": "Ce qu'on attend"
+  }},
+  {{
+    "type": "speaking_prompt",
+    "question": "Presentez oralement votre opinion sur {topic} en 1-2 minutes",
+    "correct_answer": "Points cles attendus",
+    "explanation": "Criteres d'evaluation"
+  }},
+  {{
+    "type": "writing_task",
+    "question": "Ecrivez un résumé de {topic} en vos propres mots (4-5 phrases)",
+    "correct_answer": "Exemple de résumé modele",
+    "explanation": "Ce qu'on attend"
+  }}
+]
+
+Regles STRICTES :
+- Exactement 5 exercices dans cet ordre : mcq, sentence_correction, writing_task, speaking_prompt, writing_task.
 - Adapter la difficulte au niveau {level}.
 - Sortie : JSON valide uniquement (tableau, pas d'objet enveloppe).
 """
     payload_raw = _generate_json(prompt, temperature=0.7)
     if isinstance(payload_raw, list):
-        return payload_raw
-    # Some models wrap in an object
-    for key in ("exercises", "items", "data"):
-        if key in payload_raw and isinstance(payload_raw[key], list):
-            return payload_raw[key]
-    return []
+        raw_list = payload_raw
+    else:
+        raw_list = []
+        for key in ("exercises", "items", "data"):
+            if key in payload_raw and isinstance(payload_raw[key], list):
+                raw_list = payload_raw[key]
+                break
+    # Enforce order: mcq, sentence_correction, writing_task, speaking_prompt, writing_task
+    required_types = ["mcq", "sentence_correction", "writing_task", "speaking_prompt", "writing_task"]
+    by_type: Dict[str, list] = {}
+    for ex in raw_list:
+        t = ex.get("type", "")
+        by_type.setdefault(t, []).append(ex)
+    ordered: list = []
+    used: Dict[str, int] = {}
+    for rtype in required_types:
+        pool = by_type.get(rtype, [])
+        idx = used.get(rtype, 0)
+        if idx < len(pool):
+            ordered.append(pool[idx])
+            used[rtype] = idx + 1
+    return ordered if len(ordered) == 5 else raw_list[:5]
 
 
 def extract_text_from_image_bytes(raw: bytes, content_type: str) -> str:
