@@ -14,7 +14,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import {
   generateTcfListeningQuestion,
   submitTcfListeningExam,
-  explainText
+  explainText,
+  translatePassage
 } from "@/services/api";
 import type { AnswerOption } from "@/types/exam";
 import type { ExplainTextResponse } from "@/types/text-helper";
@@ -24,6 +25,22 @@ const TOTAL_QUESTIONS = 39;
 const EXAM_DURATION_SECONDS = 35 * 60;
 const PREFETCH_AHEAD = 1;
 const MAX_PLAYS = 1;
+
+type ListeningDifficultyGroup = "all" | "c1_c2" | "b1_b2" | "a1_a2";
+const LISTENING_DIFFICULTY_RANGES: Record<ListeningDifficultyGroup, { start: number; end: number; label: string }> = {
+  all:   { start: 1,  end: 39, label: "All Levels" },
+  c1_c2: { start: 1,  end: 20, label: "C1–C2" },
+  b1_b2: { start: 21, end: 30, label: "B1–B2" },
+  a1_a2: { start: 31, end: 39, label: "A1–A2" },
+};
+
+type PracticeLevel = "C2" | "B2-C1" | "B1-B2" | "A2-B1";
+const PRACTICE_LEVEL_RANGES: Record<PracticeLevel, [number, number]> = {
+  "C2":    [1,  10],
+  "B2-C1": [11, 20],
+  "B1-B2": [21, 30],
+  "A2-B1": [31, 39],
+};
 
 const levelLabel = (questionNumber: number) => {
   if (questionNumber <= 10) return "C2";
@@ -60,6 +77,13 @@ export default function ListeningExamPage() {
   const [helperText, setHelperText] = useState("");
   const [helperResult, setHelperResult] = useState<ExplainTextResponse | null>(null);
   const [helperLoading, setHelperLoading] = useState(false);
+
+  // Difficulty + translation state
+  const [examDifficulty, setExamDifficulty] = useState<ListeningDifficultyGroup>("all");
+  const [practiceLevel, setPracticeLevel] = useState<PracticeLevel>("B1-B2");
+  const [transcriptTranslations, setTranscriptTranslations] = useState<Record<string, string>>({});
+  const [showTranslation, setShowTranslation] = useState(false);
+  const [isTranslating, setIsTranslating] = useState(false);
 
   const questionsRef = useRef<Record<number, ListeningQuestion>>({});
   const inFlightRef = useRef<Partial<Record<number, Promise<ListeningQuestion>>>>({});
@@ -310,21 +334,25 @@ export default function ListeningExamPage() {
 
     setError("");
     setLoadingQuestion(true);
-      try {
-        const question = await generateTcfListeningQuestion({
-          question_number: practiceCount,
-          session_id: sessionId ?? undefined,
-          defer_audio: false
-        });
-        const normalizedQuestion: ListeningQuestion = {
-          ...question,
-          transcript: question.transcript ?? question.script,
-          user_answer: ""
-        };
-        setPracticeQuestion(normalizedQuestion);
-        setPracticeAnswer("");
-        setPracticePlayCount(0);
-        setPracticeCount((prev) => prev + 1);
+    setShowTranslation(false);
+    try {
+      // Pick a random question number from the selected practice level range
+      const [minQ, maxQ] = PRACTICE_LEVEL_RANGES[practiceLevel];
+      const qNum = Math.floor(Math.random() * (maxQ - minQ + 1)) + minQ;
+      const question = await generateTcfListeningQuestion({
+        question_number: qNum,
+        session_id: sessionId ?? undefined,
+        defer_audio: false
+      });
+      const normalizedQuestion: ListeningQuestion = {
+        ...question,
+        transcript: question.transcript ?? question.script,
+        user_answer: ""
+      };
+      setPracticeQuestion(normalizedQuestion);
+      setPracticeAnswer("");
+      setPracticePlayCount(0);
+      setPracticeCount((prev) => prev + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load practice question.");
     } finally {
@@ -358,6 +386,23 @@ export default function ListeningExamPage() {
     setHelperText(text);
   };
 
+  const handleTranslateTranscript = async (script: string, key: string) => {
+    if (transcriptTranslations[key]) {
+      setShowTranslation((p) => !p);
+      return;
+    }
+    setIsTranslating(true);
+    try {
+      const result = await translatePassage(script);
+      setTranscriptTranslations((prev) => ({ ...prev, [key]: result }));
+      setShowTranslation(true);
+    } catch {
+      // silent
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
   const currentQuestionData = questions[currentQuestion];
   const currentAnswer = answers[currentQuestion] ?? "";
   const currentPlays = playCounts[currentQuestion] ?? 0;
@@ -385,13 +430,35 @@ export default function ListeningExamPage() {
         {mode === "practice" && (
           <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
             <div className="space-y-4">
+              {/* Level selector */}
+              <Card className="border-slate-200 shadow-sm rounded-2xl">
+                <CardContent className="p-4">
+                  <p className="text-sm font-semibold text-slate-700 mb-2">CEFR Level</p>
+                  <div className="flex flex-wrap gap-2">
+                    {(Object.keys(PRACTICE_LEVEL_RANGES) as PracticeLevel[]).map((lvl) => (
+                      <button
+                        key={lvl}
+                        onClick={() => { setPracticeLevel(lvl); setPracticeQuestion(null); setPracticeCount(1); }}
+                        disabled={loadingQuestion}
+                        className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+                          practiceLevel === lvl
+                            ? "bg-indigo-600 text-white"
+                            : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                        } disabled:opacity-50`}
+                      >
+                        {lvl}
+                      </button>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
               {!practiceQuestion ? (
                 <Card className="border-slate-200 shadow-sm rounded-2xl">
                   <CardContent className="p-6">
                     <h2 className="text-xl font-semibold text-slate-900">Listening Practice</h2>
                     <p className="mt-2 text-sm text-slate-600">
-                      Practice one question at a time. Transcript is enabled by default.
-                      Audio plays only once per question.
+                      Practice one question at a time. Level: <strong>{practiceLevel}</strong>. Transcript is enabled by default.
                     </p>
                     <Button className="mt-4" onClick={loadPracticeQuestion} disabled={loadingQuestion}>
                       {loadingQuestion ? "Preparing audio..." : "Start Practice"}
@@ -403,8 +470,10 @@ export default function ListeningExamPage() {
                   {loadingQuestion && (
                     <p className="text-sm text-slate-500">Preparing practice audio...</p>
                   )}
-                  <div className="text-xs font-medium text-emerald-700">
-                    Level: {levelLabel(practiceCount - 1)}
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700">
+                      {practiceLevel}
+                    </span>
                   </div>
                   <ListeningQuestionCard
                     question={practiceQuestion}
@@ -418,6 +487,24 @@ export default function ListeningExamPage() {
                     onToggleTranscript={() => setShowTranscript((prev) => !prev)}
                     onTranscriptSelect={handleTranscriptSelection}
                   />
+                  {/* Transcript translation */}
+                  {showTranscript && practiceQuestion.script && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => void handleTranslateTranscript(practiceQuestion.script, `practice-${practiceCount}`)}
+                        disabled={isTranslating}
+                        className="text-xs text-indigo-600 hover:text-indigo-800 underline disabled:opacity-50"
+                      >
+                        {isTranslating ? "Translating..." : showTranslation && transcriptTranslations[`practice-${practiceCount}`] ? "Hide Translation" : "Show Translation"}
+                      </button>
+                    </div>
+                  )}
+                  {showTranscript && showTranslation && transcriptTranslations[`practice-${practiceCount}`] && (
+                    <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3">
+                      <p className="text-[10px] font-semibold uppercase text-indigo-400 mb-1">English Translation</p>
+                      <p className="text-sm leading-6 text-slate-700">{transcriptTranslations[`practice-${practiceCount}`]}</p>
+                    </div>
+                  )}
                   {practiceAnswer && (
                     <Card className="border-slate-200 shadow-sm rounded-2xl">
                       <CardContent className="p-6">
@@ -439,7 +526,7 @@ export default function ListeningExamPage() {
               <Card className="border-slate-200 shadow-sm rounded-2xl">
                 <CardContent className="p-6">
                   <p className="text-sm font-medium text-slate-900">Practice Mode</p>
-                  <p className="mt-2 text-sm text-slate-600">One question at a time with transcript enabled.</p>
+                  <p className="mt-2 text-sm text-slate-600">One question at a time with transcript. Translation available via toggle.</p>
                 </CardContent>
               </Card>
               <Card className="border-slate-200 shadow-sm rounded-2xl">
@@ -478,14 +565,32 @@ export default function ListeningExamPage() {
               </div>
               {!isExamStarted ? (
                 <Card className="border-slate-200 shadow-sm rounded-2xl">
-                  <CardContent className="p-6">
-                    <h2 className="text-xl font-semibold text-slate-900">Listening Mock Exam</h2>
-                    <p className="mt-2 text-sm text-slate-600">
-                      39 questions - 35 minutes - Transcript is off by default.
-                    </p>
-                    <Button className="mt-4" onClick={handleStartExam}>
-                      Start Exam
-                    </Button>
+                  <CardContent className="p-6 space-y-4">
+                    <div>
+                      <h2 className="text-xl font-semibold text-slate-900">Listening Mock Exam</h2>
+                      <p className="mt-1 text-sm text-slate-600">
+                        35 minutes · Transcript off by default · Transcript translation available
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-slate-700 mb-2">Difficulty Focus</p>
+                      <div className="flex flex-wrap gap-2">
+                        {(Object.entries(LISTENING_DIFFICULTY_RANGES) as [ListeningDifficultyGroup, typeof LISTENING_DIFFICULTY_RANGES[ListeningDifficultyGroup]][]).map(([key, val]) => (
+                          <button
+                            key={key}
+                            onClick={() => setExamDifficulty(key)}
+                            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                              examDifficulty === key
+                                ? "bg-slate-800 text-white"
+                                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                            }`}
+                          >
+                            {val.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <Button onClick={handleStartExam}>Start Exam</Button>
                   </CardContent>
                 </Card>
               ) : (
@@ -509,19 +614,39 @@ export default function ListeningExamPage() {
                     <p className="text-sm text-slate-500">Generating question...</p>
                   )}
                   {currentQuestionData && (
-                    <ListeningQuestionCard
-                      question={currentQuestionData}
-                      questionNumber={currentQuestion}
-                      selectedAnswer={currentAnswer}
-                      onSelect={handleAnswerSelect}
-                      disabled={Boolean(results) || timeUp}
-                      maxPlays={MAX_PLAYS}
-                      playCount={currentPlays}
-                      onPlay={() => handlePlay(currentQuestion)}
-                      showTranscript={showTranscript}
-                      onToggleTranscript={() => setShowTranscript((prev) => !prev)}
-                      onTranscriptSelect={handleTranscriptSelection}
-                    />
+                    <div className="space-y-2">
+                      <ListeningQuestionCard
+                        question={currentQuestionData}
+                        questionNumber={currentQuestion}
+                        selectedAnswer={currentAnswer}
+                        onSelect={handleAnswerSelect}
+                        disabled={Boolean(results) || timeUp}
+                        maxPlays={MAX_PLAYS}
+                        playCount={currentPlays}
+                        onPlay={() => handlePlay(currentQuestion)}
+                        showTranscript={showTranscript}
+                        onToggleTranscript={() => setShowTranscript((prev) => !prev)}
+                        onTranscriptSelect={handleTranscriptSelection}
+                      />
+                      {/* Translation toggle for exam transcript */}
+                      {showTranscript && currentQuestionData.script && (
+                        <div className="space-y-2">
+                          <button
+                            onClick={() => void handleTranslateTranscript(currentQuestionData.script, `exam-${currentQuestion}`)}
+                            disabled={isTranslating}
+                            className="text-xs text-indigo-600 hover:text-indigo-800 underline disabled:opacity-50"
+                          >
+                            {isTranslating ? "Translating..." : showTranslation && transcriptTranslations[`exam-${currentQuestion}`] ? "Hide Translation" : "Translate Transcript"}
+                          </button>
+                          {showTranslation && transcriptTranslations[`exam-${currentQuestion}`] && (
+                            <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3">
+                              <p className="text-[10px] font-semibold uppercase text-indigo-400 mb-1">English Translation</p>
+                              <p className="text-sm leading-6 text-slate-700">{transcriptTranslations[`exam-${currentQuestion}`]}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   )}
                   <div className="flex flex-wrap items-center gap-3">
                     <Button

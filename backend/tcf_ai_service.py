@@ -298,6 +298,27 @@ Regles :
 """,
 }
 
+# Real examiner names used to avoid AI generating "[placeholder]" names
+TCF_EXAMINER_NAMES = [
+    ("Marie Dupont", "examinatrice"),
+    ("Sophie Martin", "examinatrice"),
+    ("Claire Lefebvre", "examinatrice"),
+    ("Isabelle Moreau", "examinatrice"),
+    ("Nathalie Petit", "examinatrice"),
+    ("Jean-Pierre Bernard", "examinateur"),
+    ("Thomas Rousseau", "examinateur"),
+    ("Michel Laurent", "examinateur"),
+]
+
+def _pick_examiner(session_id: str | None) -> tuple[str, str]:
+    """Return (name, title) deterministic per session, random otherwise."""
+    import hashlib
+    if session_id:
+        idx = int(hashlib.md5(session_id.encode()).hexdigest(), 16) % len(TCF_EXAMINER_NAMES)
+        return TCF_EXAMINER_NAMES[idx]
+    return random.choice(TCF_EXAMINER_NAMES)
+
+
 TCF_BASIC_INTERACTIONS = [
     "Vous rencontrez un voisin dans l'escalier. Presentez-vous et engagez une conversation polie.",
     "Vous appelez un cabinet medical pour prendre rendez-vous. L'assistant repond.",
@@ -1151,46 +1172,75 @@ def generate_tcf_speaking_reply(
             "Stimule la discussion, demande des justifications."
         )
 
+    # Real examiner identity — never use placeholder names
+    examiner_name, examiner_title = _pick_examiner(session_id)
+
+    is_start = message == "__START__"
+    message_text = "" if is_start else message
+
     history_text = "\n".join(
-        f"{'Candidat' if m['role'] == 'user' else 'Examinateur'}: {m['content']}"
+        f"{'Candidat' if m['role'] == 'user' else examiner_name}: {m['content']}"
         for m in history
     )
-    message_text = "" if message == "__START__" else message
+
+    # Build all previously asked questions to prevent repetition
+    asked_questions = [
+        m["content"] for m in history if m.get("role") == "assistant"
+    ]
+    asked_block = (
+        "\n\nQuestions déjà posées (NE PAS RÉPÉTER) :\n" +
+        "\n".join(f"- {q[:120]}" for q in asked_questions[-6:])
+        if asked_questions else ""
+    )
+
     hint_instruction = (
-        "\nDonne un indice court entre [crochets] si le candidat semble bloqué."
+        "\nSi le candidat semble bloqué, donne un indice court et discret."
         if hints else ""
     )
     exam_instruction = (
-        "\nMode examen : reste neutre, n'aide pas, évalue implicitement."
+        "\nMode examen : reste neutre et formel, n'aide pas le candidat."
         if mode == "exam" else ""
     )
-    followup_instruction = (
-        "\nReste STRICTEMENT sur le même sujet. Pose une question de relance "
-        "directement liée à la dernière réponse du candidat; ne change pas de scénario."
-    )
-    start_instruction = (
-        "\nSi le message du candidat est '__START__' ou si l'historique est vide, "
-        "ouvre l'échange avec une question claire liée au sujet."
-    )
 
-    prompt = f"""{system_context}
+    if is_start:
+        task_opening = (
+            f"Ouvre l'échange en te présentant : "
+            f"\"Bonjour, je m'appelle {examiner_name}, je suis votre {examiner_title} aujourd'hui.\" "
+            f"Puis pose UNE seule question claire pour lancer le sujet : {chosen_topic}"
+        )
+    else:
+        task_opening = (
+            "Continue la conversation. "
+            "Pose UNE question de suivi précise basée sur la DERNIÈRE réponse du candidat. "
+            "Si la réponse est courte ou vague, demande une clarification ou un exemple. "
+            "Si la réponse est bonne, approfondis avec un aspect plus précis du sujet."
+        )
+
+    prompt = f"""Tu es {examiner_name}, {examiner_title} TCF Canada.
+Sujet de la session : {chosen_topic}
 {exam_instruction}
 {hint_instruction}
-{followup_instruction}
-{start_instruction}
 
-EXEMPLE DE REPONSE (ne pas reproduire cet exemple) :
-Examinateur : Merci. Pouvez-vous donner un autre detail ?
+RÈGLES ABSOLUES :
+- TOUJOURS utiliser ton vrai nom : {examiner_name}
+- JAMAIS de crochets ou de placeholders comme [nom], [prénom], etc.
+- JAMAIS répéter une question déjà posée
+- Rester STRICTEMENT sur le sujet de la session
+- Répondre en 1 à 2 phrases maximum
+- Ton naturel et humain, pas de formules répétitives
+{asked_block}
 
-Historique de la conversation :
+{task_opening}
+
+Historique :
 {history_text}
 
 Candidat : {message_text}
 
-Réponds en tant qu'examinateur en français (2 à 4 phrases maximum). Sortie : texte brut uniquement.
+Réponds uniquement en tant que {examiner_name} (1-2 phrases). Texte brut uniquement, pas de guillemets autour de ta réponse.
 """
 
-    reply_text = _generate_text(prompt, temperature=0.7)
+    reply_text = _generate_text(prompt, temperature=0.75)
 
     # Trim to safe length
     max_chars = int(os.getenv("SPEAKING_MAX_CHARS", "600"))

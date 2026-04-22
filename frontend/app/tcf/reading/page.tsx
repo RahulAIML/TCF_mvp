@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { BookOpenCheck, FileSearch, ArrowRight, Clock, Target, Layers } from "lucide-react";
+import { BookOpenCheck, FileSearch, ArrowRight, Clock, Target, Layers, GraduationCap } from "lucide-react";
 import TcfAppShell from "@/components/TcfAppShell";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -9,16 +9,30 @@ const modes = [
   {
     title: "Reading Mock Exam",
     description:
-      "Simulate the full TCF Canada reading exam with 39 questions and a 60-minute countdown timer.",
+      "Simulate the full TCF Canada reading exam with 39 questions and a 60-minute countdown timer. Difficulty grouped by level.",
     href: "/tcf/mock-exam",
     icon: BookOpenCheck,
     accent: "bg-emerald-600",
     stats: [
       { icon: Clock, label: "60 minutes" },
       { icon: Target, label: "39 questions" },
-      { icon: Layers, label: "4 parts" }
+      { icon: Layers, label: "C2 → A2" }
     ],
     cta: "Start Mock Exam"
+  },
+  {
+    title: "Practice Mode",
+    description:
+      "Practice one question at a time. Choose your exact CEFR level (A2, B1, B2, C1, C2). Translation toggle included.",
+    href: "/tcf/reading-practice",
+    icon: GraduationCap,
+    accent: "bg-indigo-600",
+    stats: [
+      { icon: Layers, label: "A2 – C2" },
+      { icon: Target, label: "1 question at a time" },
+      { icon: Clock, label: "No time limit" }
+    ],
+    cta: "Start Practice"
   },
   {
     title: "Passage Analyzer",
@@ -43,15 +57,16 @@ export default function ReadingPage() {
       subtitle="Choose a reading practice mode"
       backHref="/tcf"
     >
-      <div className="max-w-3xl space-y-6">
+      <div className="max-w-4xl space-y-6">
         <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-6 py-4">
           <p className="text-sm text-emerald-800">
-            <span className="font-semibold">TCF Canada Reading</span> includes 39 questions across four parts:
-            A1-A2 (Q1-10), A2-B1 (Q11-20), B1-B2 (Q21-30), and B2-C2 (Q31-39).
+            <span className="font-semibold">TCF Canada Reading</span> — 39 questions across four difficulty levels:
+            C2 (Q1–10) → B2-C1 (Q11–20) → B1-B2 (Q21–30) → A2 (Q31–39).
+            Passages include a translation toggle for learning support.
           </p>
         </div>
 
-        <div className="grid gap-5 sm:grid-cols-2">
+        <div className="grid gap-5 sm:grid-cols-3">
           {modes.map((mode) => {
             const Icon = mode.icon;
             return (

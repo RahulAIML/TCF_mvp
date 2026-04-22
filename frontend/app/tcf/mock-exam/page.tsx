@@ -11,14 +11,21 @@ import TextExplanationCard from "@/components/TextExplanationCard";
 import TimerClock from "@/components/TimerClock";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { explainText, generateTcfQuestion, submitTcfExam } from "@/services/api";
+import { explainText, generateTcfQuestion, submitTcfExam, translatePassage } from "@/services/api";
 import type { AnswerOption } from "@/types/exam";
 import type { TcfExamQuestion, TcfSubmitExamResponse } from "@/types/tcf-exam";
 import type { ExplainTextResponse } from "@/types/text-helper";
 
-const TOTAL_QUESTIONS = 39;
 const EXAM_DURATION_SECONDS = 60 * 60;
 const PREFETCH_AHEAD = 5;
+
+type DifficultyGroup = "all" | "c1_c2" | "b1_b2" | "a1_a2";
+const DIFFICULTY_RANGES: Record<DifficultyGroup, { start: number; end: number; label: string }> = {
+  all:    { start: 1,  end: 39, label: "All Levels (C2 → A2)" },
+  c1_c2:  { start: 1,  end: 20, label: "C1–C2 (Questions 1–20)" },
+  b1_b2:  { start: 21, end: 30, label: "B1–B2 (Questions 21–30)" },
+  a1_a2:  { start: 31, end: 39, label: "A1–A2 (Questions 31–39)" },
+};
 
 const partLabel = (questionNumber: number) => {
   if (questionNumber <= 10) return "Part 1 - C2";
@@ -45,6 +52,10 @@ export default function MockExamPage() {
   const [helperResult, setHelperResult] = useState<ExplainTextResponse | null>(null);
   const [helperLoading, setHelperLoading] = useState(false);
   const [confirmPartial, setConfirmPartial] = useState(false);
+  const [difficultyGroup, setDifficultyGroup] = useState<DifficultyGroup>("all");
+  const [translations, setTranslations] = useState<Record<number, string>>({});
+  const [showTranslation, setShowTranslation] = useState(false);
+  const [isTranslating, setIsTranslating] = useState(false);
 
   const questionsRef = useRef<Record<number, TcfExamQuestion>>({});
   const inFlightRef = useRef<Partial<Record<number, Promise<TcfExamQuestion>>>>({});
@@ -130,10 +141,10 @@ export default function MockExamPage() {
   };
 
   const handleStartExam = async () => {
-    if (isExamStarted) {
-      return;
-    }
+    if (isExamStarted) return;
     setIsExamStarted(true);
+    const startQ = DIFFICULTY_RANGES[difficultyGroup].start;
+    setCurrentQuestion(startQ);
     const sessionId = typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -142,8 +153,8 @@ export default function MockExamPage() {
     setError("");
     setSubmitNote("");
     try {
-      await ensureQuestion(1);
-      prefetchQuestions(1);
+      await ensureQuestion(startQ);
+      prefetchQuestions(startQ);
       setStartedAt(new Date().toISOString());
       setTimerKey((prev) => prev + 1);
       setTimerActive(true);
@@ -281,20 +292,62 @@ export default function MockExamPage() {
   const currentQuestionData = questions[currentQuestion];
   const currentAnswer = answers[currentQuestion] ?? "";
 
+  const diffRange = DIFFICULTY_RANGES[difficultyGroup];
+  const TOTAL_QUESTIONS = diffRange.end - diffRange.start + 1;
+
+  const handleTranslatePassage = async () => {
+    if (!currentQuestionData) return;
+    const qn = currentQuestion;
+    if (translations[qn]) {
+      setShowTranslation((p) => !p);
+      return;
+    }
+    setIsTranslating(true);
+    try {
+      const result = await translatePassage(currentQuestionData.text);
+      setTranslations((prev) => ({ ...prev, [qn]: result }));
+      setShowTranslation(true);
+    } catch {
+      // silent
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
   return (
-    <TcfAppShell title="Reading Mock Exam" subtitle="Complete the full 39-question reading mock exam">
+    <TcfAppShell title="Reading Mock Exam" subtitle="Complete the full reading mock exam">
       <div className="space-y-6">
         {!isExamStarted ? (
           <Card className="border-slate-200 shadow-sm">
-            <CardContent className="p-6">
-              <h2 className="text-2xl font-semibold text-slate-900">Reading Mock Exam</h2>
-              <p className="mt-2 text-sm text-slate-600">
-                This mock exam includes 39 questions and a 60-minute timer. Questions are generated
-                as you move through the exam.
-              </p>
-              <Button className="mt-4" onClick={handleStartExam}>
-                Start Exam
-              </Button>
+            <CardContent className="p-6 space-y-5">
+              <div>
+                <h2 className="text-2xl font-semibold text-slate-900">Reading Mock Exam</h2>
+                <p className="mt-2 text-sm text-slate-600">
+                  Questions are generated dynamically. A translation toggle is available during the exam.
+                </p>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-slate-700 mb-2">Difficulty Focus</p>
+                <div className="flex flex-wrap gap-2">
+                  {(Object.entries(DIFFICULTY_RANGES) as [DifficultyGroup, typeof DIFFICULTY_RANGES[DifficultyGroup]][]).map(([key, val]) => (
+                    <button
+                      key={key}
+                      onClick={() => setDifficultyGroup(key)}
+                      className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+                        difficultyGroup === key
+                          ? "bg-slate-800 text-white"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      {val.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  {DIFFICULTY_RANGES[difficultyGroup].end - DIFFICULTY_RANGES[difficultyGroup].start + 1} questions · 60 minutes
+                </p>
+              </div>
+              <Button onClick={handleStartExam}>Start Exam</Button>
             </CardContent>
           </Card>
         ) : (
@@ -334,27 +387,74 @@ export default function MockExamPage() {
                 <p className="text-sm text-slate-500">Generating question...</p>
               )}
               {currentQuestionData && (
-                <div onMouseUp={handleTextSelection} className="mx-auto w-full max-w-3xl">
-                  <TcfQuestionCard
-                    question={currentQuestionData}
-                    selectedAnswer={currentAnswer}
-                    onSelect={handleAnswerSelect}
-                    disabled={Boolean(results) || timeUp}
-                  />
+                <div onMouseUp={handleTextSelection} className="mx-auto w-full max-w-3xl space-y-3">
+                  {/* Passage with translation toggle */}
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-5">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-xs font-semibold uppercase text-slate-400">Passage</span>
+                      <button
+                        onClick={() => void handleTranslatePassage()}
+                        disabled={isTranslating}
+                        className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50 transition disabled:opacity-50"
+                      >
+                        {isTranslating ? "Translating..." : showTranslation && translations[currentQuestion] ? "Hide Translation" : "Show Translation"}
+                      </button>
+                    </div>
+                    <div className={showTranslation && translations[currentQuestion] ? "grid grid-cols-2 gap-4" : ""}>
+                      <p className="text-[1.02rem] leading-7 text-slate-800">{currentQuestionData.text}</p>
+                      {showTranslation && translations[currentQuestion] && (
+                        <div className="border-l border-indigo-100 pl-4">
+                          <p className="text-[10px] font-semibold uppercase text-indigo-400 mb-1">English Translation</p>
+                          <p className="text-sm leading-7 text-slate-600">{translations[currentQuestion]}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {/* Question & options (without passage — passed separately) */}
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900 mb-3">{currentQuestionData.question}</h3>
+                    <div className="space-y-2">
+                      {currentQuestionData.options.map((option, index) => {
+                        const value = (["A", "B", "C", "D"][index] as AnswerOption) ?? "A";
+                        const isSelected = currentAnswer === value;
+                        return (
+                          <label
+                            key={`${currentQuestion}-opt-${index}`}
+                            className={`flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 text-sm transition ${
+                              isSelected
+                                ? "border-emerald-600 bg-emerald-600 text-white"
+                                : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                            } ${(Boolean(results) || timeUp) ? "cursor-not-allowed opacity-70" : ""}`}
+                          >
+                            <input
+                              type="radio"
+                              name={`question-${currentQuestion}`}
+                              value={value}
+                              checked={isSelected}
+                              disabled={Boolean(results) || timeUp}
+                              onChange={() => handleAnswerSelect(value)}
+                              className="mt-1"
+                            />
+                            <span>{option}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               )}
               <div className="flex flex-wrap items-center gap-3">
                 <Button
                   variant="secondary"
-                  onClick={() => handleSelectQuestion(Math.max(1, currentQuestion - 1))}
-                  disabled={currentQuestion === 1}
+                  onClick={() => handleSelectQuestion(Math.max(diffRange.start, currentQuestion - 1))}
+                  disabled={currentQuestion === diffRange.start}
                 >
                   Previous
                 </Button>
                 <Button
                   variant="secondary"
-                  onClick={() => handleSelectQuestion(Math.min(TOTAL_QUESTIONS, currentQuestion + 1))}
-                  disabled={currentQuestion === TOTAL_QUESTIONS}
+                  onClick={() => handleSelectQuestion(Math.min(diffRange.end, currentQuestion + 1))}
+                  disabled={currentQuestion === diffRange.end}
                 >
                   Next
                 </Button>
