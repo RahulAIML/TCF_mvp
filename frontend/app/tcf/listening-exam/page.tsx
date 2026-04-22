@@ -420,19 +420,21 @@ export default function ListeningExamPage() {
   return (
     <TcfAppShell title="Listening Module" subtitle="Practice or take a full TCF listening mock exam">
       <div className="space-y-6">
-        <div className="flex flex-wrap gap-3">
-          <Button
-            variant={mode === "practice" ? "default" : "outline"}
-            onClick={() => setMode("practice")}
-          >
-            Practice Mode
-          </Button>
-          <Button
-            variant={mode === "exam" ? "default" : "outline"}
-            onClick={() => setMode("exam")}
-          >
-            Mock Exam Mode
-          </Button>
+        {/* Mode toggle */}
+        <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 gap-0.5 w-fit">
+          {(["practice", "exam"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              className={`rounded-md px-4 py-1.5 text-sm font-medium capitalize transition-all duration-150 ${
+                mode === m
+                  ? "bg-white text-slate-900 shadow-sm"
+                  : "text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              {m === "practice" ? "Practice" : "Mock Exam"}
+            </button>
+          ))}
         </div>
 
         {mode === "practice" && (
@@ -500,15 +502,24 @@ export default function ListeningExamPage() {
                     showTranslation={showTranslation}
                   />
                   {practiceAnswer && (
-                    <Card className="border-slate-200 shadow-sm rounded-2xl">
-                      <CardContent className="p-6">
-                        <p className="text-sm font-medium text-slate-900">Explanation</p>
-                        <p className="mt-2 text-sm text-slate-700">{practiceQuestion.explanation}</p>
-                        <div className="mt-3 text-sm text-slate-600">
-                          Correct Answer: <span className="font-semibold text-slate-900">{practiceQuestion.correct_answer}</span>
+                    <Card className={`rounded-2xl shadow-sm ${practiceAnswer === practiceQuestion.correct_answer ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
+                      <CardContent className="p-5 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className={`text-sm font-bold ${practiceAnswer === practiceQuestion.correct_answer ? "text-emerald-700" : "text-rose-700"}`}>
+                            {practiceAnswer === practiceQuestion.correct_answer ? "✓ Correct!" : "✗ Incorrect"}
+                          </span>
+                          <span className="text-sm text-slate-600">
+                            Answer: <span className="font-semibold text-slate-900">{practiceQuestion.correct_answer}</span>
+                          </span>
                         </div>
-                        <Button className="mt-4" onClick={loadPracticeQuestion}>
-                          Next Practice Question
+                        {practiceQuestion.explanation && (
+                          <div className="rounded-xl bg-white/70 px-4 py-3">
+                            <p className="text-xs font-semibold uppercase text-slate-400 mb-1">Explanation</p>
+                            <p className="text-sm text-slate-700">{practiceQuestion.explanation}</p>
+                          </div>
+                        )}
+                        <Button onClick={loadPracticeQuestion}>
+                          Next Question
                         </Button>
                       </CardContent>
                     </Card>

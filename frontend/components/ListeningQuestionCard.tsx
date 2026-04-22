@@ -239,42 +239,81 @@ export default function ListeningQuestionCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-sm font-medium text-slate-700">Audio Controls</p>
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <Button onClick={handlePlayClick} disabled={!canPlay}>
-              {isBuffering
-                ? "Loading audio..."
-                : remainingPlays !== null && remainingPlays <= 0
-                  ? "Play limit reached"
-                  : !audioSrc && !onRequestAudio
-                    ? "Audio unavailable"
-                    : remainingPlays === null
-                      ? "Play"
-                      : `Play (${remainingPlays} left)`}
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Audio</p>
+
+          {/* Play / Pause / Replay row */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Primary play/pause toggle */}
+            <Button
+              onClick={isPlaying ? handlePauseClick : handlePlayClick}
+              disabled={!canPlay && !isPlaying}
+              className="gap-2"
+            >
+              {isBuffering ? (
+                <>
+                  <span className="h-3 w-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                  Loading…
+                </>
+              ) : isPlaying ? (
+                <>
+                  <span className="flex gap-0.5">
+                    <span className="h-3.5 w-1 rounded-sm bg-current" />
+                    <span className="h-3.5 w-1 rounded-sm bg-current" />
+                  </span>
+                  Pause
+                </>
+              ) : (
+                <>
+                  <span className="h-0 w-0 border-y-[6px] border-l-[10px] border-y-transparent border-l-current" />
+                  {remainingPlays !== null && remainingPlays <= 0
+                    ? "Limit reached"
+                    : remainingPlays !== null
+                      ? `Play (${remainingPlays} left)`
+                      : "Play"}
+                </>
+              )}
             </Button>
-            <Button variant="secondary" onClick={handlePauseClick} disabled={!audioSrc && !isPlaying}>
-              {isPlaying ? "Pause" : "Resume"}
+
+            {/* Replay from start */}
+            <Button
+              variant="outline"
+              onClick={handleStopClick}
+              disabled={!audioSrc && !isPlaying}
+              title="Restart from beginning"
+            >
+              ↺ Replay
             </Button>
-            <Button variant="secondary" onClick={handleStopClick} disabled={!audioSrc && !isPlaying}>
-              Stop
-            </Button>
+
+            {/* Remaining plays badge */}
+            {remainingPlays !== null && remainingPlays > 0 && (
+              <span className="ml-auto rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+                {remainingPlays} play{remainingPlays !== 1 ? "s" : ""} left
+              </span>
+            )}
           </div>
-          <div className="mt-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Speed</p>
-            <div className="mt-2 flex flex-wrap gap-2">
+
+          {/* Speed segmented control */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-400 font-medium w-10">Speed</span>
+            <div className="flex rounded-lg border border-slate-200 bg-white overflow-hidden divide-x divide-slate-200">
               {SPEED_OPTIONS.map((speed) => (
-                <Button
+                <button
                   key={`speed-${speed}`}
-                  variant={playbackRate === speed ? "default" : "outline"}
+                  type="button"
                   onClick={() => setPlaybackRate(speed)}
-                  size="sm"
+                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                    playbackRate === speed
+                      ? "bg-indigo-600 text-white"
+                      : "text-slate-600 hover:bg-slate-50"
+                  }`}
                 >
                   {speed}x
-                </Button>
+                </button>
               ))}
             </div>
           </div>
+
           <audio ref={audioRef} src={audioSrc || undefined} preload="auto" />
         </div>
 
@@ -345,22 +384,27 @@ export default function ListeningQuestionCard({
               return (
                 <label
                   key={`listening-${questionNumber}-${index}`}
-                  className={`flex cursor-pointer items-start gap-3 rounded-2xl border px-4 py-3 text-sm transition ${
+                  className={`group flex items-start gap-3 rounded-xl border px-3 py-3 text-sm transition-all duration-150 ${
                     isSelected
-                      ? "border-indigo-600 bg-indigo-600 text-white"
-                      : "border-slate-200 bg-white text-slate-700 hover:border-indigo-200"
-                  } ${disabled ? "cursor-not-allowed opacity-70" : ""}`}
+                      ? "border-indigo-600 bg-indigo-600 text-white shadow-sm cursor-default"
+                      : "border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50"
+                  } ${disabled ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}
                 >
                   <input
                     type="radio"
                     name={`listening-question-${questionNumber}`}
-                    className="mt-1"
+                    className="sr-only"
                     value={value}
                     checked={isSelected}
                     disabled={disabled}
                     onChange={() => onSelect(value)}
                   />
-                  <span>{option}</span>
+                  <span className={`flex-shrink-0 h-6 w-6 rounded-md text-xs font-bold flex items-center justify-center transition-colors ${
+                    isSelected ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600 group-hover:bg-indigo-100 group-hover:text-indigo-700"
+                  }`}>
+                    {value}
+                  </span>
+                  <span className="mt-0.5">{option.replace(/^[A-D]\.\s*/, "")}</span>
                 </label>
               );
             })}

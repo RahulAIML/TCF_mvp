@@ -225,15 +225,15 @@ export default function ReadingPracticePage() {
                       <label
                         key={value}
                         onClick={() => handleAnswer(value)}
-                        className={`flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 text-sm transition ${
+                        className={`group flex items-start gap-3 rounded-xl border px-3 py-3 text-sm transition-all duration-150 ${
                           isCorrect
-                            ? "border-emerald-500 bg-emerald-50 text-emerald-800"
+                            ? "border-emerald-500 bg-emerald-50 text-emerald-800 cursor-default"
                             : isWrong
-                            ? "border-rose-400 bg-rose-50 text-rose-800"
+                            ? "border-rose-400 bg-rose-50 text-rose-800 cursor-default"
                             : isSelected
-                            ? "border-emerald-600 bg-emerald-600 text-white"
-                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                        } ${revealed ? "cursor-default" : "cursor-pointer"}`}
+                            ? "border-indigo-600 bg-indigo-600 text-white cursor-default"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 cursor-pointer"
+                        } ${revealed ? "cursor-default" : ""}`}
                       >
                         <input
                           type="radio"
@@ -242,11 +242,19 @@ export default function ReadingPracticePage() {
                           checked={isSelected}
                           onChange={() => handleAnswer(value)}
                           disabled={revealed}
-                          className="mt-1"
+                          className="sr-only"
                         />
-                        <span>{option}</span>
-                        {isCorrect && <span className="ml-auto font-semibold">✓</span>}
-                        {isWrong && <span className="ml-auto font-semibold">✗</span>}
+                        <span className={`flex-shrink-0 h-6 w-6 rounded-md text-xs font-bold flex items-center justify-center transition-colors ${
+                          isCorrect ? "bg-emerald-100 text-emerald-700"
+                            : isWrong ? "bg-rose-100 text-rose-700"
+                            : isSelected ? "bg-white/20 text-white"
+                            : "bg-slate-100 text-slate-600 group-hover:bg-indigo-100 group-hover:text-indigo-700"
+                        }`}>
+                          {value}
+                        </span>
+                        <span className="mt-0.5 flex-1">{option.replace(/^[A-D]\.\s*/, "")}</span>
+                        {isCorrect && <span className="ml-auto font-bold text-emerald-600">✓</span>}
+                        {isWrong && <span className="ml-auto font-bold text-rose-500">✗</span>}
                       </label>
                     );
                   })}

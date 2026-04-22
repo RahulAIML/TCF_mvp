@@ -363,17 +363,74 @@ export default function SpeakingPage() {
 
   return (
     <TcfAppShell title="Speaking Module" subtitle="Live speaking practice for TCF Canada">
-      <div className="space-y-6">
-        <div className="flex flex-wrap items-center gap-3">
-          <Button variant={mode === "practice" ? "default" : "outline"} disabled={isSessionActive}
-            onClick={() => { setMode("practice"); resetSession(); }}>
-            Practice Mode
-          </Button>
-          <Button variant={mode === "exam" ? "default" : "outline"} disabled={isSessionActive}
-            onClick={() => { setMode("exam"); resetSession(); }}>
-            Exam Mode
-          </Button>
+      <div className="space-y-5">
+
+        {/* ── Top control bar ── */}
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          {/* Mode toggle */}
+          <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 gap-0.5">
+            {(["practice", "exam"] as const).map((m) => (
+              <button
+                key={m}
+                disabled={isSessionActive}
+                onClick={() => { setMode(m); resetSession(); }}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium capitalize transition-all duration-150 ${
+                  mode === m
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700 disabled:opacity-50"
+                }`}
+              >
+                {m === "practice" ? "Practice" : "Exam"}
+              </button>
+            ))}
+          </div>
+
+          <div className="h-5 w-px bg-slate-200 mx-1" />
+
+          {/* Task selector */}
+          {(
+            [
+              { key: "basic_interaction", label: "Task 1 — Basic" },
+              { key: "role_play",         label: "Task 2 — Role-play" },
+              { key: "opinion",           label: "Task 3 — Opinion" },
+            ] as { key: TcfSpeakingTaskType; label: string }[]
+          ).map(({ key, label }) => (
+            <button
+              key={key}
+              disabled={isSessionActive}
+              onClick={() => setTaskType(key)}
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-all duration-150 ${
+                taskType === key
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "border border-slate-200 bg-white text-slate-600 hover:border-slate-300 disabled:opacity-50"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+
           <div className="ml-auto flex items-center gap-2">
+            {/* Hands-free toggle */}
+            <button
+              title="Hands-free: mic auto-starts after examiner finishes."
+              onClick={() => setHandsFreeEnabled((prev) => !prev)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium border transition-all duration-150 ${
+                handsFreeEnabled
+                  ? "border-emerald-400 bg-emerald-50 text-emerald-700"
+                  : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
+              }`}
+            >
+              {handsFreeEnabled ? "🎙 Hands-free On" : "🎙 Hands-free Off"}
+            </button>
+
+            {/* Reset */}
+            <button
+              onClick={resetSession}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 hover:border-slate-300 transition"
+            >
+              Reset
+            </button>
+
             {mode === "exam" && (
               <TimerClock durationSeconds={EXAM_DURATION_SECONDS} isActive={timerActive}
                 resetKey={timerKey} onExpire={handleTimerExpire} />
@@ -381,53 +438,42 @@ export default function SpeakingPage() {
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-3">
-          <Button variant={taskType === "basic_interaction" ? "default" : "outline"} disabled={isSessionActive}
-            onClick={() => setTaskType("basic_interaction")}>
-            Basic Interaction (Task 1)
-          </Button>
-          <Button variant={taskType === "role_play" ? "default" : "outline"} disabled={isSessionActive}
-            onClick={() => setTaskType("role_play")}>
-            Role Play (Task 2)
-          </Button>
-          <Button variant={taskType === "opinion" ? "default" : "outline"} disabled={isSessionActive}
-            onClick={() => setTaskType("opinion")}>
-            Opinion (Task 3)
-          </Button>
-          <Button variant="secondary" onClick={resetSession}>Reset</Button>
-          <Button
-            variant={handsFreeEnabled ? "default" : "outline"}
-            title="Hands-free: mic auto-starts after examiner finishes. Manual: you control when to record."
-            onClick={() => setHandsFreeEnabled((prev) => !prev)}
-          >
-            {handsFreeEnabled ? "Hands-Free On" : "Hands-Free Off"}
-          </Button>
-        </div>
-
+        {/* ── Start prompt cards ── */}
         {mode === "exam" && !isExamStarted && (
           <Card className="border-slate-200 shadow-sm">
-            <CardContent className="space-y-3 p-6">
-              <h3 className="text-lg font-semibold text-slate-900">Exam Mode</h3>
-              <p className="text-sm text-slate-600">
-                You have 12 minutes. The examiner speaks first - respond naturally.
-              </p>
-              <Button onClick={startSession}>Start Exam</Button>
+            <CardContent className="flex items-center justify-between gap-4 p-5">
+              <div>
+                <p className="font-semibold text-slate-900">Ready to start the exam?</p>
+                <p className="mt-0.5 text-sm text-slate-500">
+                  You have 12 minutes. Select a task above, then start — the examiner speaks first.
+                </p>
+              </div>
+              <Button onClick={startSession} disabled={!taskType}>Start Exam</Button>
             </CardContent>
           </Card>
         )}
 
         {mode === "practice" && !isSessionActive && (
           <Card className="border-slate-200 shadow-sm">
-            <CardContent className="space-y-3 p-6">
-              <h3 className="text-lg font-semibold text-slate-900">Practice Mode</h3>
-              <p className="text-sm text-slate-600">
-                The examiner starts first. Respond naturally and the conversation will flow.
-              </p>
-              <div className="flex flex-wrap gap-3">
-                <Button onClick={startSession}>Start Practice</Button>
-                <Button variant="secondary" onClick={() => setHintsEnabled((prev) => !prev)}>
-                  Hints: {hintsEnabled ? "On" : "Off"}
-                </Button>
+            <CardContent className="flex items-center justify-between gap-4 p-5">
+              <div>
+                <p className="font-semibold text-slate-900">Ready to practise?</p>
+                <p className="mt-0.5 text-sm text-slate-500">
+                  Select a task above. The examiner will speak first — respond naturally.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setHintsEnabled((prev) => !prev)}
+                  className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                    hintsEnabled
+                      ? "border-amber-300 bg-amber-50 text-amber-700"
+                      : "border-slate-200 bg-white text-slate-500"
+                  }`}
+                >
+                  Hints {hintsEnabled ? "On" : "Off"}
+                </button>
+                <Button onClick={startSession} disabled={!taskType}>Start Practice</Button>
               </div>
             </CardContent>
           </Card>
@@ -439,38 +485,55 @@ export default function SpeakingPage() {
           </div>
         )}
 
-        <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
+        {/* ── Main grid ── */}
+        <div className="grid gap-5 lg:grid-cols-[2fr_1fr]">
+
+          {/* Left — recorder + chat */}
           <div className="space-y-4">
+
+            {/* Recorder status card */}
             <Card className="border-slate-200 shadow-sm">
-              <CardContent className="space-y-4 p-6">
+              <CardContent className="p-5 space-y-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-xs font-semibold uppercase text-slate-400">Active Task</p>
-                    <h2 className="text-lg font-semibold text-slate-900">{taskLabel}</h2>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Active Task</p>
+                    <h2 className="mt-0.5 text-base font-semibold text-slate-900">{taskLabel}</h2>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`h-3 w-3 rounded-full ${stateIndicatorColor[convState]}`} />
-                    <span className="text-xs text-slate-500 capitalize">{convState}</span>
-                  </div>
+                  {/* State pill */}
+                  <span
+                    className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
+                      convState === "listening"
+                        ? "bg-emerald-50 text-emerald-700"
+                        : convState === "processing"
+                          ? "bg-amber-50 text-amber-700"
+                          : convState === "speaking"
+                            ? "bg-indigo-50 text-indigo-700"
+                            : "bg-slate-100 text-slate-500"
+                    }`}
+                  >
+                    <span className={`h-2 w-2 rounded-full ${stateIndicatorColor[convState]}`} />
+                    {convState === "listening" ? "Listening…" :
+                     convState === "processing" ? "Thinking…" :
+                     convState === "speaking" ? "Examiner speaking…" : "Ready"}
+                  </span>
                 </div>
 
                 <audio ref={audioRef} className="hidden" />
 
-                <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-wrap items-center gap-2">
                   {convState === "speaking" && (
-                    <Button variant="secondary" onClick={stopAudio}>
-                      Stop Audio
+                    <Button variant="secondary" size="sm" onClick={stopAudio}>
+                      ⏹ Stop Audio
                     </Button>
                   )}
-
                   {!handsFreeEnabled && isSessionActive && !evaluation && convState !== "speaking" && (
                     convState === "listening" ? (
-                      <Button variant="secondary" onClick={stopListening}>
-                        Stop Recording
+                      <Button variant="secondary" size="sm" onClick={stopListening}>
+                        ⏹ Stop Recording
                       </Button>
                     ) : (
-                      <Button variant="default" disabled={isRecorderDisabled} onClick={startListening}>
-                        Start Recording
+                      <Button size="sm" disabled={isRecorderDisabled} onClick={startListening}>
+                        🎙 Start Recording
                       </Button>
                     )
                   )}
@@ -492,7 +555,9 @@ export default function SpeakingPage() {
                   isDisabled={isRecorderDisabled}
                 />
 
-                <p className="text-sm text-slate-500">{statusLabel}</p>
+                {isSessionActive && (
+                  <p className="text-xs text-slate-400">{statusLabel}</p>
+                )}
               </CardContent>
             </Card>
 
@@ -505,61 +570,80 @@ export default function SpeakingPage() {
             />
           </div>
 
+          {/* Right — hints + evaluate + results */}
           <div className="space-y-4">
+
+            {/* Hints */}
             {mode === "practice" && hintsEnabled && (
-              <Card className="border-slate-200 shadow-sm">
-                <CardHeader><CardTitle>Hints</CardTitle></CardHeader>
-                <CardContent className="space-y-2 text-sm text-slate-600">
+              <Card className="border-amber-200 bg-amber-50 shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-amber-800">💡 Speaking Tips</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-1.5 text-sm text-amber-700 pb-4">
                   {initialHints.map((hint) => (
-                    <p key={hint} className="rounded-lg bg-slate-50 px-3 py-2">{hint}</p>
+                    <p key={hint} className="flex items-start gap-1.5">
+                      <span className="mt-0.5 text-amber-400">•</span>
+                      {hint}
+                    </p>
                   ))}
                 </CardContent>
               </Card>
             )}
 
+            {/* End & Evaluate */}
             <Card className="border-slate-200 shadow-sm">
-              <CardContent className="space-y-3 p-6">
+              <CardContent className="p-5 space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Finish</p>
                 <Button
+                  className="w-full"
                   onClick={() => void handleEvaluate()}
                   disabled={convState === "processing" || history.length === 0}
                 >
-                  {convState === "processing" ? "Evaluating..." : "End and Evaluate"}
+                  {convState === "processing" ? "Evaluating…" : "End & Get Feedback"}
                 </Button>
-                <p className="text-sm text-slate-500">
-                  End the conversation and get feedback on fluency, grammar, and interaction.
+                <p className="text-xs text-slate-400">
+                  Ends the conversation and scores fluency, grammar, and interaction.
                 </p>
               </CardContent>
             </Card>
 
+            {/* Evaluation result */}
             {evaluation && (
-              <Card className="border-slate-200 shadow-sm">
-                <CardContent className="space-y-3 p-6 text-sm text-slate-700">
-                  <h3 className="text-base font-semibold text-slate-900">Evaluation</h3>
-                  <div className="grid gap-3 sm:grid-cols-2">
+              <Card className="border-emerald-200 bg-emerald-50 shadow-sm">
+                <CardContent className="p-5 space-y-4 text-sm">
+                  <p className="font-semibold text-emerald-800">✓ Evaluation Complete</p>
+
+                  <div className="grid grid-cols-2 gap-2">
                     {[
-                      { label: "Fluency", val: evaluation.fluency },
-                      { label: "Grammar", val: evaluation.grammar },
-                      { label: "Relevance", val: evaluation.vocabulary },
-                      { label: "Completeness", val: evaluation.interaction }
+                      { label: "Fluency",       val: evaluation.fluency },
+                      { label: "Grammar",       val: evaluation.grammar },
+                      { label: "Vocabulary",    val: evaluation.vocabulary },
+                      { label: "Interaction",   val: evaluation.interaction }
                     ].map(({ label, val }) => (
-                      <div key={label} className="rounded-xl bg-slate-50 p-3">
-                        <p className="text-xs uppercase text-slate-400">{label}</p>
-                        <p className="text-lg font-semibold text-slate-900">{val}/10</p>
+                      <div key={label} className="rounded-xl bg-white/70 p-3 text-center">
+                        <p className="text-[10px] font-semibold uppercase text-slate-400">{label}</p>
+                        <p className="mt-0.5 text-2xl font-bold text-slate-900">{val}</p>
+                        <p className="text-[10px] text-slate-400">/ 10</p>
                       </div>
                     ))}
                   </div>
-                  <div>
-                    <p className="font-semibold text-slate-900">Feedback</p>
-                    <ul className="mt-2 list-disc space-y-1 pl-4">
+
+                  <div className="rounded-xl bg-white/70 p-3 space-y-1.5">
+                    <p className="text-xs font-semibold uppercase text-slate-400">Feedback</p>
+                    <ul className="space-y-1">
                       {evaluation.feedback.map((item, index) => (
-                        <li key={`fb-${index}`}>{item}</li>
+                        <li key={`fb-${index}`} className="flex gap-1.5 text-slate-700">
+                          <span className="text-emerald-500 mt-0.5 flex-shrink-0">•</span>
+                          {item}
+                        </li>
                       ))}
                     </ul>
                   </div>
+
                   {evaluation.improved_response && (
-                    <div className="rounded-xl bg-slate-50 p-3">
-                      <p className="text-xs uppercase text-slate-400">Improved Response</p>
-                      <p className="mt-2 whitespace-pre-line">{evaluation.improved_response}</p>
+                    <div className="rounded-xl bg-white/70 p-3 space-y-1">
+                      <p className="text-xs font-semibold uppercase text-slate-400">Model Response</p>
+                      <p className="whitespace-pre-line text-slate-700">{evaluation.improved_response}</p>
                     </div>
                   )}
                 </CardContent>

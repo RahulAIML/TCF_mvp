@@ -419,25 +419,31 @@ export default function MockExamPage() {
                       {currentQuestionData.options.map((option, index) => {
                         const value = (["A", "B", "C", "D"][index] as AnswerOption) ?? "A";
                         const isSelected = currentAnswer === value;
+                        const isDisabled = Boolean(results) || timeUp;
                         return (
                           <label
                             key={`${currentQuestion}-opt-${index}`}
-                            className={`flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 text-sm transition ${
+                            className={`group flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-3 text-sm transition-all duration-150 ${
                               isSelected
-                                ? "border-emerald-600 bg-emerald-600 text-white"
-                                : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                            } ${(Boolean(results) || timeUp) ? "cursor-not-allowed opacity-70" : ""}`}
+                                ? "border-indigo-600 bg-indigo-600 text-white shadow-sm"
+                                : "border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50"
+                            } ${isDisabled ? "cursor-not-allowed opacity-70" : ""}`}
                           >
                             <input
                               type="radio"
                               name={`question-${currentQuestion}`}
                               value={value}
                               checked={isSelected}
-                              disabled={Boolean(results) || timeUp}
+                              disabled={isDisabled}
                               onChange={() => handleAnswerSelect(value)}
-                              className="mt-1"
+                              className="sr-only"
                             />
-                            <span>{option}</span>
+                            <span className={`flex-shrink-0 h-6 w-6 rounded-md text-xs font-bold flex items-center justify-center transition-colors ${
+                              isSelected ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600 group-hover:bg-indigo-100 group-hover:text-indigo-700"
+                            }`}>
+                              {value}
+                            </span>
+                            <span className="mt-0.5">{option.replace(/^[A-D]\.\s*/, "")}</span>
                           </label>
                         );
                       })}

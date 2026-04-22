@@ -21,6 +21,16 @@ const EXERCISE_TITLES: Record<string, string> = {
   speaking_prompt: "Speaking Exercise"
 };
 
+const EXERCISE_BADGE: Record<string, string> = {
+  mcq: "bg-indigo-100 text-indigo-700",
+  fill_blank: "bg-sky-100 text-sky-700",
+  sentence_correction: "bg-amber-100 text-amber-700",
+  writing_task: "bg-emerald-100 text-emerald-700",
+  speaking_prompt: "bg-rose-100 text-rose-700",
+};
+
+const OPTION_LETTERS = ["A", "B", "C", "D"];
+
 const SCORE_COLOR = (score: number) => {
   if (score >= 8) return "text-emerald-600";
   if (score >= 6) return "text-amber-600";
@@ -163,16 +173,22 @@ export default function ExerciseCard({
   return (
     <Card className="border-slate-200 shadow-sm">
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base text-slate-900">
-            Exercise {index + 1} — {EXERCISE_TITLES[exercise.type] ?? exercise.type}
-          </CardTitle>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-bold text-slate-400">#{index + 1}</span>
+            <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${EXERCISE_BADGE[exercise.type] ?? "bg-slate-100 text-slate-600"}`}>
+              {EXERCISE_TITLES[exercise.type] ?? exercise.type}
+            </span>
+          </div>
           {isEvaluating && (
-            <span className="text-xs text-slate-400 animate-pulse">Evaluating...</span>
+            <span className="flex items-center gap-1.5 text-xs text-slate-400 animate-pulse">
+              <span className="h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse" />
+              Evaluating…
+            </span>
           )}
           {evaluation && (
-            <span className={`text-lg font-bold ${SCORE_COLOR(evaluation.score)}`}>
-              {evaluation.score}/10
+            <span className={`text-xl font-bold tabular-nums ${SCORE_COLOR(evaluation.score)}`}>
+              {evaluation.score}<span className="text-sm font-normal text-slate-300">/10</span>
             </span>
           )}
         </div>
@@ -208,21 +224,27 @@ export default function ExerciseCard({
         {/* Answer Input */}
         {exercise.type === "mcq" && exercise.options && (
           <div className="space-y-2">
-            {exercise.options.map((opt) => {
-              const letter = opt.charAt(0);
+            {exercise.options.map((opt, i) => {
+              const letter = OPTION_LETTERS[i] ?? opt.charAt(0);
+              const isSelected = answer === letter;
               return (
                 <button
                   key={opt}
                   disabled={isLocked}
                   onClick={() => onAnswerChange(letter)}
-                  className={`w-full rounded-xl border px-4 py-2.5 text-left text-sm transition-colors
-                    ${answer === letter
-                      ? "border-slate-800 bg-slate-800 text-white"
-                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                  className={`group flex w-full items-start gap-3 rounded-xl border px-3 py-2.5 text-left text-sm transition-all duration-150
+                    ${isSelected
+                      ? "border-indigo-600 bg-indigo-600 text-white shadow-sm"
+                      : "border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50"
                     }
-                    ${isLocked ? "cursor-default opacity-70" : "cursor-pointer"}`}
+                    ${isLocked ? "cursor-default" : "cursor-pointer"}`}
                 >
-                  {opt}
+                  <span className={`flex-shrink-0 h-6 w-6 rounded-md text-xs font-bold flex items-center justify-center transition-colors ${
+                    isSelected ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600 group-hover:bg-indigo-100 group-hover:text-indigo-700"
+                  }`}>
+                    {letter}
+                  </span>
+                  <span className="mt-0.5">{opt.replace(/^[A-D]\.\s*/, "")}</span>
                 </button>
               );
             })}
@@ -286,54 +308,66 @@ export default function ExerciseCard({
 
         {/* Evaluation Result */}
         {evaluation && (
-          <div className="space-y-4 border-t border-slate-100 pt-4">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="space-y-3 border-t border-slate-100 pt-4">
+            {/* Correct / Wrong banner */}
+            <div className={`flex items-center gap-2 rounded-xl px-4 py-2.5 ${
+              evaluation.is_correct
+                ? "bg-emerald-50 border border-emerald-200"
+                : "bg-rose-50 border border-rose-200"
+            }`}>
+              <span className={`text-base font-bold ${evaluation.is_correct ? "text-emerald-600" : "text-rose-600"}`}>
+                {evaluation.is_correct ? "✓" : "✗"}
+              </span>
+              <span className={`text-sm font-semibold ${evaluation.is_correct ? "text-emerald-700" : "text-rose-700"}`}>
+                {evaluation.is_correct ? "Correct" : "Incorrect"}
+              </span>
+              <span className={`ml-auto text-xs font-medium ${evaluation.is_correct ? "text-emerald-500" : "text-rose-500"}`}>
+                Score: {evaluation.score}/10
+              </span>
+            </div>
+
+            {/* Sub-scores */}
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
               {[
                 { label: "Grammar", val: evaluation.grammar },
                 { label: "Vocabulary", val: evaluation.vocabulary },
                 { label: "Structure", val: evaluation.structure },
                 { label: "Fluency", val: evaluation.fluency },
-                ...(evaluation.tone != null
-                  ? [{ label: "Tone", val: evaluation.tone }]
-                  : []),
-                ...(evaluation.pronunciation != null
-                  ? [{ label: "Pronunciation", val: evaluation.pronunciation }]
-                  : [])
-              ].map(({ label, val }) => (
-                <div key={label} className="rounded-xl bg-slate-50 p-3 text-center">
-                  <p className="text-xs uppercase text-slate-400">{label}</p>
-                  <p className="text-lg font-semibold text-slate-900">{val}/10</p>
+                ...(evaluation.tone != null ? [{ label: "Tone", val: evaluation.tone }] : []),
+                ...(evaluation.pronunciation != null ? [{ label: "Pronunciation", val: evaluation.pronunciation }] : [])
+              ].filter(({ val }) => val != null).map(({ label, val }) => (
+                <div key={label} className="rounded-xl bg-slate-50 px-2 py-2 text-center">
+                  <p className="text-[10px] uppercase tracking-wide text-slate-400">{label}</p>
+                  <p className={`text-base font-bold tabular-nums ${SCORE_COLOR(val ?? 0)}`}>{val}</p>
                 </div>
               ))}
             </div>
 
-            <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold
-              ${evaluation.is_correct ? "bg-emerald-50 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
-              {evaluation.is_correct ? "✓ Correct" : "✗ Wrong"}
-            </div>
-
             {evaluation.feedback.length > 0 && (
-              <div>
-                <p className="text-xs font-semibold uppercase text-slate-400">Feedback</p>
-                <ul className="mt-1.5 space-y-1">
+              <div className="rounded-xl bg-slate-50 px-4 py-3 space-y-1">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Feedback</p>
+                <ul className="space-y-1">
                   {evaluation.feedback.map((f, i) => (
-                    <li key={i} className="text-sm text-slate-700">• {f}</li>
+                    <li key={i} className="flex gap-1.5 text-sm text-slate-700">
+                      <span className="text-slate-400 flex-shrink-0">•</span>
+                      {f}
+                    </li>
                   ))}
                 </ul>
               </div>
             )}
 
             {evaluation.improved_answer && (
-              <div className="rounded-xl bg-emerald-50 p-3">
-                <p className="text-xs font-semibold uppercase text-emerald-600">Model Answer</p>
-                <p className="mt-1.5 text-sm text-emerald-900">{evaluation.improved_answer}</p>
+              <div className="rounded-xl bg-emerald-50 border border-emerald-100 px-4 py-3 space-y-1">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-500">Model Answer</p>
+                <p className="text-sm text-emerald-900">{evaluation.improved_answer}</p>
               </div>
             )}
 
             {evaluation.explanation && (
-              <div className="rounded-xl bg-slate-50 p-3">
-                <p className="text-xs font-semibold uppercase text-slate-400">Explanation</p>
-                <p className="mt-1.5 text-sm text-slate-700">{evaluation.explanation}</p>
+              <div className="rounded-xl bg-slate-50 px-4 py-3 space-y-1">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Explanation</p>
+                <p className="text-sm text-slate-700">{evaluation.explanation}</p>
               </div>
             )}
           </div>
