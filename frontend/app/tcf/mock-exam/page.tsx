@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import TcfAppShell from "@/components/TcfAppShell";
 import ExamContainer from "@/components/ExamContainer";
 import TcfExamResults from "@/components/TcfExamResults";
-import TcfQuestionCard from "@/components/TcfQuestionCard";
 import QuestionNavigator from "@/components/QuestionNavigator";
 import TextHelperTool from "@/components/TextHelperTool";
 import TextExplanationCard from "@/components/TextExplanationCard";

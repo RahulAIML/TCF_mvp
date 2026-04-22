@@ -293,7 +293,7 @@ export default function ReadingPracticePage() {
                     <ul className="mt-3 space-y-2 text-sm text-slate-500">
                       <li>• Select a CEFR level above</li>
                       <li>• Read the French passage</li>
-                      <li>• Use "Show Translation" if needed</li>
+                      <li>• Use &quot;Show Translation&quot; if needed</li>
                       <li>• Answer and check immediately</li>
                       <li>• Track your accuracy score</li>
                     </ul>
