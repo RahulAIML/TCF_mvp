@@ -20,6 +20,11 @@ interface ListeningQuestionCardProps {
   showTranscript: boolean;
   onToggleTranscript?: () => void;
   onTranscriptSelect?: (text: string) => void;
+  /** Side-by-side translation support */
+  translationText?: string;
+  onTranslate?: () => void;
+  isTranslating?: boolean;
+  showTranslation?: boolean;
 }
 
 const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5];
@@ -36,7 +41,11 @@ export default function ListeningQuestionCard({
   onRequestAudio,
   showTranscript,
   onToggleTranscript,
-  onTranscriptSelect
+  onTranscriptSelect,
+  translationText,
+  onTranslate,
+  isTranslating = false,
+  showTranslation = false,
 }: ListeningQuestionCardProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
@@ -271,37 +280,58 @@ export default function ListeningQuestionCard({
 
         {showTranscript && (
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
-            <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-slate-700">Transcript</p>
-            {!autoScroll && (
-              <button
-                type="button"
-                className="text-xs font-medium text-indigo-600 hover:text-indigo-500"
-                onClick={() => setAutoScroll(true)}
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium text-slate-700">Transcript</p>
+              <div className="flex items-center gap-3">
+                {!autoScroll && (
+                  <button
+                    type="button"
+                    className="text-xs font-medium text-indigo-600 hover:text-indigo-500"
+                    onClick={() => setAutoScroll(true)}
+                  >
+                    Resume auto-scroll
+                  </button>
+                )}
+                {onTranslate && (
+                  <button
+                    type="button"
+                    onClick={onTranslate}
+                    disabled={isTranslating}
+                    className="text-xs font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
+                  >
+                    {isTranslating ? "Translating..." : showTranslation && translationText ? "Hide Translation" : "Show Translation"}
+                  </button>
+                )}
+              </div>
+            </div>
+            {/* Side-by-side: French transcript | English translation */}
+            <div className={showTranslation && translationText ? "grid grid-cols-2 gap-3" : ""}>
+              <div
+                ref={transcriptRef}
+                className="max-h-48 overflow-y-auto rounded-xl bg-white p-3 text-sm leading-6 text-slate-700"
+                onMouseUp={handleTranscriptSelection}
+                onMouseEnter={() => setAutoScroll(false)}
+                onWheel={() => setAutoScroll(false)}
+                onScroll={() => setAutoScroll(false)}
+                onPointerDown={() => setAutoScroll(false)}
+                onTouchMove={() => setAutoScroll(false)}
               >
-                Resume auto-scroll
-              </button>
-            )}
-          </div>
-            <div
-              ref={transcriptRef}
-              className="mt-3 max-h-48 overflow-y-auto rounded-xl bg-white p-3 text-sm leading-6 text-slate-700 scrollbar-thin"
-              onMouseUp={handleTranscriptSelection}
-              onMouseEnter={() => setAutoScroll(false)}
-              onWheel={() => setAutoScroll(false)}
-              onScroll={() => setAutoScroll(false)}
-              onPointerDown={() => setAutoScroll(false)}
-              onTouchMove={() => setAutoScroll(false)}
-            >
-              {words.map((word, index) => (
-                <span
-                  key={`word-${index}`}
-                  ref={(el) => { wordRefs.current[index] = el; }}
-                  className={index === currentWordIndex ? "rounded bg-yellow-200 px-1" : ""}
-                >
-                  {word}{" "}
-                </span>
-              ))}
+                {words.map((word, index) => (
+                  <span
+                    key={`word-${index}`}
+                    ref={(el) => { wordRefs.current[index] = el; }}
+                    className={index === currentWordIndex ? "rounded bg-yellow-200 px-1" : ""}
+                  >
+                    {word}{" "}
+                  </span>
+                ))}
+              </div>
+              {showTranslation && translationText && (
+                <div className="border-l border-indigo-100 pl-3">
+                  <p className="text-[10px] font-semibold uppercase text-indigo-400 mb-1">English</p>
+                  <p className="text-sm leading-6 text-slate-600">{translationText}</p>
+                </div>
+              )}
             </div>
           </div>
         )}

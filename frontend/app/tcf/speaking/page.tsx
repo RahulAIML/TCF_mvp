@@ -31,7 +31,7 @@ const initialHints = [
 
 export default function SpeakingPage() {
   const [mode, setMode] = useState<TcfSpeakingMode>("practice");
-  const [taskType, setTaskType] = useState<TcfSpeakingTaskType | null>("role_play");
+  const [taskType, setTaskType] = useState<TcfSpeakingTaskType | null>(null);
   const [history, setHistory] = useState<TcfConversationMessage[]>([]);
   const [transcript, setTranscript] = useState("");
   const [convState, setConvState] = useState<ConvState>("idle");

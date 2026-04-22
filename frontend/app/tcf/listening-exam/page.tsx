@@ -176,6 +176,8 @@ export default function ListeningExamPage() {
   const handleStartExam = async () => {
     if (isExamStarted) return;
     setIsExamStarted(true);
+    const startQ = LISTENING_DIFFICULTY_RANGES[examDifficulty].start;
+    setCurrentQuestion(startQ);
     const sessionId = typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -184,8 +186,8 @@ export default function ListeningExamPage() {
     setError("");
     setSubmitNote("");
     try {
-      await ensureQuestion(1);
-      prefetchQuestions(1);
+      await ensureQuestion(startQ);
+      prefetchQuestions(startQ);
       setStartedAt(new Date().toISOString());
       setTimerKey((prev) => prev + 1);
       setTimerActive(true);
@@ -200,6 +202,7 @@ export default function ListeningExamPage() {
       return;
     }
     setCurrentQuestion(questionNumber);
+    setShowTranslation(false);
     if (!questionsRef.current[questionNumber]) {
       try {
         await ensureQuestion(questionNumber);
@@ -486,25 +489,11 @@ export default function ListeningExamPage() {
                     showTranscript={showTranscript}
                     onToggleTranscript={() => setShowTranscript((prev) => !prev)}
                     onTranscriptSelect={handleTranscriptSelection}
+                    translationText={transcriptTranslations[`practice-${practiceCount}`]}
+                    onTranslate={() => void handleTranslateTranscript(practiceQuestion.script, `practice-${practiceCount}`)}
+                    isTranslating={isTranslating}
+                    showTranslation={showTranslation}
                   />
-                  {/* Transcript translation */}
-                  {showTranscript && practiceQuestion.script && (
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => void handleTranslateTranscript(practiceQuestion.script, `practice-${practiceCount}`)}
-                        disabled={isTranslating}
-                        className="text-xs text-indigo-600 hover:text-indigo-800 underline disabled:opacity-50"
-                      >
-                        {isTranslating ? "Translating..." : showTranslation && transcriptTranslations[`practice-${practiceCount}`] ? "Hide Translation" : "Show Translation"}
-                      </button>
-                    </div>
-                  )}
-                  {showTranscript && showTranslation && transcriptTranslations[`practice-${practiceCount}`] && (
-                    <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3">
-                      <p className="text-[10px] font-semibold uppercase text-indigo-400 mb-1">English Translation</p>
-                      <p className="text-sm leading-6 text-slate-700">{transcriptTranslations[`practice-${practiceCount}`]}</p>
-                    </div>
-                  )}
                   {practiceAnswer && (
                     <Card className="border-slate-200 shadow-sm rounded-2xl">
                       <CardContent className="p-6">
@@ -560,7 +549,9 @@ export default function ListeningExamPage() {
               }
             >
               <div className="flex items-center gap-2 text-xs font-medium text-emerald-700">
-                <span className="rounded-full bg-emerald-50 px-2.5 py-1">Level {levelLabel(currentQuestion)}</span>
+                <span className="rounded-full bg-emerald-50 px-2.5 py-1">
+                  {examDifficulty === "all" ? `Level ${levelLabel(currentQuestion)}` : LISTENING_DIFFICULTY_RANGES[examDifficulty].label}
+                </span>
                 <span className="text-slate-500">Audio plays only once.</span>
               </div>
               {!isExamStarted ? (
@@ -614,52 +605,36 @@ export default function ListeningExamPage() {
                     <p className="text-sm text-slate-500">Generating question...</p>
                   )}
                   {currentQuestionData && (
-                    <div className="space-y-2">
-                      <ListeningQuestionCard
-                        question={currentQuestionData}
-                        questionNumber={currentQuestion}
-                        selectedAnswer={currentAnswer}
-                        onSelect={handleAnswerSelect}
-                        disabled={Boolean(results) || timeUp}
-                        maxPlays={MAX_PLAYS}
-                        playCount={currentPlays}
-                        onPlay={() => handlePlay(currentQuestion)}
-                        showTranscript={showTranscript}
-                        onToggleTranscript={() => setShowTranscript((prev) => !prev)}
-                        onTranscriptSelect={handleTranscriptSelection}
-                      />
-                      {/* Translation toggle for exam transcript */}
-                      {showTranscript && currentQuestionData.script && (
-                        <div className="space-y-2">
-                          <button
-                            onClick={() => void handleTranslateTranscript(currentQuestionData.script, `exam-${currentQuestion}`)}
-                            disabled={isTranslating}
-                            className="text-xs text-indigo-600 hover:text-indigo-800 underline disabled:opacity-50"
-                          >
-                            {isTranslating ? "Translating..." : showTranslation && transcriptTranslations[`exam-${currentQuestion}`] ? "Hide Translation" : "Translate Transcript"}
-                          </button>
-                          {showTranslation && transcriptTranslations[`exam-${currentQuestion}`] && (
-                            <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3">
-                              <p className="text-[10px] font-semibold uppercase text-indigo-400 mb-1">English Translation</p>
-                              <p className="text-sm leading-6 text-slate-700">{transcriptTranslations[`exam-${currentQuestion}`]}</p>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                    <ListeningQuestionCard
+                      question={currentQuestionData}
+                      questionNumber={currentQuestion}
+                      selectedAnswer={currentAnswer}
+                      onSelect={handleAnswerSelect}
+                      disabled={Boolean(results) || timeUp}
+                      maxPlays={MAX_PLAYS}
+                      playCount={currentPlays}
+                      onPlay={() => handlePlay(currentQuestion)}
+                      showTranscript={showTranscript}
+                      onToggleTranscript={() => setShowTranscript((prev) => !prev)}
+                      onTranscriptSelect={handleTranscriptSelection}
+                      translationText={transcriptTranslations[`exam-${currentQuestion}`]}
+                      onTranslate={() => void handleTranslateTranscript(currentQuestionData.script, `exam-${currentQuestion}`)}
+                      isTranslating={isTranslating}
+                      showTranslation={showTranslation}
+                    />
                   )}
                   <div className="flex flex-wrap items-center gap-3">
                     <Button
                       variant="secondary"
-                      onClick={() => handleSelectQuestion(Math.max(1, currentQuestion - 1))}
-                      disabled={currentQuestion === 1}
+                      onClick={() => handleSelectQuestion(Math.max(LISTENING_DIFFICULTY_RANGES[examDifficulty].start, currentQuestion - 1))}
+                      disabled={currentQuestion === LISTENING_DIFFICULTY_RANGES[examDifficulty].start}
                     >
                       Previous
                     </Button>
                     <Button
                       variant="secondary"
-                      onClick={() => handleSelectQuestion(Math.min(TOTAL_QUESTIONS, currentQuestion + 1))}
-                      disabled={currentQuestion === TOTAL_QUESTIONS}
+                      onClick={() => handleSelectQuestion(Math.min(LISTENING_DIFFICULTY_RANGES[examDifficulty].end, currentQuestion + 1))}
+                      disabled={currentQuestion === LISTENING_DIFFICULTY_RANGES[examDifficulty].end}
                     >
                       Next
                     </Button>
