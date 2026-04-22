@@ -34,12 +34,14 @@ const LISTENING_DIFFICULTY_RANGES: Record<ListeningDifficultyGroup, { start: num
   a1_a2: { start: 31, end: 39, label: "A1–A2" },
 };
 
-type PracticeLevel = "C2" | "B2-C1" | "B1-B2" | "A2-B1";
+type PracticeLevel = "C2" | "C1" | "B2" | "B1" | "A2" | "A1";
 const PRACTICE_LEVEL_RANGES: Record<PracticeLevel, [number, number]> = {
-  "C2":    [1,  10],
-  "B2-C1": [11, 20],
-  "B1-B2": [21, 30],
-  "A2-B1": [31, 39],
+  "C2": [1,  10],
+  "C1": [11, 20],
+  "B2": [11, 20],
+  "B1": [21, 30],
+  "A2": [31, 39],
+  "A1": [31, 39],
 };
 
 const levelLabel = (questionNumber: number) => {
@@ -80,7 +82,7 @@ export default function ListeningExamPage() {
 
   // Difficulty + translation state
   const [examDifficulty, setExamDifficulty] = useState<ListeningDifficultyGroup>("all");
-  const [practiceLevel, setPracticeLevel] = useState<PracticeLevel>("B1-B2");
+  const [practiceLevel, setPracticeLevel] = useState<PracticeLevel>("B1");
   const [transcriptTranslations, setTranscriptTranslations] = useState<Record<string, string>>({});
   const [showTranslation, setShowTranslation] = useState(false);
   const [isTranslating, setIsTranslating] = useState(false);

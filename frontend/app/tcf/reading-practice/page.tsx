@@ -8,13 +8,14 @@ import { generateTcfQuestion, translatePassage } from "@/services/api";
 import type { AnswerOption } from "@/types/exam";
 import type { TcfExamQuestion } from "@/types/tcf-exam";
 
-// Level → question number range mapping
+// Level → question number range mapping (6 CEFR levels)
 const LEVEL_RANGES: Record<string, [number, number]> = {
-  C2:     [1,  10],
-  C1:     [11, 15],
-  B2:     [16, 20],
-  B1:     [21, 26],
-  A2:     [31, 39],
+  C2:  [1,  10],
+  C1:  [11, 15],
+  B2:  [16, 20],
+  B1:  [21, 26],
+  A2:  [31, 39],
+  A1:  [31, 39], // Uses simplest available range
 };
 
 const LEVEL_LABELS: Record<string, string> = {
@@ -23,6 +24,7 @@ const LEVEL_LABELS: Record<string, string> = {
   B2:  "B2 — Press articles & reports",
   B1:  "B1 — Informative documents",
   A2:  "A2 — Everyday documents",
+  A1:  "A1 — Basic everyday documents",
 };
 
 const LEVEL_COLORS: Record<string, string> = {
@@ -31,6 +33,7 @@ const LEVEL_COLORS: Record<string, string> = {
   B2: "bg-amber-500",
   B1: "bg-emerald-600",
   A2: "bg-indigo-600",
+  A1: "bg-slate-500",
 };
 
 function randomInRange(min: number, max: number) {
