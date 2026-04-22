@@ -26,12 +26,15 @@ const EXAM_DURATION_SECONDS = 35 * 60;
 const PREFETCH_AHEAD = 1;
 const MAX_PLAYS = 1;
 
-type ListeningDifficultyGroup = "all" | "c1_c2" | "b1_b2" | "a1_a2";
+type ListeningDifficultyGroup = "all" | "c2" | "c1" | "b2" | "b1" | "a2" | "a1";
 const LISTENING_DIFFICULTY_RANGES: Record<ListeningDifficultyGroup, { start: number; end: number; label: string }> = {
-  all:   { start: 1,  end: 39, label: "All Levels" },
-  c1_c2: { start: 1,  end: 20, label: "C1–C2" },
-  b1_b2: { start: 21, end: 30, label: "B1–B2" },
-  a1_a2: { start: 31, end: 39, label: "A1–A2" },
+  all: { start: 1,  end: 39, label: "All Levels" },
+  c2:  { start: 1,  end: 10, label: "C2" },
+  c1:  { start: 11, end: 20, label: "C1" },
+  b2:  { start: 11, end: 20, label: "B2" },
+  b1:  { start: 21, end: 30, label: "B1" },
+  a2:  { start: 31, end: 39, label: "A2" },
+  a1:  { start: 31, end: 39, label: "A1" },
 };
 
 type PracticeLevel = "C2" | "C1" | "B2" | "B1" | "A2" | "A1";
@@ -552,7 +555,7 @@ export default function ListeningExamPage() {
             >
               <div className="flex items-center gap-2 text-xs font-medium text-emerald-700">
                 <span className="rounded-full bg-emerald-50 px-2.5 py-1">
-                  {examDifficulty === "all" ? `Level ${levelLabel(currentQuestion)}` : LISTENING_DIFFICULTY_RANGES[examDifficulty].label}
+                  {examDifficulty === "all" ? levelLabel(currentQuestion) : LISTENING_DIFFICULTY_RANGES[examDifficulty].label}
                 </span>
                 <span className="text-slate-500">Audio plays only once.</span>
               </div>

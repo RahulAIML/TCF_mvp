@@ -18,12 +18,15 @@ import type { ExplainTextResponse } from "@/types/text-helper";
 const EXAM_DURATION_SECONDS = 60 * 60;
 const PREFETCH_AHEAD = 5;
 
-type DifficultyGroup = "all" | "c1_c2" | "b1_b2" | "a1_a2";
+type DifficultyGroup = "all" | "c2" | "c1" | "b2" | "b1" | "a2" | "a1";
 const DIFFICULTY_RANGES: Record<DifficultyGroup, { start: number; end: number; label: string }> = {
-  all:    { start: 1,  end: 39, label: "All Levels (C2 → A2)" },
-  c1_c2:  { start: 1,  end: 20, label: "C1–C2 (Questions 1–20)" },
-  b1_b2:  { start: 21, end: 30, label: "B1–B2 (Questions 21–30)" },
-  a1_a2:  { start: 31, end: 39, label: "A1–A2 (Questions 31–39)" },
+  all: { start: 1,  end: 39, label: "All Levels" },
+  c2:  { start: 1,  end: 10, label: "C2" },
+  c1:  { start: 11, end: 20, label: "C1" },
+  b2:  { start: 11, end: 20, label: "B2" },
+  b1:  { start: 21, end: 30, label: "B1" },
+  a2:  { start: 31, end: 39, label: "A2" },
+  a1:  { start: 31, end: 39, label: "A1" },
 };
 
 const partLabel = (questionNumber: number) => {
