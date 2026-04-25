@@ -390,27 +390,21 @@ export default function MockExamPage() {
               )}
               {currentQuestionData && (
                 <div onMouseUp={handleTextSelection} className="mx-auto w-full max-w-3xl space-y-3">
-                  {/* Passage with translation toggle */}
+                  {/* Passage — French text only; translation appears in the right panel */}
                   <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-5">
                     <div className="flex items-center justify-between mb-3">
-                      <span className="text-xs font-semibold uppercase text-slate-400">Passage</span>
+                      <span className="text-xs font-semibold uppercase text-slate-400">Passage (French)</span>
                       <button
                         onClick={() => void handleTranslatePassage()}
                         disabled={isTranslating}
-                        className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50 transition disabled:opacity-50"
+                        className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50 transition-all duration-150 disabled:opacity-50"
                       >
-                        {isTranslating ? "Translating..." : showTranslation && translations[currentQuestion] ? "Hide Translation" : "Show Translation"}
+                        {isTranslating ? (
+                          <><span className="h-3 w-3 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin" />Translating…</>
+                        ) : showTranslation && translations[currentQuestion] ? "Hide Translation →" : "Show Translation →"}
                       </button>
                     </div>
-                    <div className={showTranslation && translations[currentQuestion] ? "grid grid-cols-2 gap-4" : ""}>
-                      <p className="text-[1.02rem] leading-7 text-slate-800">{currentQuestionData.text}</p>
-                      {showTranslation && translations[currentQuestion] && (
-                        <div className="border-l border-indigo-100 pl-4">
-                          <p className="text-[10px] font-semibold uppercase text-indigo-400 mb-1">English Translation</p>
-                          <p className="text-sm leading-7 text-slate-600">{translations[currentQuestion]}</p>
-                        </div>
-                      )}
-                    </div>
+                    <p className="text-[1.02rem] leading-7 text-slate-800">{currentQuestionData.text}</p>
                   </div>
                   {/* Question & options (without passage — passed separately) */}
                   <div>
@@ -479,6 +473,25 @@ export default function MockExamPage() {
                 answers={answers}
                 onSelect={handleSelectQuestion}
               />
+
+              {/* Translation panel — right side only */}
+              {showTranslation && translations[currentQuestion] && (
+                <Card className="border-indigo-200 bg-indigo-50 shadow-sm">
+                  <CardContent className="p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-500">English Translation</p>
+                      <button
+                        onClick={() => setShowTranslation(false)}
+                        className="text-xs text-indigo-400 hover:text-indigo-600"
+                      >
+                        ✕ Hide
+                      </button>
+                    </div>
+                    <p className="text-sm leading-6 text-slate-700">{translations[currentQuestion]}</p>
+                  </CardContent>
+                </Card>
+              )}
+
               <Card className="border-slate-200 shadow-sm">
                 <CardContent className="p-5">
                   <TextHelperTool

@@ -529,9 +529,14 @@ export default function ListeningExamPage() {
             </div>
             <div className="space-y-4">
               <Card className="border-slate-200 shadow-sm rounded-2xl">
-                <CardContent className="p-6">
-                  <p className="text-sm font-medium text-slate-900">Practice Mode</p>
-                  <p className="mt-2 text-sm text-slate-600">One question at a time with transcript. Translation available via toggle.</p>
+                <CardContent className="p-4 space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Practice Tips</p>
+                  <ul className="space-y-1.5 text-xs text-slate-500">
+                    <li className="flex gap-2"><span className="text-slate-300">•</span>Audio plays once per question</li>
+                    <li className="flex gap-2"><span className="text-slate-300">•</span>Transcript is shown below the audio controls</li>
+                    <li className="flex gap-2"><span className="text-slate-300">•</span>Use the translation toggle inside the transcript</li>
+                    <li className="flex gap-2"><span className="text-slate-300">•</span>Select transcript text → Phrase Helper auto-fills</li>
+                  </ul>
                 </CardContent>
               </Card>
               <Card className="border-slate-200 shadow-sm rounded-2xl">

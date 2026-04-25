@@ -58,12 +58,21 @@ export default function ReadingPage() {
       backHref="/tcf"
     >
       <div className="max-w-4xl space-y-6">
-        <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-6 py-4">
-          <p className="text-sm text-emerald-800">
-            <span className="font-semibold">TCF Canada Reading</span> — 39 questions across four difficulty levels:
-            C2 (Q1–10) → B2-C1 (Q11–20) → B1-B2 (Q21–30) → A2 (Q31–39).
-            Passages include a translation toggle for learning support.
-          </p>
+        <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+          <div className="flex flex-wrap items-start gap-6">
+            {[
+              { label: "C2",    range: "Q 1–10",  color: "bg-rose-100 text-rose-700" },
+              { label: "C1/B2", range: "Q 11–20", color: "bg-amber-100 text-amber-700" },
+              { label: "B1",    range: "Q 21–30", color: "bg-emerald-100 text-emerald-700" },
+              { label: "A2/A1", range: "Q 31–39", color: "bg-indigo-100 text-indigo-700" },
+            ].map(({ label, range, color }) => (
+              <div key={label} className="flex items-center gap-2">
+                <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${color}`}>{label}</span>
+                <span className="text-xs text-slate-500">{range}</span>
+              </div>
+            ))}
+            <p className="text-xs text-slate-400 ml-auto mt-0.5">Translation toggle available in all modes</p>
+          </div>
         </div>
 
         <div className="grid gap-5 sm:grid-cols-3">

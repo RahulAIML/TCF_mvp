@@ -1,6 +1,6 @@
 "use client";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 
 interface ReadingPanelProps {
   title: string;
@@ -26,16 +26,14 @@ export default function ReadingPanel({
   };
 
   return (
-    <Card className="border-slate-200 shadow-sm">
-      <CardHeader>
-        <CardTitle className="text-slate-900">{title}</CardTitle>
-        <CardDescription>
-          Select text in the passage to auto-fill the helper on the right.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
+    <Card className="border-slate-200 shadow-sm rounded-2xl overflow-hidden">
+      <div className="border-b border-slate-100 bg-slate-50 px-5 py-3.5">
+        <h2 className="text-sm font-semibold text-slate-800">{title}</h2>
+        <p className="text-[11px] text-slate-400 mt-0.5">Select any word or phrase → explanation appears on the right</p>
+      </div>
+      <CardContent className="p-0">
         <div
-          className="max-h-[360px] overflow-y-auto rounded-md border border-slate-200 bg-slate-50/60 p-5 text-[1.02rem] leading-8 text-slate-800"
+          className="max-h-[420px] overflow-y-auto p-5 text-[1.02rem] leading-8 text-slate-800 selection:bg-indigo-100 cursor-text"
           onMouseUp={handleMouseUp}
         >
           {passage}

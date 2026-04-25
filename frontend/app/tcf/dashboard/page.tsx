@@ -23,26 +23,56 @@ function scoreColor(val: number, max = 100) {
 function ScoreBar({ value, max = 100, color = "bg-emerald-500" }: { value: number; max?: number; color?: string }) {
   const pct = Math.min(100, (value / max) * 100);
   return (
-    <div className="h-2 w-full rounded-full bg-slate-100">
-      <div className={`h-2 rounded-full ${color} transition-all duration-500`} style={{ width: `${pct}%` }} />
+    <div className="h-1.5 w-full rounded-full bg-slate-100">
+      <div className={`h-1.5 rounded-full ${color} transition-all duration-700`} style={{ width: `${pct}%` }} />
     </div>
   );
 }
 
-function StatCard({ label, value, sub, icon: Icon, iconBg }: {
+function ScoreRing({ value, max = 100, color }: { value: number; max?: number; color: string }) {
+  const r = 22;
+  const c = 2 * Math.PI * r;
+  const pct = Math.min(1, value / max);
+  const offset = c - pct * c;
+  return (
+    <svg width="56" height="56" viewBox="0 0 56 56">
+      <circle cx="28" cy="28" r={r} fill="none" stroke="#f1f5f9" strokeWidth="5" />
+      <circle
+        cx="28" cy="28" r={r} fill="none" stroke={color} strokeWidth="5"
+        strokeDasharray={c} strokeDashoffset={offset}
+        strokeLinecap="round" transform="rotate(-90 28 28)"
+      />
+    </svg>
+  );
+}
+
+function StatCard({ label, value, sub, icon: Icon, iconBg, ringColor, ringMax }: {
   label: string; value: string; sub: string;
   icon: React.ComponentType<{ className?: string }>;
-  iconBg: string;
+  iconBg: string; ringColor?: string; ringMax?: number;
 }) {
+  const numericValue = parseFloat(value.replace(/[^0-9.]/g, ""));
+  const showRing = ringColor && !isNaN(numericValue);
   return (
-    <Card className="border-slate-200 shadow-sm">
+    <Card className="border-slate-200 shadow-sm overflow-hidden">
       <CardContent className="flex items-center gap-4 p-5">
-        <div className={`flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl ${iconBg} text-white`}>
-          <Icon className="h-5 w-5" />
+        <div className="relative flex-shrink-0">
+          {showRing ? (
+            <>
+              <ScoreRing value={numericValue} max={ringMax ?? 100} color={ringColor!} />
+              <div className={`absolute inset-0 flex items-center justify-center`}>
+                <Icon className="h-4 w-4 text-slate-500" />
+              </div>
+            </>
+          ) : (
+            <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${iconBg} text-white`}>
+              <Icon className="h-5 w-5" />
+            </div>
+          )}
         </div>
-        <div className="min-w-0">
-          <p className="text-xs font-medium text-slate-400">{label}</p>
-          <p className="text-2xl font-bold text-slate-900">{value}</p>
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+          <p className="text-2xl font-bold text-slate-900 leading-tight">{value}</p>
           <p className="text-xs text-slate-400">{sub}</p>
         </div>
       </CardContent>
@@ -50,24 +80,26 @@ function StatCard({ label, value, sub, icon: Icon, iconBg }: {
   );
 }
 
-function ModuleRow({ label, score, max, sessions, href, icon: Icon, barColor }: {
+function ModuleRow({ label, score, max, sessions, href, icon: Icon, barColor, dotColor }: {
   label: string; score: number; max: number; sessions: number;
-  href: string; icon: React.ComponentType<{ className?: string }>; barColor: string;
+  href: string; icon: React.ComponentType<{ className?: string }>; barColor: string; dotColor: string;
 }) {
   return (
-    <Link href={href} className="group flex items-center gap-4 rounded-xl p-3 transition hover:bg-slate-50">
-      <Icon className="h-4 w-4 flex-shrink-0 text-slate-400" />
+    <Link href={href} className="group flex items-center gap-4 rounded-xl px-3 py-3 transition-all duration-150 hover:bg-slate-50">
+      <div className={`h-8 w-8 flex-shrink-0 rounded-lg ${dotColor} flex items-center justify-center`}>
+        <Icon className="h-4 w-4 text-white" />
+      </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between gap-2 mb-1">
+        <div className="flex items-center justify-between gap-2 mb-1.5">
           <span className="text-sm font-medium text-slate-700">{label}</span>
-          <span className={`text-sm font-bold ${scoreColor(score, max)}`}>
+          <span className={`text-sm font-bold tabular-nums ${scoreColor(score, max)}`}>
             {score.toFixed(1)}{max === 10 ? "/10" : "%"}
           </span>
         </div>
         <ScoreBar value={score} max={max} color={barColor} />
-        <p className="mt-1 text-xs text-slate-400">{sessions} session{sessions !== 1 ? "s" : ""}</p>
+        <p className="mt-1 text-[11px] text-slate-400">{sessions} session{sessions !== 1 ? "s" : ""}</p>
       </div>
-      <ArrowRight className="h-3.5 w-3.5 flex-shrink-0 text-slate-300 transition group-hover:text-slate-500" />
+      <ArrowRight className="h-3.5 w-3.5 flex-shrink-0 text-slate-200 transition-all duration-150 group-hover:text-slate-400 group-hover:translate-x-0.5" />
     </Link>
   );
 }
@@ -140,6 +172,8 @@ export default function DashboardPage() {
                 sub="Across all modules"
                 icon={TrendingUp}
                 iconBg="bg-emerald-600"
+                ringColor="#10b981"
+                ringMax={100}
               />
               <StatCard
                 label="Sessions"
@@ -154,10 +188,12 @@ export default function DashboardPage() {
                 sub={`${summary.reading.recent_exams.length} exam${summary.reading.recent_exams.length !== 1 ? "s" : ""}`}
                 icon={BookOpen}
                 iconBg="bg-emerald-500"
+                ringColor="#4f46e5"
+                ringMax={100}
               />
               <StatCard
                 label="Weakest Area"
-                value={overview.weakest?.label ?? "-"}
+                value={overview.weakest?.label ?? "—"}
                 sub={overview.weakest ? `${overview.weakest.val.toFixed(0)}% score` : "Keep practicing"}
                 icon={AlertTriangle}
                 iconBg="bg-amber-500"
@@ -167,27 +203,27 @@ export default function DashboardPage() {
             <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
               <Card className="border-slate-200 shadow-sm">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base text-slate-900">Module Performance</CardTitle>
+                  <CardTitle className="text-sm font-semibold text-slate-800">Module Performance</CardTitle>
                 </CardHeader>
-                <CardContent className="divide-y divide-slate-50">
+                <CardContent className="divide-y divide-slate-50 pb-2">
                   <ModuleRow label="Reading" score={summary.reading.average_accuracy} max={100}
                     sessions={summary.reading.recent_exams.length} href="/tcf/reading"
-                    icon={BookOpen} barColor="bg-emerald-500" />
+                    icon={BookOpen} barColor="bg-indigo-500" dotColor="bg-indigo-500" />
                   <ModuleRow label="Listening" score={summary.listening.average_accuracy} max={100}
                     sessions={summary.listening.recent_exams.length} href="/tcf/listening-exam"
-                    icon={Headphones} barColor="bg-teal-500" />
+                    icon={Headphones} barColor="bg-teal-500" dotColor="bg-teal-500" />
                   <ModuleRow label="Writing" score={summary.writing.average_score} max={10}
                     sessions={summary.writing.recent_submissions.length} href="/tcf/writing"
-                    icon={PenSquare} barColor="bg-lime-500" />
-                  <ModuleRow label="Learn" score={summary.learning.average_score} max={10}
+                    icon={PenSquare} barColor="bg-amber-400" dotColor="bg-amber-500" />
+                  <ModuleRow label="AI Learn" score={summary.learning.average_score} max={10}
                     sessions={summary.learning.recent_sessions.length} href="/tcf/learn"
-                    icon={Sparkles} barColor="bg-emerald-600" />
+                    icon={Sparkles} barColor="bg-emerald-500" dotColor="bg-emerald-600" />
                 </CardContent>
               </Card>
 
               <Card className="border-slate-200 shadow-sm">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base text-slate-900">Recommendations</CardTitle>
+                  <CardTitle className="text-sm font-semibold text-slate-800">Recommendations</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {summary.reading.weakest_question_type && summary.reading.weakest_question_type !== "Not enough data" && (

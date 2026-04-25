@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { sendTcfWritingAssistant } from "@/services/api";
 import type {
   TcfWritingAssistantAction,
@@ -20,12 +20,12 @@ interface ChatMessage {
   content: string;
 }
 
-const ACTION_LABELS: Record<TcfWritingAssistantAction, string> = {
-  translate: "Translate",
-  grammar: "Grammar",
-  suggestions: "Suggestions",
-  example: "Example"
-};
+const ACTIONS: { key: TcfWritingAssistantAction; label: string; hint: string }[] = [
+  { key: "grammar",     label: "Grammar",     hint: "Paste your French text for corrections" },
+  { key: "translate",   label: "Translate",   hint: "Paste text to translate" },
+  { key: "suggestions", label: "Improve",     hint: "Paste your writing for improvement tips" },
+  { key: "example",     label: "Example",     hint: "Describe the task and get a model answer" },
+];
 
 export default function WritingAssistantPanel({
   contextLabel,
@@ -37,22 +37,22 @@ export default function WritingAssistantPanel({
   const [action, setAction] = useState<TcfWritingAssistantAction>("grammar");
   const [direction, setDirection] = useState<TcfWritingTranslationDirection>("fr-en");
   const [isLoading, setIsLoading] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
-  const canUseDraft = Boolean(draftText && draftText.trim().length > 0);
-  const assistantContext = useMemo(() => {
-    if (!contextText) return undefined;
-    return contextText.trim();
-  }, [contextText]);
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isLoading]);
+
+  const canUseDraft = Boolean(draftText?.trim());
+  const assistantContext = useMemo(() => contextText?.trim() || undefined, [contextText]);
+  const currentHint = ACTIONS.find((a) => a.key === action)?.hint ?? "";
 
   const handleSend = async () => {
     const text = input.trim();
     if (!text || isLoading) return;
-
-    const userMessage: ChatMessage = { role: "user", content: text };
-    setMessages((prev) => [...prev, userMessage]);
+    setMessages((prev) => [...prev, { role: "user", content: text }]);
     setInput("");
     setIsLoading(true);
-
     try {
       const response = await sendTcfWritingAssistant({
         message: text,
@@ -62,106 +62,155 @@ export default function WritingAssistantPanel({
       });
       setMessages((prev) => [...prev, { role: "assistant", content: response.reply }]);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Assistant failed to respond.";
-      setMessages((prev) => [...prev, { role: "assistant", content: message }]);
+      const msg = err instanceof Error ? err.message : "Assistant failed to respond.";
+      setMessages((prev) => [...prev, { role: "assistant", content: `⚠ ${msg}` }]);
     } finally {
       setIsLoading(false);
     }
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      void handleSend();
+    }
+  };
+
   return (
-    <Card className="border-slate-200 shadow-sm h-full">
-      <CardHeader>
-        <CardTitle>AI Assistant</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Mode</p>
-          <div className="flex flex-wrap gap-2">
-            {(Object.keys(ACTION_LABELS) as TcfWritingAssistantAction[]).map((key) => (
-              <Button
-                key={key}
-                size="sm"
-                variant={action === key ? "default" : "outline"}
-                onClick={() => setAction(key)}
-              >
-                {ACTION_LABELS[key]}
-              </Button>
-            ))}
-          </div>
-          {action === "translate" && (
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant={direction === "fr-en" ? "default" : "outline"}
-                onClick={() => setDirection("fr-en")}
-              >
-                FR to EN
-              </Button>
-              <Button
-                size="sm"
-                variant={direction === "en-fr" ? "default" : "outline"}
-                onClick={() => setDirection("en-fr")}
-              >
-                EN to FR
-              </Button>
-            </div>
-          )}
+    <Card className="border-slate-200 shadow-sm flex flex-col h-full">
+      {/* Panel header */}
+      <div className="border-b border-slate-100 px-4 py-3.5 flex items-center gap-2">
+        <div className="h-6 w-6 rounded-md bg-indigo-100 flex items-center justify-center flex-shrink-0">
+          <span className="text-[11px] font-bold text-indigo-600">W</span>
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-slate-800">Writing Support</p>
+          <p className="text-[10px] text-slate-400">Grammar · Translation · Examples</p>
+        </div>
+      </div>
+
+      <CardContent className="flex flex-col gap-3 p-4 flex-1 min-h-0">
+        {/* Mode selector */}
+        <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 gap-0.5">
+          {ACTIONS.map((a) => (
+            <button
+              key={a.key}
+              onClick={() => setAction(a.key)}
+              className={`flex-1 rounded-md py-1.5 text-xs font-medium transition-all duration-150 ${
+                action === a.key
+                  ? "bg-white text-slate-900 shadow-sm"
+                  : "text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              {a.label}
+            </button>
+          ))}
         </div>
 
-        {assistantContext && (
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-            <p className="font-semibold text-slate-700">Context</p>
-            <p className="mt-1 line-clamp-4">{contextLabel ? `${contextLabel}: ` : ""}{assistantContext}</p>
+        {/* Translation direction */}
+        {action === "translate" && (
+          <div className="flex gap-1.5">
+            {(["fr-en", "en-fr"] as TcfWritingTranslationDirection[]).map((d) => (
+              <button
+                key={d}
+                onClick={() => setDirection(d)}
+                className={`rounded-lg px-3 py-1 text-xs font-medium transition-all duration-150 ${
+                  direction === d
+                    ? "bg-indigo-600 text-white"
+                    : "border border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                }`}
+              >
+                {d === "fr-en" ? "FR → EN" : "EN → FR"}
+              </button>
+            ))}
           </div>
         )}
 
-        <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
+        {/* Context badge */}
+        {assistantContext && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+            <p className="text-[10px] font-semibold uppercase text-slate-400 mb-0.5">
+              {contextLabel ?? "Context"}
+            </p>
+            <p className="text-xs text-slate-600 line-clamp-2">{assistantContext}</p>
+          </div>
+        )}
+
+        {/* Messages */}
+        <div className="flex-1 min-h-[160px] max-h-[280px] overflow-y-auto space-y-2 pr-0.5">
           {messages.length === 0 && (
-            <p className="text-sm text-slate-500">Ask for translations, corrections, suggestions, or examples.</p>
+            <div className="flex h-full items-center justify-center py-8 text-center">
+              <div>
+                <p className="text-xs font-medium text-slate-500">Ask for help with your writing</p>
+                <p className="text-[11px] text-slate-400 mt-1">{currentHint}</p>
+              </div>
+            </div>
           )}
-          {messages.map((msg, index) => (
+          {messages.map((msg, i) => (
             <div
-              key={`msg-${index}`}
-              className={msg.role === "user"
-                ? "rounded-xl bg-indigo-600 text-white px-3 py-2 text-sm"
-                : "rounded-xl bg-slate-100 text-slate-700 px-3 py-2 text-sm"}
+              key={i}
+              className={`rounded-xl px-3 py-2.5 text-sm ${
+                msg.role === "user"
+                  ? "bg-indigo-600 text-white ml-4"
+                  : "bg-slate-100 text-slate-800 mr-4"
+              }`}
             >
-              <p className="text-xs uppercase tracking-wide opacity-70">
-                {msg.role === "user" ? "You" : "Assistant"}
+              <p className="text-[10px] uppercase tracking-wide opacity-60 mb-0.5">
+                {msg.role === "user" ? "You" : "Support"}
               </p>
-              <p className="mt-1 whitespace-pre-wrap">{msg.content}</p>
+              <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
             </div>
           ))}
           {isLoading && (
-            <div className="rounded-xl bg-slate-100 text-slate-700 px-3 py-2 text-sm">
-              Assistant is thinking...
+            <div className="rounded-xl bg-slate-100 px-3 py-2.5 mr-4">
+              <div className="flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:0ms]" />
+                <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:150ms]" />
+                <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:300ms]" />
+              </div>
             </div>
           )}
+          <div ref={bottomRef} />
         </div>
 
+        {/* Input */}
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Type your request or paste your text..."
-          rows={4}
-          className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300 resize-none"
+          onKeyDown={handleKeyDown}
+          placeholder={currentHint}
+          rows={3}
+          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-100 transition resize-none"
         />
 
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={handleSend} disabled={!input.trim() || isLoading}>
-            {isLoading ? "Working..." : "Send"}
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={() => void handleSend()}
+            disabled={!input.trim() || isLoading}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white"
+            size="sm"
+          >
+            {isLoading ? "Working…" : "Send"}
           </Button>
           {canUseDraft && (
-            <Button
-              variant="secondary"
+            <button
               onClick={() => setInput(draftText ?? "")}
               disabled={isLoading}
+              className="text-xs text-indigo-500 hover:text-indigo-700 underline disabled:opacity-50 transition"
             >
-              Use Current Draft
-            </Button>
+              Use draft
+            </button>
+          )}
+          {messages.length > 0 && (
+            <button
+              onClick={() => setMessages([])}
+              className="ml-auto text-xs text-slate-400 hover:text-slate-600 transition"
+            >
+              Clear
+            </button>
           )}
         </div>
+        <p className="text-[10px] text-slate-400">Enter to send · Shift+Enter for new line</p>
       </CardContent>
     </Card>
   );

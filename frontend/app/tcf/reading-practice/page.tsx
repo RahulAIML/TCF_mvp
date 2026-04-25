@@ -182,7 +182,7 @@ export default function ReadingPracticePage() {
           <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
             {/* Main question column */}
             <div className="space-y-4">
-              {/* Passage with translation toggle */}
+              {/* Passage — French only; translation goes in the right panel */}
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
                 <div className="flex items-center justify-between mb-3">
                   <span className={`rounded-full px-3 py-1 text-xs font-semibold text-white ${LEVEL_COLORS[selectedLevel!]}`}>
@@ -191,25 +191,15 @@ export default function ReadingPracticePage() {
                   <button
                     onClick={() => void handleTranslate()}
                     disabled={isTranslating}
-                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50 transition disabled:opacity-50"
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50 transition-all duration-150 disabled:opacity-50"
                   >
-                    {isTranslating ? "Translating..." : showTranslation ? "Hide Translation" : "Show Translation"}
+                    {isTranslating ? (
+                      <><span className="h-3 w-3 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin" />Translating…</>
+                    ) : showTranslation && translation ? "Hide Translation →" : "Show Translation →"}
                   </button>
                 </div>
-
-                {/* Side-by-side layout when translation is shown */}
-                <div className={showTranslation && translation ? "grid grid-cols-2 gap-4" : ""}>
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase text-slate-400 mb-2">Passage (French)</p>
-                    <p className="text-sm leading-7 text-slate-800">{question.text}</p>
-                  </div>
-                  {showTranslation && translation && (
-                    <div className="border-l border-indigo-100 pl-4">
-                      <p className="text-[10px] font-semibold uppercase text-indigo-400 mb-2">Translation (English)</p>
-                      <p className="text-sm leading-7 text-slate-600">{translation}</p>
-                    </div>
-                  )}
-                </div>
+                <p className="text-[10px] font-semibold uppercase text-slate-400 mb-2">Passage (French)</p>
+                <p className="text-sm leading-7 text-slate-800">{question.text}</p>
               </div>
 
               {/* Question + Options */}
@@ -275,8 +265,27 @@ export default function ReadingPracticePage() {
               </div>
             </div>
 
-            {/* Explanation sidebar */}
+            {/* Right panel: translation + explanation */}
             <div className="space-y-4">
+              {/* Translation panel — right side only, hidden by default */}
+              {showTranslation && translation && (
+                <Card className="border-indigo-200 bg-indigo-50 shadow-sm">
+                  <CardContent className="p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-500">English Translation</p>
+                      <button
+                        onClick={() => setShowTranslation(false)}
+                        className="text-xs text-indigo-400 hover:text-indigo-600 transition"
+                      >
+                        ✕ Hide
+                      </button>
+                    </div>
+                    <p className="text-sm leading-6 text-slate-700">{translation}</p>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Answer explanation */}
               {revealed && (
                 <Card className={`border shadow-sm ${selectedAnswer === question.correct_answer ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
                   <CardContent className="p-5 space-y-3">
@@ -300,13 +309,13 @@ export default function ReadingPracticePage() {
               {!selectedLevel && (
                 <Card className="border-slate-200 shadow-sm">
                   <CardContent className="p-5">
-                    <p className="text-sm font-medium text-slate-700">How it works</p>
-                    <ul className="mt-3 space-y-2 text-sm text-slate-500">
-                      <li>• Select a CEFR level above</li>
-                      <li>• Read the French passage</li>
-                      <li>• Use &quot;Show Translation&quot; if needed</li>
-                      <li>• Answer and check immediately</li>
-                      <li>• Track your accuracy score</li>
+                    <p className="text-sm font-semibold text-slate-700 mb-3">How it works</p>
+                    <ul className="space-y-2 text-sm text-slate-500">
+                      <li className="flex gap-2"><span className="text-slate-300">1.</span>Select a CEFR level above</li>
+                      <li className="flex gap-2"><span className="text-slate-300">2.</span>Read the French passage</li>
+                      <li className="flex gap-2"><span className="text-slate-300">3.</span>Use &quot;Show Translation →&quot; to reveal English in this panel</li>
+                      <li className="flex gap-2"><span className="text-slate-300">4.</span>Answer and check immediately</li>
+                      <li className="flex gap-2"><span className="text-slate-300">5.</span>Track your accuracy score</li>
                     </ul>
                   </CardContent>
                 </Card>

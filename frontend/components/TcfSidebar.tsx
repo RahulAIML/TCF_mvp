@@ -16,7 +16,7 @@ const groups = [
   {
     label: "Core",
     items: [
-      { href: "/tcf/learn", label: "Learn", icon: Sparkles }
+      { href: "/tcf/learn", label: "AI Learn", icon: Sparkles }
     ]
   },
   {
@@ -38,7 +38,8 @@ const groups = [
 
 const parentMap: Record<string, string> = {
   "/tcf/mock-exam": "/tcf/reading",
-  "/tcf/passage-analyzer": "/tcf/reading"
+  "/tcf/passage-analyzer": "/tcf/reading",
+  "/tcf/reading-practice": "/tcf/reading"
 };
 
 export default function TcfSidebar() {
@@ -46,21 +47,23 @@ export default function TcfSidebar() {
   const activePath = parentMap[pathname] ?? pathname;
 
   return (
-    <aside className="hidden w-60 flex-col border-r border-slate-100 bg-white lg:flex">
-      <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 text-white text-xs font-bold">
+    <aside className="hidden w-56 flex-col bg-slate-900 lg:flex h-screen flex-shrink-0">
+      {/* Logo */}
+      <div className="flex items-center gap-3 border-b border-slate-800 px-5 py-5">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500 text-white text-xs font-bold shadow-sm">
           TCF
         </div>
         <div>
-          <p className="text-sm font-semibold text-slate-900">TCF Canada</p>
-          <p className="text-xs text-slate-400">A1-C2</p>
+          <p className="text-sm font-semibold text-white leading-tight">TCF Canada</p>
+          <p className="text-[10px] text-slate-500">Exam Preparation</p>
         </div>
       </div>
 
-      <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-5">
+      {/* Nav */}
+      <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-5">
         {groups.map((group) => (
           <div key={group.label}>
-            <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-widest text-slate-400">
+            <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-widest text-slate-600">
               {group.label}
             </p>
             <div className="space-y-0.5">
@@ -71,17 +74,17 @@ export default function TcfSidebar() {
                   <Link
                     key={item.href}
                     href={item.href}
-                    className={`group flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150
-                      ${isActive
-                        ? "bg-emerald-50 text-emerald-700"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                      }`}
+                    className={`group flex items-center justify-between rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150 ${
+                      isActive
+                        ? "bg-emerald-600 text-white"
+                        : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                    }`}
                   >
                     <div className="flex items-center gap-3">
-                      <Icon className={`h-4 w-4 ${isActive ? "text-emerald-600" : "text-slate-400 group-hover:text-slate-600"}`} />
+                      <Icon className={`h-4 w-4 ${isActive ? "text-white" : "text-slate-500 group-hover:text-slate-300"}`} />
                       {item.label}
                     </div>
-                    {isActive && <ChevronRight className="h-3 w-3 text-emerald-400" />}
+                    {isActive && <ChevronRight className="h-3 w-3 text-emerald-300" />}
                   </Link>
                 );
               })}
@@ -90,8 +93,9 @@ export default function TcfSidebar() {
         ))}
       </nav>
 
-      <div className="border-t border-slate-100 px-5 py-4">
-        <p className="text-xs text-slate-400">Demo mode - All features active</p>
+      {/* Footer */}
+      <div className="border-t border-slate-800 px-5 py-4">
+        <p className="text-[10px] text-slate-600">A1 – C2 · All levels covered</p>
       </div>
     </aside>
   );
