@@ -500,6 +500,7 @@ export default function ListeningExamPage() {
                     onTranslate={() => void handleTranslateTranscript(practiceQuestion.script, `practice-${practiceCount}`)}
                     isTranslating={isTranslating}
                     showTranslation={showTranslation}
+                    replayPlays={true}
                   />
                   {practiceAnswer && (
                     <Card className={`rounded-2xl shadow-sm ${practiceAnswer === practiceQuestion.correct_answer ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>

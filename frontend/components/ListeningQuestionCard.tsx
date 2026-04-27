@@ -25,6 +25,8 @@ interface ListeningQuestionCardProps {
   onTranslate?: () => void;
   isTranslating?: boolean;
   showTranslation?: boolean;
+  /** When true, Replay resets position AND immediately plays (practice mode). Default: false (exam mode — reset only). */
+  replayPlays?: boolean;
 }
 
 const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5];
@@ -46,6 +48,7 @@ export default function ListeningQuestionCard({
   onTranslate,
   isTranslating = false,
   showTranslation = false,
+  replayPlays = false,
 }: ListeningQuestionCardProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
@@ -208,12 +211,23 @@ export default function ListeningQuestionCard({
       setIsBuffering(false);
     }
   };
-  const handleStopClick = () => {
+  const handleReplayClick = async () => {
     if (!audioRef.current) return;
-    audioRef.current.pause();
-    audioRef.current.currentTime = 0;
+    const audio = audioRef.current;
+    audio.pause();
+    audio.currentTime = 0;
     setCurrentWordIndex(0);
+    setAutoScroll(true);
     setIsBuffering(false);
+    // In practice mode (replayPlays=true): restart playback immediately from the top.
+    // In exam mode (replayPlays=false): only reset position — do not play again.
+    if (replayPlays && audioSrc) {
+      try {
+        await audio.play();
+      } catch {
+        // Browser blocked autoplay or audio not ready — user can press Play manually.
+      }
+    }
   };
   const handleTranscriptSelection = () => {
     const selection = window.getSelection()?.toString() ?? "";
@@ -278,7 +292,7 @@ export default function ListeningQuestionCard({
             {/* Replay from start */}
             <Button
               variant="outline"
-              onClick={handleStopClick}
+              onClick={() => void handleReplayClick()}
               disabled={!audioSrc && !isPlaying}
               title="Restart from beginning"
             >
