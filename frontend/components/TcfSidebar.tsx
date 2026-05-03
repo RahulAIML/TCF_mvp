@@ -52,7 +52,7 @@ export default function TcfSidebar() {
 
   return (
     <aside
-      className={`hidden lg:flex flex-col bg-slate-900 h-screen flex-shrink-0 transition-all duration-300 ease-in-out relative ${
+      className={`hidden lg:flex flex-col bg-slate-900 h-screen flex-shrink-0 transition-all duration-300 ease-in-out fixed left-0 top-0 bottom-0 z-30 ${
         collapsed ? "w-16" : "w-56"
       }`}
     >

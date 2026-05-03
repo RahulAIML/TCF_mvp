@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import TcfSidebar from "@/components/TcfSidebar";
 import TopNav from "@/components/TopNav";
+import FloatingAIAssistant from "@/components/FloatingAIAssistant";
 import {
   LayoutDashboard, BookOpen, Headphones, Mic, PenSquare, Sparkles, X
 } from "lucide-react";
@@ -39,9 +40,11 @@ export default function TcfAppShell({ title, subtitle, backHref, children }: Tcf
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <div className="flex min-h-screen">
-        {/* Desktop sidebar */}
-        <TcfSidebar />
+      {/* Desktop sidebar (fixed positioning) */}
+      <TcfSidebar />
+
+      <div className="flex min-h-screen lg:ml-56">
+        {/* Main content area with margin for fixed sidebar */}
 
         {/* Mobile drawer overlay */}
         {mobileOpen && (
@@ -97,8 +100,8 @@ export default function TcfAppShell({ title, subtitle, backHref, children }: Tcf
           </nav>
         </aside>
 
-        {/* Main content area */}
-        <div className="flex min-h-screen flex-1 flex-col min-w-0">
+        {/* Main content area (with flex-1 since sidebar is now fixed) */}
+        <div className="flex flex-1 flex-col min-w-0 w-full">
           <TopNav
             title={title}
             subtitle={subtitle}
@@ -110,6 +113,9 @@ export default function TcfAppShell({ title, subtitle, backHref, children }: Tcf
           </main>
         </div>
       </div>
+
+      {/* Floating AI Assistant - Available on all pages */}
+      <FloatingAIAssistant />
     </div>
   );
 }

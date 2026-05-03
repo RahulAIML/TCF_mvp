@@ -24,6 +24,9 @@ def get_db() -> Generator:
 
 
 def init_db() -> None:
-  from models import ExamAttempt, ListeningAttempt, User, WritingSession, TcfWritingSession
+  from models import (
+    ExamAttempt, ListeningAttempt, User, WritingSession, TcfWritingSession,
+    SpeakingSession, UserAudioResponse, QuestionValidation, LearnSession
+  )
 
   Base.metadata.create_all(bind=engine)

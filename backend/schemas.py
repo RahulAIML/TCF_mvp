@@ -641,3 +641,142 @@ class LearnSaveSessionRequest(BaseModel):
   structure: float | None = None
   exercises_total: int = 0
   exercises_completed: int = 0
+
+
+# ── ENHANCED SPEAKING MODULE ────────────────────────────────────────────────
+
+class EnhancedConversationMessage(BaseModel):
+  """Extended conversation message with audio support for speaking module."""
+  role: Literal["examiner", "user"]
+  content: str
+  audio_url: str | None = None  # URL to audio file (examiner TTS or user recording)
+  timestamp: int | None = None  # Unix timestamp
+
+
+class SpeakingSessionInitRequest(BaseModel):
+  """Initialize a speaking session with topic and task type."""
+  task_type: TcfSpeakingTaskType
+  mode: TcfSpeakingMode = "practice"
+
+
+class SpeakingSessionInitResponse(BaseModel):
+  """Response with session initialization details."""
+  session_id: str
+  topic: str
+  initial_question: str
+  initial_audio_url: str | None = None
+
+
+class EnhancedTcfConversationRequest(BaseModel):
+  """Enhanced conversation request with conversation context tracking."""
+  session_id: str
+  message: str  # User's spoken response (transcribed)
+  user_audio_url: str | None = None  # URL to user's recorded audio blob
+  history: List[EnhancedConversationMessage] = Field(default_factory=list)
+  task_type: TcfSpeakingTaskType
+  mode: TcfSpeakingMode = "practice"
+  exchange_count: int = 0  # Track number of exchanges (max 5)
+
+
+class EnhancedTcfConversationResponse(BaseModel):
+  """Enhanced response with follow-up questions and context awareness."""
+  session_id: str
+  reply: str  # Examiner's next question/statement
+  audio_url: str | None = None  # TTS-generated audio
+  topic: str  # Persistent topic for session
+  exchange_count: int  # Incremented exchange counter
+  is_complete: bool = False  # True if 5 exchanges reached
+  follow_up_category: str | None = None  # "follow_up", "clarification", "deepening"
+
+
+class UserAudioBlobRequest(BaseModel):
+  """Store user's audio blob during speaking test."""
+  session_id: str
+  exchange_number: int
+  audio_data: str  # Base64-encoded audio blob
+  transcript: str | None = None  # User's transcribed response
+
+
+class UserAudioBlobResponse(BaseModel):
+  """Response with stored audio URL."""
+  audio_url: str
+  stored_successfully: bool
+
+
+class EnhancedSpeakingEvaluationResponse(BaseModel):
+  """Realistic evaluation with multiple scoring criteria."""
+  transcription_accuracy: float  # 0-10: How accurately was speech recognized
+  grammar_score: float  # 0-10: Grammar correctness
+  relevance_score: float  # 0-10: Answer relevance to question
+  length_score: float  # 0-10: Response length/completeness
+  overall_score: float  # Weighted average
+  feedback: List[str]
+  recommendations: List[str]
+  should_improve: bool  # True if score < 6
+
+
+# ── ENHANCED WRITING MODULE ────────────────────────────────────────────────
+
+class WritingStepFeedbackRequest(BaseModel):
+  """Request step-by-step feedback on writing (not full evaluation yet)."""
+  task_type: TcfWritingTaskType
+  prompt: str
+  user_answer: str
+
+
+class WritingStepFeedbackResponse(BaseModel):
+  """Step feedback focusing on issues to fix."""
+  task_type: TcfWritingTaskType
+  grammar_issues: List[str]  # Specific grammar problems
+  missing_points: List[str]  # Required points not covered
+  suggestions: List[str]  # Actionable improvements
+  estimated_current_score: float  # Current score estimate (0-10)
+
+
+class WritingFinalEvaluationRequest(BaseModel):
+  """Request final comprehensive evaluation."""
+  task_type: TcfWritingTaskType
+  prompt: str
+  user_answer: str  # Final improved answer
+
+
+class WritingFinalEvaluationResponse(BaseModel):
+  """Final evaluation with score and detailed feedback."""
+  task_type: TcfWritingTaskType
+  overall_score: float  # 0-10
+  grammar_score: float  # 0-10
+  vocabulary_score: float  # 0-10
+  structure_score: float  # 0-10
+  relevance_score: float  # 0-10
+  feedback: List[str]
+  improved_version: str  # AI-improved version for reference
+  final_suggestions: List[str]
+
+
+# ── QUESTION VALIDATION ────────────────────────────────────────────────────
+
+class QuestionValidationRequest(BaseModel):
+  """Request to validate if question answer is grounded in source text/audio."""
+  question_id: str
+  module: Literal["reading", "listening"]
+  source_text: str  # The passage or transcript
+  question: str
+  correct_answer: str
+  correct_answer_letter: AnswerOption
+
+
+class QuestionValidationResponse(BaseModel):
+  """Response indicating if question is valid (answer grounded in source)."""
+  is_valid: bool
+  validation_score: float  # 0-1 confidence
+  source_text_span: str  # The specific part supporting the question
+  correct_answer_span: str  # The specific part proving the answer
+  feedback: str  # Explanation of why valid/invalid
+
+
+# ── LISTENING DIFFICULTY DISPLAY ────────────────────────────────────────────
+
+class ListeningQuestionWithDifficultyResponse(ListeningQuestionResponse):
+  """Extends listening question with actual difficulty level."""
+  difficulty_level: str  # A1, A2, B1, B2, C1, C2
+  difficulty_range: str  # "A1-A2", "B1-B2", "C1-C2"
