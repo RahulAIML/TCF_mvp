@@ -780,3 +780,66 @@ class ListeningQuestionWithDifficultyResponse(ListeningQuestionResponse):
   """Extends listening question with actual difficulty level."""
   difficulty_level: str  # A1, A2, B1, B2, C1, C2
   difficulty_range: str  # "A1-A2", "B1-B2", "C1-C2"
+
+
+# ── PRONUNCIATION EVALUATION ─────────────────────────────────────────────────
+
+class PronunciationEvaluationRequest(BaseModel):
+  """Request to evaluate user's pronunciation"""
+  target_text: str  # Expected text
+  audio_url: str  # URL or path to audio file
+  language: str = "fr"  # fr, en
+
+
+class PronunciationEvaluationResponse(BaseModel):
+  """Pronunciation evaluation results"""
+  accuracy: float  # 0-10
+  clarity: float  # 0-10
+  mistakes: List[str]  # List of mispronounced words
+  feedback: str  # Explanation
+  improved_version: str  # Correction guide
+  user_text: str  # What user actually said
+
+
+# ── VOCABULARY MANAGEMENT ────────────────────────────────────────────────────
+
+class VocabularyWordRequest(BaseModel):
+  """Request to generate vocabulary words"""
+  level: str = "A2"  # A1, A2, B1, B2, C1, C2
+  count: int = 5
+  topic: str | None = None  # Optional topic
+  language: str = "fr"
+
+
+class VocabularyWordItem(BaseModel):
+  """Individual vocabulary word"""
+  word: str
+  meaning: str
+  example: str
+  example_translation: str | None
+  phonetic: str | None
+  audio_url: str | None = None  # ElevenLabs audio URL
+
+
+class VocabularyGenerationResponse(BaseModel):
+  """Response with generated vocabulary words"""
+  words: List[VocabularyWordItem]
+  level: str
+  count: int
+
+
+class VocabularyProgressRequest(BaseModel):
+  """Request to update vocabulary word progress"""
+  word: str
+  is_learned: bool | None = None
+  accuracy_score: float | None = None  # 0-10 pronunciation accuracy
+
+
+class VocabularyProgressResponse(BaseModel):
+  """Vocabulary word progress tracking"""
+  word: str
+  is_learned: bool
+  practice_count: int
+  correct_count: int
+  accuracy_score: float | None
+  last_practiced: datetime | None

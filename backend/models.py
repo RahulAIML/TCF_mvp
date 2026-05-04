@@ -147,3 +147,45 @@ class QuestionValidation(Base):
   validation_score = Column(Float, nullable=True)  # Confidence 0-1
   created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
+
+class PronunciationEvaluation(Base):
+  """Stores pronunciation evaluation results for individual practice sessions."""
+  __tablename__ = "pronunciation_evaluations"
+
+  id = Column(Integer, primary_key=True, index=True)
+  user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+  target_text = Column(String(500), nullable=False)  # Expected text
+  user_text = Column(Text, nullable=True)  # What user actually said
+  accuracy = Column(Float, nullable=False)  # 0-10 score
+  clarity = Column(Float, nullable=False)  # 0-10 score
+  mistakes = Column(Text, nullable=True)  # JSON list of mistakes
+  feedback = Column(Text, nullable=True)  # Evaluator feedback
+  improved_version = Column(Text, nullable=True)  # Correction guide
+  audio_url = Column(String(500), nullable=True)  # URL to user's audio
+  language = Column(String(5), default="fr", nullable=False)  # fr, en
+  created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class VocabularyWord(Base):
+  """Stores vocabulary words and user's learning progress."""
+  __tablename__ = "vocabulary_words"
+
+  id = Column(Integer, primary_key=True, index=True)
+  user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+  word = Column(String(255), nullable=False, index=True)
+  language = Column(String(5), default="fr", nullable=False)  # fr, en
+  level = Column(String(5), nullable=False)  # A1, A2, B1, B2, C1, C2
+  meaning = Column(Text, nullable=False)
+  example = Column(Text, nullable=False)
+  example_translation = Column(Text, nullable=True)
+  phonetic = Column(String(500), nullable=True)  # Pronunciation guide
+  audio_url = Column(String(500), nullable=True)  # URL to ElevenLabs audio
+  is_learned = Column(Boolean, default=False, nullable=False)
+  practice_count = Column(Integer, default=0, nullable=False)
+  last_practiced = Column(DateTime, nullable=True)
+  correct_count = Column(Integer, default=0, nullable=False)  # Correct pronunciations
+  accuracy_score = Column(Float, nullable=True)  # Average accuracy
+  source = Column(String(50), nullable=True)  # generated, imported, etc.
+  created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+  updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
