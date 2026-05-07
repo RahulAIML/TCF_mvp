@@ -8,7 +8,19 @@
       "Bash(git -C \"D:\\\\TCF_MVP\\\\.claude\\\\worktrees\\\\awesome-neumann-26dedf\" log --oneline -5)",
       "Bash(git -C \"D:\\\\TCF_MVP\\\\.claude\\\\worktrees\\\\awesome-neumann-26dedf\" branch)",
       "Bash(git -C \"D:\\\\TCF_MVP\\\\.claude\\\\worktrees\\\\awesome-neumann-26dedf\" add -A)",
-      "Bash(git -C \"D:\\\\TCF_MVP\\\\.claude\\\\worktrees\\\\awesome-neumann-26dedf\" status --short)"
+      "Bash(git -C \"D:\\\\TCF_MVP\\\\.claude\\\\worktrees\\\\awesome-neumann-26dedf\" status --short)",
+      "Bash(git -C \"D:\\\\TCF_MVP\" checkout main)",
+      "Bash(git -C \"D:\\\\TCF_MVP\" merge --ff-only claude/awesome-neumann-26dedf)",
+      "Bash(git -C \"D:\\\\TCF_MVP\" status)",
+      "Bash(git -C \"D:\\\\TCF_MVP\" diff --stat)",
+      "Bash(git -C \"D:\\\\TCF_MVP\" diff frontend/components/FloatingAIAssistant.tsx)",
+      "Bash(head -20 D:/TCF_MVP/backend/routers/assistant_routes.py)",
+      "Bash(git -C \"D:\\\\TCF_MVP\" checkout -- .)",
+      "Bash(Remove-Item -Path \"D:\\\\TCF_MVP\\\\frontend\\\\app\\\\login\\\\page.tsx\" -Force)",
+      "Bash(rm -f \"D:/TCF_MVP/frontend/app/login/page.tsx\")",
+      "Bash(rmdir \"D:/TCF_MVP/frontend/app/login\")",
+      "Bash(git -C \"D:/TCF_MVP/.claude/worktrees/awesome-neumann-26dedf\" add -A)",
+      "Bash(git -C \"D:/TCF_MVP/.claude/worktrees/awesome-neumann-26dedf\" status)"
     ]
   }
 }

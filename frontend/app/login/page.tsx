@@ -3,7 +3,7 @@
 import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Eye, EyeOff, Loader, GraduationCap } from "lucide-react";
+import { Eye, EyeOff, Loader } from "lucide-react";
 import { loginUser } from "@/services/api";
 import { useAuth } from "@/lib/auth-context";
 

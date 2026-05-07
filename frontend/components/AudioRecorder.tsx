@@ -5,7 +5,6 @@ import { Mic, Square, RotateCcw, Play, Pause } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export interface AudioRecorderHandle {
-  getAudioBlob: () => Blob | null;
   reset: () => void;
   startRecording: () => void;
   stopRecording: () => void;
@@ -73,7 +72,9 @@ const AudioRecorder = ({
 
         // Auto-stop if max duration reached
         if (elapsed >= maxDurationMs / 1000) {
-          stopRecording();
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+            mediaRecorderRef.current.stop();
+          }
         }
       }, 100);
     } catch (error) {
@@ -125,10 +126,6 @@ const AudioRecorder = ({
       audioRef.current.src = "";
     }
   }, []);
-
-  const getAudioBlob = useCallback(() => {
-    return recordedBlob;
-  }, [recordedBlob]);
 
   return (
     <div className="space-y-4 p-4 bg-slate-50 rounded-lg border border-slate-200">

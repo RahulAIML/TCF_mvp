@@ -79,7 +79,7 @@ export default function FloatingAIAssistant() {
         timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, aiMsg]);
-    } catch (err) {
+    } catch {
       const errMsg: Message = {
         id: `e-${Date.now()}`,
         role: "assistant",

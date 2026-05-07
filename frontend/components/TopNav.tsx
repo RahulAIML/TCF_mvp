@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Menu, User, LogOut, LogIn, ChevronDown } from "lucide-react";
+import { ArrowLeft, Menu, LogOut, LogIn, ChevronDown } from "lucide-react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 

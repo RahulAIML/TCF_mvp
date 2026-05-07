@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Volume2, Loader, CheckCircle, X, Bookmark, BookmarkCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,14 +15,6 @@ interface VocabularyWord {
   audio_url?: string;
 }
 
-interface VocabularyProgress {
-  word: string;
-  is_learned: boolean;
-  practice_count: number;
-  correct_count: number;
-  accuracy_score?: number;
-  last_practiced?: string;
-}
 
 interface VocabularyPracticeProps {
   level?: string; // A1, A2, B1, B2, C1, C2
@@ -174,11 +166,11 @@ const VocabularyPractice = ({
             <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
               <p className="text-xs text-slate-600 mb-1">Example:</p>
               <p className="text-sm italic text-slate-900">
-                "{currentWord.example}"
+                &quot;{currentWord.example}&quot;
               </p>
               {currentWord.example_translation && (
                 <p className="text-xs text-slate-600 mt-2">
-                  "{currentWord.example_translation}"
+                  &quot;{currentWord.example_translation}&quot;
                 </p>
               )}
             </div>

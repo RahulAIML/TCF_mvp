@@ -7,8 +7,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Volume2, RefreshCw, ChevronRight } from "lucide-react";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
 type Language = "fr" | "en";
 
 const SAMPLE_WORDS_FR = [

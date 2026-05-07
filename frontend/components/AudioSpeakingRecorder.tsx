@@ -201,8 +201,6 @@ const AudioSpeakingRecorder = forwardRef<
 
   if (hideButton) return null;
 
-  const busy = isRecording || isTranscribing;
-
   return (
     <div className="flex flex-wrap items-center gap-3">
       <button

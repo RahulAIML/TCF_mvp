@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Volume2, Loader, CheckCircle, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,9 +36,6 @@ const PronunciationTrainer = ({
   const [feedback, setFeedback] = useState<PronunciationFeedback | null>(null);
   const [error, setError] = useState("");
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
-  const [nativeAudioUrl, setNativeAudioUrl] = useState("");
-
-  const recorderRef = useRef<any>(null);
 
   // Play native pronunciation
   const playNativePronunciation = async () => {
@@ -52,7 +49,6 @@ const PronunciationTrainer = ({
       const data = await response.json();
       const audio = new Audio(data.audio_url);
       audio.play();
-      setNativeAudioUrl(data.audio_url);
     } catch (err) {
       console.error("Failed to play pronunciation:", err);
       setError("Failed to generate pronunciation guide");
@@ -193,7 +189,7 @@ const PronunciationTrainer = ({
             <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
               <p className="text-xs text-slate-600 mb-1">You said:</p>
               <p className="text-sm text-slate-900 italic">
-                "{feedback.user_text}"
+                &quot;{feedback.user_text}&quot;
               </p>
             </div>
 
