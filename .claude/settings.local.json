@@ -30,7 +30,11 @@
       "Bash(git -C \"D:/TCF_MVP/.claude/worktrees/awesome-neumann-26dedf\" add frontend/app/tcf/writing/page.tsx)",
       "Bash(git -C \"D:/TCF_MVP/.claude/worktrees/awesome-neumann-26dedf\" add frontend/components/PronunciationTrainer.tsx)",
       "Bash(git -C \"D:/TCF_MVP/.claude/worktrees/awesome-neumann-26dedf\" add frontend/app/page.tsx)",
-      "Bash(git -C \"D:/TCF_MVP/.claude/worktrees/awesome-neumann-26dedf\" add backend/database.py)"
+      "Bash(git -C \"D:/TCF_MVP/.claude/worktrees/awesome-neumann-26dedf\" add backend/database.py)",
+      "Bash(git -C \"D:/TCF_MVP\" rm -f frontend/middleware.ts)",
+      "Bash(Remove-Item -Force \"D:/TCF_MVP/frontend/middleware.ts\" -ErrorAction SilentlyContinue)",
+      "Bash(rm -f \"D:/TCF_MVP/frontend/middleware.ts\" && git -C \"D:/TCF_MVP\" merge --ff-only claude/awesome-neumann-26dedf && git -C \"D:/TCF_MVP\" push origin main)",
+      "Bash(git -C \"D:/TCF_MVP/.claire/worktrees/awesome-neumann-26dedf\" status)"
     ]
   }
 }

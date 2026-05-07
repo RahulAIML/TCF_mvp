@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Volume2, Loader, CheckCircle, X, Bookmark, BookmarkCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,6 +25,35 @@ interface VocabularyPracticeProps {
 
 type Step = "generating" | "selecting" | "learning" | "practicing" | "completed";
 
+async function playWordAudio(word: string, language: string): Promise<void> {
+  try {
+    const res = await fetch(
+      `/api/pronunciation/guide/${encodeURIComponent(word)}?language=${language}`
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    return new Promise((resolve) => {
+      audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+      audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
+      audio.play().catch(() => { URL.revokeObjectURL(url); resolve(); });
+    });
+  } catch {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      return new Promise((resolve) => {
+        const utt = new SpeechSynthesisUtterance(word);
+        utt.lang = language === "fr" ? "fr-FR" : "en-US";
+        utt.rate = 0.85;
+        utt.onend = () => resolve();
+        utt.onerror = () => resolve();
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(utt);
+      });
+    }
+  }
+}
+
 /**
  * Vocabulary Practice Component
  * Generates vocabulary, provides audio, tracks learning progress
@@ -41,6 +70,17 @@ const VocabularyPractice = ({
   const [learned, setLearned] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
   const [practicing, setPracticing] = useState(false);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+
+  const handlePlayWord = useCallback(async (word: string) => {
+    if (isPlayingAudio) return;
+    setIsPlayingAudio(true);
+    try {
+      await playWordAudio(word, language);
+    } finally {
+      setIsPlayingAudio(false);
+    }
+  }, [isPlayingAudio, language]);
 
   // Generate vocabulary words
   useEffect(() => {
@@ -131,20 +171,18 @@ const VocabularyPractice = ({
           </CardHeader>
 
           <CardContent className="space-y-4">
-            {/* Pronunciation Button */}
-            {currentWord.audio_url && (
-              <Button
-                onClick={() => {
-                  const audio = new Audio(currentWord.audio_url);
-                  audio.play();
-                }}
-                variant="outline"
-                className="w-full flex gap-2 h-10"
-              >
-                <Volume2 className="h-5 w-5" />
-                Listen to Pronunciation
-              </Button>
-            )}
+            {/* Pronunciation Button — ElevenLabs with speechSynthesis fallback */}
+            <Button
+              onClick={() => handlePlayWord(currentWord.word)}
+              disabled={isPlayingAudio}
+              variant="outline"
+              className="w-full flex gap-2 h-10"
+            >
+              {isPlayingAudio
+                ? <><Loader className="h-4 w-4 animate-spin" /> Playing…</>
+                : <><Volume2 className="h-5 w-5" /> Listen to Pronunciation</>
+              }
+            </Button>
 
             {/* Phonetic Guide */}
             {currentWord.phonetic && (

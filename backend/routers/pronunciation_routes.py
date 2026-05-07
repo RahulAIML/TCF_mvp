@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from auth import get_optional_user
@@ -101,46 +102,22 @@ async def evaluate_pronunciation(
 
 
 @router.get("/guide/{word}")
-async def get_pronunciation_guide(
-    word: str,
-    language: str = "fr"
-) -> dict:
+async def get_pronunciation_guide(word: str, language: str = "fr") -> Response:
     """
-    Get native pronunciation audio for a word.
-
-    Args:
-        word: Word to pronounce
-        language: Language (fr, en)
-
-    Returns:
-        {"audio_url": str, "word": str}
+    Stream native pronunciation audio directly — no disk writes.
+    Primary: ElevenLabs. Frontend falls back to browser speechSynthesis on 503.
     """
     try:
-        # Generate audio using ElevenLabs
-        audio_bytes = elevenlabs_service.generate_pronunciation_guide(
-            word=word,
-            language=language
-        )
-
+        audio_bytes = elevenlabs_service.generate_pronunciation_guide(word=word, language=language)
         if not audio_bytes:
-            raise HTTPException(status_code=500, detail="Audio generation failed")
-
-        # Save audio to storage
-        os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
-        audio_filename = f"guide_{word.replace(' ', '_')}_{datetime.utcnow().timestamp()}.mp3"
-        audio_path = os.path.join(AUDIO_STORAGE_PATH, audio_filename)
-
-        with open(audio_path, "wb") as f:
-            f.write(audio_bytes)
-
-        return {
-            "word": word,
-            "audio_url": f"/audio/{audio_filename}",
-            "language": language
-        }
-    except Exception as e:
-        logger.error(f"Pronunciation guide generation failed: {str(e)}")
-        raise HTTPException(status_code=500, detail="Guide generation failed")
+            raise HTTPException(status_code=503, detail="TTS unavailable")
+        return Response(content=audio_bytes, media_type="audio/mpeg",
+                        headers={"Cache-Control": "public, max-age=3600"})
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Pronunciation guide failed for '{word}': {exc}")
+        raise HTTPException(status_code=503, detail="TTS unavailable")
 
 
 # ── VOCABULARY ROUTES ────────────────────────────────────────────────────────
@@ -169,32 +146,11 @@ async def generate_vocabulary(
             language=request.language
         )
 
-        # Generate audio for each word using ElevenLabs
+        # Build vocab items — audio is fetched on-demand via /guide/{word}
         vocab_items = []
         for word_data in words:
             word = word_data.get("word", "")
 
-            # Generate pronunciation audio
-            audio_bytes = elevenlabs_service.generate_pronunciation_guide(
-                word=word,
-                language=request.language
-            )
-
-            audio_url = None
-            if audio_bytes:
-                os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
-                audio_filename = (
-                    f"vocab_{request.language}_{word.replace(' ', '_')}_"
-                    f"{datetime.utcnow().timestamp()}.mp3"
-                )
-                audio_path = os.path.join(AUDIO_STORAGE_PATH, audio_filename)
-
-                with open(audio_path, "wb") as f:
-                    f.write(audio_bytes)
-
-                audio_url = f"/audio/{audio_filename}"
-
-            # Store in database
             vocab_record = VocabularyWord(
                 user_id=user.id,
                 word=word,
@@ -204,7 +160,7 @@ async def generate_vocabulary(
                 example=word_data.get("example", ""),
                 example_translation=word_data.get("example_translation"),
                 phonetic=word_data.get("phonetic"),
-                audio_url=audio_url,
+                audio_url=None,
                 source="generated"
             )
             db.add(vocab_record)
@@ -215,7 +171,7 @@ async def generate_vocabulary(
                 example=word_data.get("example", ""),
                 example_translation=word_data.get("example_translation"),
                 phonetic=word_data.get("phonetic"),
-                audio_url=audio_url
+                audio_url=None,
             ))
 
         db.commit()
