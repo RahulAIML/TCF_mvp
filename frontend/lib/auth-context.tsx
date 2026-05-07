@@ -13,7 +13,7 @@ import { getAuthToken, setAuthToken, clearAuthToken } from "@/lib/auth";
 interface AuthUser {
   id: number;
   email: string;
-  name?: string;
+  name?: string | null;
   created_at?: string;
 }
 
