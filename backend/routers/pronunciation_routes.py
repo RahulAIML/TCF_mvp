@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from auth import get_optional_user
 from database import get_db
 from elevenlabs_service import elevenlabs_service
-from gemini_service import gemini_service
+from gemini_service import GeminiService, gemini_service
 from models import PronunciationEvaluation, User, VocabularyWord
 from schemas import (
     PronunciationEvaluationResponse,
@@ -105,19 +105,35 @@ async def evaluate_pronunciation(
 async def get_pronunciation_guide(word: str, language: str = "fr") -> Response:
     """
     Stream native pronunciation audio directly — no disk writes.
-    Primary: ElevenLabs. Frontend falls back to browser speechSynthesis on 503.
+    Primary: ElevenLabs (MP3). Fallback: Gemini TTS (WAV). Returns 503 only if both fail.
     """
+    # 1. Try ElevenLabs
     try:
         audio_bytes = elevenlabs_service.generate_pronunciation_guide(word=word, language=language)
-        if not audio_bytes:
-            raise HTTPException(status_code=503, detail="TTS unavailable")
-        return Response(content=audio_bytes, media_type="audio/mpeg",
-                        headers={"Cache-Control": "public, max-age=3600"})
-    except HTTPException:
-        raise
+        if audio_bytes:
+            return Response(
+                content=audio_bytes,
+                media_type="audio/mpeg",
+                headers={"Cache-Control": "public, max-age=3600"},
+            )
     except Exception as exc:
-        logger.error(f"Pronunciation guide failed for '{word}': {exc}")
-        raise HTTPException(status_code=503, detail="TTS unavailable")
+        logger.warning(f"ElevenLabs failed for '{word}': {exc}")
+
+    # 2. Fallback: Gemini TTS
+    try:
+        wav_bytes = GeminiService.generate_tts(text=word, language=language)
+        if wav_bytes:
+            return Response(
+                content=wav_bytes,
+                media_type="audio/wav",
+                headers={"Cache-Control": "public, max-age=3600"},
+            )
+    except Exception as exc:
+        logger.warning(f"Gemini TTS failed for '{word}': {exc}")
+
+    # 3. Both failed
+    logger.error(f"All TTS sources failed for '{word}'")
+    raise HTTPException(status_code=503, detail="TTS unavailable")
 
 
 # ── VOCABULARY ROUTES ────────────────────────────────────────────────────────

@@ -3,12 +3,16 @@ Gemini Service - Centralized AI Processing
 Handles transcription, pronunciation evaluation, vocabulary generation, and speaking evaluation.
 """
 
+import base64
+import io
 import json
 import logging
 import os
 import random
+import wave
 from typing import Any, Dict, List, Optional
 
+import requests as _requests
 import google.generativeai as genai
 from dotenv import load_dotenv
 
@@ -367,6 +371,54 @@ Always provide direct answers."""
         except Exception as e:
             logger.error(f"AI response generation failed: {str(e)}")
             return "I encountered an error processing your question. Please try again."
+
+
+    @staticmethod
+    def generate_tts(text: str, language: str = "fr") -> Optional[bytes]:
+        """
+        Generate TTS audio via Gemini 2.5 Flash TTS preview.
+        Returns WAV bytes (PCM wrapped), or None on failure.
+        Used as fallback when ElevenLabs is unavailable.
+        """
+        try:
+            lang_label = "French" if language == "fr" else "English"
+            url = (
+                "https://generativelanguage.googleapis.com/v1beta/"
+                f"models/gemini-2.5-flash-preview-tts:generateContent"
+                f"?key={GEMINI_API_KEY}"
+            )
+            payload = {
+                "contents": [
+                    {"parts": [{"text": f"Say this {lang_label} text clearly and naturally at normal speed: {text}"}]}
+                ],
+                "generationConfig": {
+                    "response_modalities": ["AUDIO"],
+                    "speech_config": {
+                        "voice_config": {
+                            "prebuilt_voice_config": {
+                                "voice_name": "Aoede"
+                            }
+                        }
+                    }
+                }
+            }
+            resp = _requests.post(url, json=payload, timeout=20)
+            resp.raise_for_status()
+            data = resp.json()
+            inline = data["candidates"][0]["content"]["parts"][0]["inlineData"]
+            pcm_bytes = base64.b64decode(inline["data"])
+
+            # Wrap raw PCM (24 kHz, 16-bit, mono) in a WAV container
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(24000)
+                wf.writeframes(pcm_bytes)
+            return buf.getvalue()
+        except Exception as exc:
+            logger.error(f"Gemini TTS failed: {exc}")
+            return None
 
 
 # Export service instance for use in routes
