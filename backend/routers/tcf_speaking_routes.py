@@ -87,7 +87,7 @@ async def transcribe_audio(
       tmp.write(audio_data)
       tmp_path = tmp.name
 
-    transcript = GeminiService.transcribe_speech(tmp_path, language)
+    transcript = GeminiService.transcribe_speech(tmp_path, language, mime_type=content_type)
     return {"transcript": transcript.strip()}
   except Exception as exc:
     raise HTTPException(status_code=500, detail=f"Transcription failed: {exc}") from exc

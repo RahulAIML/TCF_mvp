@@ -13,6 +13,10 @@ const nextConfig = {
         source: "/api/:path*",
         destination: `${apiBase}/api/:path*`,
       },
+      {
+        source: "/audio/:path*",
+        destination: `${apiBase}/audio/:path*`,
+      },
     ];
   },
 };

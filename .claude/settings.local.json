@@ -20,7 +20,17 @@
       "Bash(rm -f \"D:/TCF_MVP/frontend/app/login/page.tsx\")",
       "Bash(rmdir \"D:/TCF_MVP/frontend/app/login\")",
       "Bash(git -C \"D:/TCF_MVP/.claude/worktrees/awesome-neumann-26dedf\" add -A)",
-      "Bash(git -C \"D:/TCF_MVP/.claude/worktrees/awesome-neumann-26dedf\" status)"
+      "Bash(git -C \"D:/TCF_MVP/.claude/worktrees/awesome-neumann-26dedf\" status)",
+      "Bash(git -C \"D:/TCF_MVP\" checkout main)",
+      "Bash(git -C \"D:/TCF_MVP\" merge --ff-only claude/awesome-neumann-26dedf)",
+      "Bash(git -C \"D:/TCF_MVP\" push origin main)",
+      "Bash(git -C \"D:/TCF_MVP/.claude/worktrees/awesome-neumann-26dedf\" add frontend/lib/auth-context.tsx)",
+      "Bash(git -C D:/TCF_MVP/.claude/worktrees/awesome-neumann-26dedf commit -m ' *)",
+      "Bash(git -C \"D:/TCF_MVP/.claude/worktrees/awesome-neumann-26dedf\" add frontend/app/login/page.tsx frontend/app/register/page.tsx)",
+      "Bash(git -C \"D:/TCF_MVP/.claude/worktrees/awesome-neumann-26dedf\" add frontend/app/tcf/writing/page.tsx)",
+      "Bash(git -C \"D:/TCF_MVP/.claude/worktrees/awesome-neumann-26dedf\" add frontend/components/PronunciationTrainer.tsx)",
+      "Bash(git -C \"D:/TCF_MVP/.claude/worktrees/awesome-neumann-26dedf\" add frontend/app/page.tsx)",
+      "Bash(git -C \"D:/TCF_MVP/.claude/worktrees/awesome-neumann-26dedf\" add backend/database.py)"
     ]
   }
 }

@@ -3,21 +3,21 @@ Pronunciation Training Routes
 Routes for pronunciation evaluation using Gemini and ElevenLabs TTS.
 """
 
-import io
 import logging
 import os
+import uuid
 from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
+from auth import get_optional_user
 from database import get_db
 from elevenlabs_service import elevenlabs_service
 from gemini_service import gemini_service
 from models import PronunciationEvaluation, User, VocabularyWord
 from schemas import (
-    PronunciationEvaluationRequest,
     PronunciationEvaluationResponse,
     VocabularyProgressRequest,
     VocabularyProgressResponse,
@@ -36,23 +36,13 @@ AUDIO_STORAGE_PATH = os.getenv(
 )
 
 
-def get_current_user(db: Session = Depends(get_db)) -> User:
-    """Get current user from token (simplified)."""
-    # In production, validate JWT token here
-    # For now, assume user_id=1
-    user = db.query(User).filter(User.id == 1).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return user
-
-
 @router.post("/evaluate")
 async def evaluate_pronunciation(
     target_text: str = Form(...),
     audio_file: UploadFile = File(...),
     language: str = Form("fr"),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> PronunciationEvaluationResponse:
     """
     Evaluate pronunciation of user's speech.
@@ -69,19 +59,23 @@ async def evaluate_pronunciation(
         # Create audio storage directory
         os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
 
-        # Save uploaded audio
-        audio_filename = f"{user.id}_{datetime.utcnow().timestamp()}.mp3"
+        # Preserve actual extension from upload
+        ct = audio_file.content_type or "audio/webm"
+        ext = {"audio/webm": ".webm", "audio/ogg": ".ogg", "audio/mp4": ".mp4",
+               "audio/mpeg": ".mp3", "audio/wav": ".wav"}.get(ct, ".webm")
+        audio_filename = f"{user.id}_{uuid.uuid4().hex}{ext}"
         audio_path = os.path.join(AUDIO_STORAGE_PATH, audio_filename)
 
         audio_content = await audio_file.read()
         with open(audio_path, "wb") as f:
             f.write(audio_content)
 
-        # Evaluate pronunciation using Gemini
+        # Evaluate pronunciation using Gemini (pass actual mime type)
         evaluation = gemini_service.evaluate_pronunciation(
             expected_text=target_text,
             audio_path=audio_path,
-            language=language
+            language=language,
+            mime_type=ct,
         )
 
         # Store evaluation in database
@@ -155,7 +149,7 @@ async def get_pronunciation_guide(
 async def generate_vocabulary(
     request: VocabularyWordRequest,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> VocabularyGenerationResponse:
     """
     Generate vocabulary words using Gemini.
@@ -240,7 +234,7 @@ async def generate_vocabulary(
 async def get_vocabulary_word(
     word: str,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> Optional[VocabularyProgressResponse]:
     """
     Get vocabulary word progress.
@@ -277,7 +271,7 @@ async def get_vocabulary_word(
 async def update_vocabulary_progress(
     request: VocabularyProgressRequest,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_optional_user),
 ) -> VocabularyProgressResponse:
     """
     Update vocabulary word progress.

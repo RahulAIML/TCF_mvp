@@ -6,6 +6,7 @@ Handles transcription, pronunciation evaluation, vocabulary generation, and spea
 import json
 import logging
 import os
+import random
 from typing import Any, Dict, List, Optional
 
 import google.generativeai as genai
@@ -25,7 +26,7 @@ class GeminiService:
     """Centralized Gemini API service for TCF platform"""
 
     @staticmethod
-    def transcribe_speech(audio_path: str, language: str = "fr") -> str:
+    def transcribe_speech(audio_path: str, language: str = "fr", mime_type: str = "audio/webm") -> str:
         """
         Transcribe audio file to text using Gemini.
 
@@ -47,11 +48,14 @@ class GeminiService:
                 "Return ONLY the transcribed text, no additional commentary."
             )
 
+            safe_mime = mime_type if mime_type in (
+                "audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav"
+            ) else "audio/webm"
             response = model.generate_content(
                 [
                     prompt,
                     {
-                        "mime_type": "audio/mpeg",
+                        "mime_type": safe_mime,
                         "data": audio_data,
                     },
                 ]
@@ -66,7 +70,8 @@ class GeminiService:
     def evaluate_pronunciation(
         expected_text: str,
         audio_path: str,
-        language: str = "fr"
+        language: str = "fr",
+        mime_type: str = "audio/webm",
     ) -> Dict[str, Any]:
         """
         Evaluate pronunciation accuracy using Gemini.
@@ -92,16 +97,20 @@ class GeminiService:
 
             model = genai.GenerativeModel(GEMINI_MODEL)
 
-            # Transcribe user's speech
+            # Transcribe user's speech (use actual mime type from upload)
             transcribe_prompt = (
                 f"Transcribe the following {language.upper()} speech. Return ONLY the text."
             )
+            # Normalize mime type to one Gemini accepts
+            safe_mime = mime_type if mime_type in (
+                "audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav"
+            ) else "audio/webm"
 
             transcribe_response = model.generate_content(
                 [
                     transcribe_prompt,
                     {
-                        "mime_type": "audio/mpeg",
+                        "mime_type": safe_mime,
                         "data": audio_data,
                     },
                 ]
@@ -275,27 +284,29 @@ Rules:
         try:
             model = genai.GenerativeModel(GEMINI_MODEL)
 
-            topic_str = f" on the topic of {topic}" if topic else ""
+            topic_str = f" on the topic of '{topic}'" if topic else ""
+            seed = random.randint(1000, 9999)
 
             vocab_prompt = f"""Generate {count} useful {language.upper()} vocabulary words at CEFR level {level}{topic_str}.
+Session seed: {seed} — choose a DIFFERENT random selection of words each time.
 
 Return as JSON array:
 [
   {{
-    "word": "French word",
-    "meaning": "English meaning",
-    "example": "French example sentence",
-    "example_translation": "English translation of example",
-    "phonetic": "Pronunciation guide (simplified)"
-  }},
-  ...
+    "word": "{language.upper()} word or phrase",
+    "meaning": "English meaning (clear and concise)",
+    "example": "{language.upper()} example sentence using the word",
+    "example_translation": "English translation of the example",
+    "phonetic": "IPA or simplified pronunciation guide"
+  }}
 ]
 
 Rules:
-- Appropriate for {level} level (not too easy, not too hard)
-- Real, commonly used words only
-- No duplicates
-- Return ONLY the JSON array, no other text"""
+- {count} words total, all different from each other
+- Appropriate for CEFR {level} (not too easy, not too hard)
+- Real words actually used by native speakers
+- Vary your selection — avoid common textbook words like bonjour, merci, etc.
+- Return ONLY the JSON array, no markdown, no extra text"""
 
             response = model.generate_content(vocab_prompt)
             response_text = response.text.strip()
