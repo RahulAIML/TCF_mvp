@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Volume2, Loader, CheckCircle, AlertCircle } from "lucide-react";
+import { Volume2, CheckCircle, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import AudioRecorder from "@/components/AudioRecorder";
@@ -152,17 +152,9 @@ const PronunciationTrainer = ({
         {audioBlob && step === "recording" && (
           <Button
             onClick={evaluatePronunciation}
-            disabled={step === "evaluating"}
             className="w-full bg-emerald-600 hover:bg-emerald-700"
           >
-            {step === "evaluating" ? (
-              <>
-                <Loader className="h-4 w-4 animate-spin mr-2" />
-                Evaluating...
-              </>
-            ) : (
-              "Evaluate Pronunciation"
-            )}
+            Evaluate Pronunciation
           </Button>
         )}
 
