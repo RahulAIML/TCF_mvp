@@ -1,7 +1,7 @@
 import os
 from typing import Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./tcf.db")
@@ -31,3 +31,15 @@ def init_db() -> None:
   )
 
   Base.metadata.create_all(bind=engine)
+
+  # Add columns that were introduced after the initial table creation.
+  # ALTER TABLE ... ADD COLUMN IF NOT EXISTS is idempotent — safe to run every startup.
+  migrations = [
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR(100)",
+  ]
+  with engine.begin() as conn:
+    for sql in migrations:
+      try:
+        conn.execute(text(sql))
+      except Exception:
+        pass  # SQLite doesn't support IF NOT EXISTS — skip gracefully
