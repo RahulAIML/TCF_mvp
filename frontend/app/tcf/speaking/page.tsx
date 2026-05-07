@@ -4,11 +4,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import TcfAppShell from "@/components/TcfAppShell";
 import SpeakingChat from "@/components/SpeakingChat";
-import SpeakingRecorder, { SpeakingRecorderHandle } from "@/components/SpeakingRecorder";
+import AudioSpeakingRecorder, { AudioSpeakingRecorderHandle } from "@/components/AudioSpeakingRecorder";
 import TimerClock from "@/components/TimerClock";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { sendTcfConversation, evaluateTcfSpeaking } from "@/services/api";
+import ExamResumeDialog from "@/components/ExamResumeDialog";
+import {
+  saveExamProgress,
+  loadExamProgress,
+  clearExamProgress,
+  hasRecentProgress,
+  type SpeakingProgressState,
+} from "@/lib/exam-progress";
 import type {
   TcfConversationMessage,
   TcfSpeakingEvaluationResponse,
@@ -44,11 +52,39 @@ export default function SpeakingPage() {
   const [handsFreeEnabled, setHandsFreeEnabled] = useState(false);
   const [userTurnCount, setUserTurnCount] = useState(0);
 
+  const [showResumeDialog, setShowResumeDialog] = useState(false);
+  const [resumeSavedAt, setResumeSavedAt] = useState(0);
+
   const historyRef = useRef<TcfConversationMessage[]>([]);
   const sessionIdRef = useRef<string | null>(null);
+
+  // Check for saved progress on mount
+  useEffect(() => {
+    if (hasRecentProgress("speaking")) {
+      const record = loadExamProgress<SpeakingProgressState>("speaking");
+      if (record && record.state.history.length > 0) {
+        setResumeSavedAt(record.savedAt);
+        setShowResumeDialog(true);
+      }
+    }
+  }, []);
+
+  // Auto-save conversation every 10 seconds when exam is active
+  useEffect(() => {
+    if (!isExamStarted || evaluation) return;
+    const interval = setInterval(() => {
+      saveExamProgress<SpeakingProgressState>("speaking", {
+        history,
+        taskType,
+        sessionId: sessionIdRef.current,
+        userTurnCount,
+      });
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, [isExamStarted, evaluation, history, taskType, userTurnCount]);
   const sessionTopicRef = useRef<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const recorderRef = useRef<SpeakingRecorderHandle | null>(null);
+  const recorderRef = useRef<AudioSpeakingRecorderHandle | null>(null);
   const pendingEvaluateRef = useRef(false);
   const convStateRef = useRef<ConvState>("idle");
   // Always points to the latest handleEvaluate — safe to call from async audio callbacks.
@@ -92,7 +128,27 @@ export default function SpeakingPage() {
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
+  const handleResumeSpeaking = useCallback(() => {
+    const record = loadExamProgress<SpeakingProgressState>("speaking");
+    if (!record) { setShowResumeDialog(false); return; }
+    const { state } = record;
+    setHistory(state.history as TcfConversationMessage[]);
+    historyRef.current = state.history as TcfConversationMessage[];
+    setTaskType(state.taskType as TcfSpeakingTaskType);
+    setUserTurnCount(state.userTurnCount);
+    sessionIdRef.current = state.sessionId;
+    setIsExamStarted(true);
+    setTimerActive(true);
+    setShowResumeDialog(false);
+  }, []);
+
+  const handleStartNewSpeaking = useCallback(() => {
+    clearExamProgress("speaking");
+    setShowResumeDialog(false);
+  }, []);
+
   const resetSession = useCallback(() => {
+    clearExamProgress("speaking");
     recorderRef.current?.cancel();
     stopAudio();
     pendingEvaluateRef.current = false;
@@ -363,6 +419,14 @@ export default function SpeakingPage() {
 
   return (
     <TcfAppShell title="Speaking Module" subtitle="Live speaking practice for TCF Canada">
+      {showResumeDialog && (
+        <ExamResumeDialog
+          moduleName="Speaking Session"
+          savedAt={resumeSavedAt}
+          onResume={handleResumeSpeaking}
+          onStartNew={handleStartNewSpeaking}
+        />
+      )}
       <div className="space-y-5">
 
         {/* ── Top control bar ── */}
@@ -539,16 +603,11 @@ export default function SpeakingPage() {
                   )}
                 </div>
 
-                <SpeakingRecorder
+                <AudioSpeakingRecorder
                   ref={recorderRef}
                   hideButton={true}
-                  silenceTimeoutMs={handsFreeEnabled ? 3500 : 0}
-                  manualSubmit={!handsFreeEnabled}
                   onTranscript={handleTranscript}
                   onError={(message) => setError(message)}
-                  onNoSpeech={() => {
-                    if (convStateRef.current === "listening") setConvState("idle");
-                  }}
                   onListeningChange={(listening) => {
                     if (!listening && convStateRef.current === "listening") setConvState("idle");
                   }}

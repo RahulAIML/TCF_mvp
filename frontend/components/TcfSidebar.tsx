@@ -10,39 +10,48 @@ import {
   Mic,
   PenSquare,
   Sparkles,
+  Volume2,
+  BookMarked,
   ChevronRight,
   ChevronLeft,
-  GraduationCap
+  GraduationCap,
 } from "lucide-react";
 
 const groups = [
   {
     label: "Core",
     items: [
-      { href: "/tcf/learn", label: "AI Learn", icon: Sparkles, color: "text-emerald-400" }
-    ]
+      { href: "/tcf/learn", label: "AI Learn", icon: Sparkles, color: "text-emerald-400" },
+    ],
   },
   {
     label: "TCF Modules",
     items: [
-      { href: "/tcf/reading",       label: "Reading",   icon: BookOpen,        color: "text-indigo-400" },
-      { href: "/tcf/listening-exam",label: "Listening", icon: Headphones,      color: "text-teal-400"   },
-      { href: "/tcf/speaking",      label: "Speaking",  icon: Mic,             color: "text-amber-400"  },
-      { href: "/tcf/writing",       label: "Writing",   icon: PenSquare,       color: "text-lime-400"   }
-    ]
+      { href: "/tcf/reading",        label: "Reading",   icon: BookOpen,        color: "text-indigo-400"  },
+      { href: "/tcf/listening-exam", label: "Listening", icon: Headphones,      color: "text-teal-400"    },
+      { href: "/tcf/speaking",       label: "Speaking",  icon: Mic,             color: "text-amber-400"   },
+      { href: "/tcf/writing",        label: "Writing",   icon: PenSquare,       color: "text-lime-400"    },
+    ],
+  },
+  {
+    label: "Practice",
+    items: [
+      { href: "/tcf/pronunciation", label: "Pronunciation", icon: Volume2,    color: "text-pink-400"   },
+      { href: "/tcf/vocabulary",    label: "Vocabulary",    icon: BookMarked,  color: "text-cyan-400"   },
+    ],
   },
   {
     label: "Analytics",
     items: [
-      { href: "/tcf/dashboard", label: "Dashboard", icon: LayoutDashboard, color: "text-violet-400" }
-    ]
-  }
+      { href: "/tcf/dashboard", label: "Dashboard", icon: LayoutDashboard, color: "text-violet-400" },
+    ],
+  },
 ];
 
 const parentMap: Record<string, string> = {
-  "/tcf/mock-exam":         "/tcf/reading",
-  "/tcf/passage-analyzer":  "/tcf/reading",
-  "/tcf/reading-practice":  "/tcf/reading"
+  "/tcf/mock-exam":        "/tcf/reading",
+  "/tcf/passage-analyzer": "/tcf/reading",
+  "/tcf/reading-practice": "/tcf/reading",
 };
 
 export default function TcfSidebar() {
@@ -57,7 +66,11 @@ export default function TcfSidebar() {
       }`}
     >
       {/* Logo */}
-      <div className={`flex items-center gap-3 border-b border-slate-800/70 py-5 ${collapsed ? "justify-center px-2" : "px-5"}`}>
+      <div
+        className={`flex items-center gap-3 border-b border-slate-800/70 py-5 ${
+          collapsed ? "justify-center px-2" : "px-5"
+        }`}
+      >
         <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-emerald-500 text-white text-[10px] font-bold shadow-sm">
           TCF
         </div>
@@ -80,14 +93,15 @@ export default function TcfSidebar() {
             )}
             <div className="space-y-0.5">
               {group.items.map((item) => {
-                const isActive = activePath === item.href || pathname.startsWith(item.href + "/");
+                const isActive =
+                  activePath === item.href || pathname.startsWith(item.href + "/");
                 const Icon = item.icon;
                 return (
                   <Link
                     key={item.href}
                     href={item.href}
                     title={collapsed ? item.label : undefined}
-                    className={`group flex items-center rounded-lg text-sm font-medium transition-all duration-150 ${
+                    className={`group relative flex items-center rounded-lg text-sm font-medium transition-all duration-150 ${
                       collapsed ? "justify-center p-2.5" : "gap-3 px-3 py-2.5"
                     } ${
                       isActive
@@ -97,9 +111,7 @@ export default function TcfSidebar() {
                   >
                     <Icon
                       className={`h-4 w-4 flex-shrink-0 transition-colors ${
-                        isActive
-                          ? item.color
-                          : "text-slate-500 group-hover:text-slate-300"
+                        isActive ? item.color : "text-slate-500 group-hover:text-slate-300"
                       }`}
                     />
                     {!collapsed && (
@@ -137,7 +149,11 @@ export default function TcfSidebar() {
       </button>
 
       {/* Footer */}
-      <div className={`border-t border-slate-800/70 py-4 ${collapsed ? "px-2 text-center" : "px-5"}`}>
+      <div
+        className={`border-t border-slate-800/70 py-4 ${
+          collapsed ? "px-2 text-center" : "px-5"
+        }`}
+      >
         {collapsed ? (
           <GraduationCap className="h-4 w-4 text-slate-600 mx-auto" />
         ) : (

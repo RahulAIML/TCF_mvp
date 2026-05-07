@@ -23,6 +23,14 @@ import type {
   TcfWritingSubmitResponse,
   TcfWritingTaskType
 } from "@/types/tcf-writing";
+import ExamResumeDialog from "@/components/ExamResumeDialog";
+import {
+  saveExamProgress,
+  loadExamProgress,
+  clearExamProgress,
+  hasRecentProgress,
+  type WritingProgressState,
+} from "@/lib/exam-progress";
 
 const EXAM_DURATION_SECONDS = 60 * 60;
 
@@ -205,7 +213,37 @@ export default function WritingPage() {
   const [examTask, setExamTask] = useState<TcfWritingTaskType>("task1");
   const [decompositionMode, setDecompositionMode] = useState(true);
 
+  const [showResumeDialog, setShowResumeDialog] = useState(false);
+  const [resumeSavedAt, setResumeSavedAt] = useState(0);
+
   const sessionIdRef = useRef<string | null>(null);
+
+  // Check for saved progress on mount
+  useEffect(() => {
+    if (hasRecentProgress("writing")) {
+      const record = loadExamProgress<WritingProgressState>("writing");
+      if (record) {
+        setResumeSavedAt(record.savedAt);
+        setShowResumeDialog(true);
+      }
+    }
+  }, []);
+
+  // Auto-save drafts every 10 seconds when exam is active
+  useEffect(() => {
+    if (!isStarted || finalEvaluation) return;
+    const interval = setInterval(() => {
+      saveExamProgress<WritingProgressState>("writing", {
+        task1Text: decompositionMode ? task1Combined : task1Draft,
+        task2Text: decompositionMode ? task2Combined : task2Draft,
+        task3Text: decompositionMode ? task3Combined : task3Draft,
+        currentTask: examTask === "task1" ? 1 : examTask === "task2" ? 2 : 3,
+        sessionId: sessionIdRef.current,
+        prompts: [task1Prompt, task2Prompt, task3Prompt],
+      });
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, [isStarted, finalEvaluation, task1Combined, task2Combined, task3Combined, task1Draft, task2Draft, task3Draft, examTask, task1Prompt, task2Prompt, task3Prompt, decompositionMode]);
 
   const task1Combined = useMemo(() => buildCombinedText(TASK1_STEPS, task1Values), [task1Values]);
   const task2Combined = useMemo(() => buildCombinedText(TASK2_STEPS, task2Values), [task2Values]);
@@ -261,7 +299,32 @@ export default function WritingPage() {
     setTimerActive(false);
   }, []);
 
+  const handleResumeWriting = () => {
+    const record = loadExamProgress<WritingProgressState>("writing");
+    if (!record) { setShowResumeDialog(false); return; }
+    const { state } = record;
+    if (state.prompts?.length >= 3) {
+      setTask1Prompt(state.prompts[0]);
+      setTask2Prompt(state.prompts[1]);
+      setTask3Prompt(state.prompts[2]);
+    }
+    setTask1Draft(state.task1Text || "");
+    setTask2Draft(state.task2Text || "");
+    setTask3Draft(state.task3Text || "");
+    setExamTask(state.currentTask === 1 ? "task1" : state.currentTask === 2 ? "task2" : "task3");
+    sessionIdRef.current = state.sessionId;
+    setMode("exam");
+    setIsStarted(true);
+    setShowResumeDialog(false);
+  };
+
+  const handleStartNewWriting = () => {
+    clearExamProgress("writing");
+    setShowResumeDialog(false);
+  };
+
   const startMode = async (targetMode: TcfWritingMode) => {
+    clearExamProgress("writing");
     setMode(targetMode);
     setIsStarted(true);
     resetState();
@@ -605,6 +668,14 @@ export default function WritingPage() {
 
   return (
       <TcfAppShell title="Writing Module" subtitle="Guided learning and exam simulation for TCF writing">
+      {showResumeDialog && (
+        <ExamResumeDialog
+          moduleName="Writing Exam"
+          savedAt={resumeSavedAt}
+          onResume={handleResumeWriting}
+          onStartNew={handleStartNewWriting}
+        />
+      )}
         <div className="grid gap-6 lg:grid-cols-[2.2fr_1fr]">
           <div className="space-y-6">
         {!mode || !isStarted ? (

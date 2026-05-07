@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"D:\\\\TCF_MVP\\\\.claude\\\\worktrees\\\\awesome-neumann-26dedf\" -Recurse -Directory)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Sort-Object)",
+      "Bash(git -C \"D:\\\\TCF_MVP\\\\.claude\\\\worktrees\\\\awesome-neumann-26dedf\" diff --stat HEAD)",
+      "Bash(git -C \"D:\\\\TCF_MVP\\\\.claude\\\\worktrees\\\\awesome-neumann-26dedf\" log --oneline -5)",
+      "Bash(git -C \"D:\\\\TCF_MVP\\\\.claude\\\\worktrees\\\\awesome-neumann-26dedf\" branch)",
+      "Bash(git -C \"D:\\\\TCF_MVP\\\\.claude\\\\worktrees\\\\awesome-neumann-26dedf\" add -A)",
+      "Bash(git -C \"D:\\\\TCF_MVP\\\\.claude\\\\worktrees\\\\awesome-neumann-26dedf\" status --short)"
+    ]
+  }
+}

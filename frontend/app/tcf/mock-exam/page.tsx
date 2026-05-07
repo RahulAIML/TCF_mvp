@@ -14,6 +14,14 @@ import { explainText, generateTcfQuestion, submitTcfExam, translatePassage } fro
 import type { AnswerOption } from "@/types/exam";
 import type { TcfExamQuestion, TcfSubmitExamResponse } from "@/types/tcf-exam";
 import type { ExplainTextResponse } from "@/types/text-helper";
+import ExamResumeDialog from "@/components/ExamResumeDialog";
+import {
+  saveExamProgress,
+  loadExamProgress,
+  clearExamProgress,
+  hasRecentProgress,
+  type ReadingProgressState,
+} from "@/lib/exam-progress";
 
 const EXAM_DURATION_SECONDS = 60 * 60;
 const PREFETCH_AHEAD = 5;
@@ -59,6 +67,9 @@ export default function MockExamPage() {
   const [showTranslation, setShowTranslation] = useState(false);
   const [isTranslating, setIsTranslating] = useState(false);
 
+  const [showResumeDialog, setShowResumeDialog] = useState(false);
+  const [resumeSavedAt, setResumeSavedAt] = useState(0);
+
   const questionsRef = useRef<Record<number, TcfExamQuestion>>({});
   const inFlightRef = useRef<Partial<Record<number, Promise<TcfExamQuestion>>>>({});
   const examSessionIdRef = useRef<string | null>(null);
@@ -66,6 +77,31 @@ export default function MockExamPage() {
   useEffect(() => {
     questionsRef.current = questions;
   }, [questions]);
+
+  // Check for saved progress on mount
+  useEffect(() => {
+    if (hasRecentProgress("reading")) {
+      const record = loadExamProgress<ReadingProgressState>("reading");
+      if (record) {
+        setResumeSavedAt(record.savedAt);
+        setShowResumeDialog(true);
+      }
+    }
+  }, []);
+
+  // Auto-save progress every 10 seconds during exam
+  useEffect(() => {
+    if (!isExamStarted || results || timeUp) return;
+    const interval = setInterval(() => {
+      saveExamProgress<ReadingProgressState>("reading", {
+        currentQuestion,
+        answers: answers as Record<number, string>,
+        sessionId: examSessionIdRef.current,
+        timeRemaining: null,
+      });
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, [isExamStarted, results, timeUp, currentQuestion, answers]);
 
   const ensureQuestion = async (questionNumber: number, showLoader = true) => {
     const existing = questionsRef.current[questionNumber];
@@ -142,8 +178,29 @@ export default function MockExamPage() {
     }
   };
 
+  const handleResumeExam = () => {
+    const record = loadExamProgress<ReadingProgressState>("reading");
+    if (!record) { setShowResumeDialog(false); return; }
+    const { state } = record;
+    setCurrentQuestion(state.currentQuestion);
+    setAnswers(state.answers as Record<number, AnswerOption | "">);
+    examSessionIdRef.current = state.sessionId;
+    setIsExamStarted(true);
+    setStartedAt(new Date().toISOString());
+    setTimerKey((p) => p + 1);
+    setTimerActive(true);
+    setShowResumeDialog(false);
+    void ensureQuestion(state.currentQuestion).catch(() => {});
+  };
+
+  const handleStartNew = () => {
+    clearExamProgress("reading");
+    setShowResumeDialog(false);
+  };
+
   const handleStartExam = async () => {
     if (isExamStarted) return;
+    clearExamProgress("reading");
     setIsExamStarted(true);
     const startQ = DIFFICULTY_RANGES[difficultyGroup].start;
     setCurrentQuestion(startQ);
@@ -254,6 +311,7 @@ export default function MockExamPage() {
         questions: questionList
       });
       setResults(response);
+      clearExamProgress("reading");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to submit exam.");
     } finally {
@@ -318,6 +376,14 @@ export default function MockExamPage() {
 
   return (
     <TcfAppShell title="Reading Mock Exam" subtitle="Complete the full reading mock exam">
+      {showResumeDialog && (
+        <ExamResumeDialog
+          moduleName="Reading Exam"
+          savedAt={resumeSavedAt}
+          onResume={handleResumeExam}
+          onStartNew={handleStartNew}
+        />
+      )}
       <div className="space-y-6">
         {!isExamStarted ? (
           <Card className="border-slate-200 shadow-sm">

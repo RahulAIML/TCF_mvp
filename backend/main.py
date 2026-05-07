@@ -18,6 +18,7 @@ from routers.tcf_speaking_routes import router as tcf_speaking_router
 from routers.tcf_writing_routes import router as tcf_writing_router
 from routers.enhanced_speaking import router as enhanced_speaking_router
 from routers.pronunciation_routes import router as pronunciation_router
+from routers.ai_chat_routes import router as ai_chat_router
 
 load_dotenv()
 
@@ -61,6 +62,7 @@ app.include_router(tcf_writing_router)
 app.include_router(tcf_speaking_router)
 app.include_router(enhanced_speaking_router)
 app.include_router(pronunciation_router)
+app.include_router(ai_chat_router)
 
 
 @app.on_event("startup")

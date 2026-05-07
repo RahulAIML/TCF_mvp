@@ -8,16 +8,18 @@ import TcfSidebar from "@/components/TcfSidebar";
 import TopNav from "@/components/TopNav";
 import FloatingAIAssistant from "@/components/FloatingAIAssistant";
 import {
-  LayoutDashboard, BookOpen, Headphones, Mic, PenSquare, Sparkles, X
+  LayoutDashboard, BookOpen, Headphones, Mic, PenSquare, Sparkles, Volume2, BookMarked, X
 } from "lucide-react";
 
 const mobileNavItems = [
-  { href: "/tcf/learn",          label: "AI Learn",   icon: Sparkles,        color: "text-emerald-500" },
-  { href: "/tcf/reading",        label: "Reading",    icon: BookOpen,        color: "text-indigo-500"  },
-  { href: "/tcf/listening-exam", label: "Listening",  icon: Headphones,      color: "text-teal-500"    },
-  { href: "/tcf/speaking",       label: "Speaking",   icon: Mic,             color: "text-amber-500"   },
-  { href: "/tcf/writing",        label: "Writing",    icon: PenSquare,       color: "text-lime-500"    },
-  { href: "/tcf/dashboard",      label: "Dashboard",  icon: LayoutDashboard, color: "text-violet-500"  }
+  { href: "/tcf/learn",          label: "AI Learn",      icon: Sparkles,        color: "text-emerald-500" },
+  { href: "/tcf/reading",        label: "Reading",       icon: BookOpen,        color: "text-indigo-500"  },
+  { href: "/tcf/listening-exam", label: "Listening",     icon: Headphones,      color: "text-teal-500"    },
+  { href: "/tcf/speaking",       label: "Speaking",      icon: Mic,             color: "text-amber-500"   },
+  { href: "/tcf/writing",        label: "Writing",       icon: PenSquare,       color: "text-lime-500"    },
+  { href: "/tcf/pronunciation",  label: "Pronunciation", icon: Volume2,         color: "text-pink-500"    },
+  { href: "/tcf/vocabulary",     label: "Vocabulary",    icon: BookMarked,      color: "text-cyan-500"    },
+  { href: "/tcf/dashboard",      label: "Dashboard",     icon: LayoutDashboard, color: "text-violet-500"  },
 ];
 
 const parentMap: Record<string, string> = {

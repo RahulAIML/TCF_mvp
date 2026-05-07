@@ -276,6 +276,7 @@ class ExplainTextResponse(BaseModel):
 class SignupRequest(BaseModel):
   email: str = Field(min_length=5, max_length=255)
   password: str = Field(min_length=8, max_length=128)
+  name: str | None = Field(default=None, max_length=100)
 
 
 class LoginRequest(BaseModel):
@@ -286,6 +287,7 @@ class LoginRequest(BaseModel):
 class UserResponse(BaseModel):
   id: int
   email: str
+  name: str | None = None
   created_at: datetime
 
 

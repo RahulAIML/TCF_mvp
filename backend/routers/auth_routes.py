@@ -16,7 +16,11 @@ async def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> AuthR
   if existing:
     raise HTTPException(status_code=400, detail="Email is already registered.")
 
-  user = User(email=email, password_hash=hash_password(payload.password))
+  user = User(
+    email=email,
+    password_hash=hash_password(payload.password),
+    name=payload.name.strip() if payload.name else None,
+  )
   db.add(user)
   db.commit()
   db.refresh(user)
@@ -24,7 +28,7 @@ async def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> AuthR
   token = create_access_token(user.email)
   return AuthResponse(
     access_token=token,
-    user=UserResponse(id=user.id, email=user.email, created_at=user.created_at)
+    user=UserResponse(id=user.id, email=user.email, name=user.name, created_at=user.created_at)
   )
 
 
@@ -38,5 +42,5 @@ async def login(payload: LoginRequest, db: Session = Depends(get_db)) -> AuthRes
   token = create_access_token(user.email)
   return AuthResponse(
     access_token=token,
-    user=UserResponse(id=user.id, email=user.email, created_at=user.created_at)
+    user=UserResponse(id=user.id, email=user.email, name=getattr(user, "name", None), created_at=user.created_at)
   )
