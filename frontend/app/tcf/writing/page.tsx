@@ -229,6 +229,10 @@ export default function WritingPage() {
     }
   }, []);
 
+  const task1Combined = useMemo(() => buildCombinedText(TASK1_STEPS, task1Values), [task1Values]);
+  const task2Combined = useMemo(() => buildCombinedText(TASK2_STEPS, task2Values), [task2Values]);
+  const task3Combined = useMemo(() => buildCombinedText(TASK3_STEPS, task3Values), [task3Values]);
+
   // Auto-save drafts every 10 seconds when exam is active
   useEffect(() => {
     if (!isStarted || finalEvaluation) return;
@@ -244,10 +248,6 @@ export default function WritingPage() {
     }, 10_000);
     return () => clearInterval(interval);
   }, [isStarted, finalEvaluation, task1Combined, task2Combined, task3Combined, task1Draft, task2Draft, task3Draft, examTask, task1Prompt, task2Prompt, task3Prompt, decompositionMode]);
-
-  const task1Combined = useMemo(() => buildCombinedText(TASK1_STEPS, task1Values), [task1Values]);
-  const task2Combined = useMemo(() => buildCombinedText(TASK2_STEPS, task2Values), [task2Values]);
-  const task3Combined = useMemo(() => buildCombinedText(TASK3_STEPS, task3Values), [task3Values]);
   const assistantContext = useMemo(() => {
     if (!mode) return "";
     if (mode === "exam") {
