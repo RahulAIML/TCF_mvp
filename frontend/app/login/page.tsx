@@ -25,7 +25,7 @@ export default function LoginPage() {
 
       try {
         const data = await loginUser({ email: email.trim(), password });
-        login(data.access_token, data.user);
+        login(data.access_token, { ...data.user, name: data.user.name ?? undefined });
         router.push("/tcf");
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Login failed";

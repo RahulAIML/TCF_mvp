@@ -36,7 +36,7 @@ export default function RegisterPage() {
       setIsLoading(true);
       try {
         const data = await signupUser({ email: email.trim(), password, name: name.trim() || undefined });
-        login(data.access_token, data.user);
+        login(data.access_token, { ...data.user, name: data.user.name ?? undefined });
         router.push("/tcf");
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Registration failed";
