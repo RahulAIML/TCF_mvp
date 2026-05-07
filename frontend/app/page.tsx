@@ -1,7 +1,10 @@
 "use client";
 
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { BookOpen, Headphones, Mic, PenLine, Volume2, BookMarked, ArrowRight, CheckCircle } from "lucide-react";
+import { useAuth } from "@/lib/auth-context";
 
 const FEATURES = [
   { icon: BookOpen, label: "Reading", desc: "39-question mock exam with CEFR progression", color: "bg-blue-500" },
@@ -20,6 +23,24 @@ const BULLETS = [
 ];
 
 export default function LandingPage() {
+  const { isAuthenticated, isLoading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!isLoading && isAuthenticated) {
+      router.replace("/tcf");
+    }
+  }, [isAuthenticated, isLoading, router]);
+
+  // Show spinner while auth hydrates or while redirecting an authenticated user.
+  if (isLoading || isAuthenticated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-white">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-emerald-600" />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-white flex flex-col">
       {/* Nav */}

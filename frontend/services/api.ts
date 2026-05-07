@@ -48,10 +48,15 @@ import type {
 } from "@/types/tcf-writing";
 import type { AuthResponse, LoginRequest, SignupRequest } from "@/types/user";
 import { getAuthToken } from "@/lib/auth";
+import { emitAuthFailure } from "@/lib/auth-events";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 async function parseResponse<T>(res: Response): Promise<T> {
+  if (res.status === 401) {
+    emitAuthFailure();
+    throw new Error("Session expired. Please sign in again.");
+  }
   if (!res.ok) {
     const errorText = await res.text();
     throw new Error(errorText || `Request failed with status ${res.status}`);

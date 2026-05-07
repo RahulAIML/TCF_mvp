@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import TcfSidebar from "@/components/TcfSidebar";
 import TopNav from "@/components/TopNav";
 import FloatingAIAssistant from "@/components/FloatingAIAssistant";
+import { useAuth } from "@/lib/auth-context";
 import {
   LayoutDashboard, BookOpen, Headphones, Mic, PenSquare, Sparkles, Volume2, BookMarked, X
 } from "lucide-react";
@@ -39,6 +40,19 @@ export default function TcfAppShell({ title, subtitle, backHref, children }: Tcf
   const pathname = usePathname();
   const activePath = parentMap[pathname] ?? pathname;
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { isLoading } = useAuth();
+
+  // Block rendering until auth hydration is complete to prevent any flicker.
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-emerald-600" />
+          <p className="text-sm text-slate-500">Loading…</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">

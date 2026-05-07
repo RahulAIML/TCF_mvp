@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Eye, EyeOff, Loader } from "lucide-react";
@@ -9,19 +9,24 @@ import { useAuth } from "@/lib/auth-context";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, isAuthenticated, isLoading } = useAuth();
+
+  // Already authenticated — go straight to the app.
+  useEffect(() => {
+    if (!isLoading && isAuthenticated) router.replace("/tcf");
+  }, [isAuthenticated, isLoading, router]);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
       setError("");
-      setIsLoading(true);
+      setIsSubmitting(true);
 
       try {
         const data = await loginUser({ email: email.trim(), password });
@@ -33,7 +38,7 @@ export default function LoginPage() {
           ? "Invalid email or password."
           : "Login failed. Please try again.");
       } finally {
-        setIsLoading(false);
+        setIsSubmitting(false);
       }
     },
     [email, password, login, router]
@@ -109,11 +114,11 @@ export default function LoginPage() {
 
             <button
               type="submit"
-              disabled={isLoading || !email || !password}
+              disabled={isSubmitting || !email || !password}
               className="w-full rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center gap-2 mt-2"
             >
-              {isLoading && <Loader className="h-4 w-4 animate-spin" />}
-              {isLoading ? "Signing in…" : "Sign in"}
+              {isSubmitting && <Loader className="h-4 w-4 animate-spin" />}
+              {isSubmitting ? "Signing in…" : "Sign in"}
             </button>
           </form>
         </div>
