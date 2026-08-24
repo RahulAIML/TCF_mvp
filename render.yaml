@@ -36,4 +36,4 @@ services:
     startCommand: npm run start
     envVars:
       - key: NEXT_PUBLIC_API_URL
-        value: https://tcf-backend.onrender.com
+        value: https://tcf-mvp.onrender.com
