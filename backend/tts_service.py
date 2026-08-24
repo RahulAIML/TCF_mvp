@@ -61,15 +61,16 @@ VOICE_REGISTRY: dict[str, VoiceConfig] = {
         "elevenlabs_voice_id": os.getenv("ELEVENLABS_VOICE_ID_FR", "EXAVITQu4vr4xnSDxMaL"),
         "gemini_voice_name": "Kore",
     },
-    # ── Additional voices — set ELEVENLABS_VOICE_ID_FR_* to override ────
-    # Falls back to Gemini TTS when the env var is not set.
+    # ── Additional voices — override with ELEVENLABS_VOICE_ID_FR_* env vars ──
+    # Defaults are well-known ElevenLabs pre-made voices (multilingual v2).
     "fr-FR-male-2": {
         "id": "fr-FR-male-2",
         "label": "French Male 2",
         "language": "fr",
         "gender": "male",
         "active": True,
-        "elevenlabs_voice_id": os.getenv("ELEVENLABS_VOICE_ID_FR_M2", ""),
+        # TxGEqnHWrfWFTfGW9XjX = Josh (deep, well-rounded male)
+        "elevenlabs_voice_id": os.getenv("ELEVENLABS_VOICE_ID_FR_M2", "TxGEqnHWrfWFTfGW9XjX"),
         "gemini_voice_name": "Fenrir",
     },
     "fr-FR-female-1": {
@@ -78,7 +79,8 @@ VOICE_REGISTRY: dict[str, VoiceConfig] = {
         "language": "fr",
         "gender": "female",
         "active": True,
-        "elevenlabs_voice_id": os.getenv("ELEVENLABS_VOICE_ID_FR_F1", ""),
+        # 21m00Tcm4TlvDq8ikWAM = Rachel (clear, natural female)
+        "elevenlabs_voice_id": os.getenv("ELEVENLABS_VOICE_ID_FR_F1", "21m00Tcm4TlvDq8ikWAM"),
         "gemini_voice_name": "Aoede",
     },
     "fr-FR-female-2": {
@@ -87,7 +89,8 @@ VOICE_REGISTRY: dict[str, VoiceConfig] = {
         "language": "fr",
         "gender": "female",
         "active": True,
-        "elevenlabs_voice_id": os.getenv("ELEVENLABS_VOICE_ID_FR_F2", ""),
+        # AZnzlk1XvdvUeBnXmlld = Domi (strong, expressive female)
+        "elevenlabs_voice_id": os.getenv("ELEVENLABS_VOICE_ID_FR_F2", "AZnzlk1XvdvUeBnXmlld"),
         "gemini_voice_name": "Leda",
     },
 }
