@@ -47,6 +47,7 @@ import type {
   TcfWritingSubmitResponse
 } from "@/types/tcf-writing";
 import type { AuthResponse, LoginRequest, SignupRequest } from "@/types/user";
+import type { TtsGenerateRequest, TtsGenerateResponse, TtsVoice } from "@/types/tts";
 import { getAuthToken } from "@/lib/auth";
 import { emitAuthFailure } from "@/lib/auth-events";
 
@@ -363,4 +364,25 @@ export async function saveLearnSession(
     cache: "no-store"
   });
   return parseResponse<LearnSessionSummary>(res);
+}
+
+export async function getTtsVoices(): Promise<TtsVoice[]> {
+  const res = await fetch(`${API_BASE_URL}/api/tts/voices`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+    cache: "no-store"
+  });
+  return parseResponse<TtsVoice[]>(res);
+}
+
+export async function generateTts(
+  payload: TtsGenerateRequest
+): Promise<TtsGenerateResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/tts/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+    cache: "no-store"
+  });
+  return parseResponse<TtsGenerateResponse>(res);
 }

@@ -845,3 +845,25 @@ class VocabularyProgressResponse(BaseModel):
   correct_count: int
   accuracy_score: float | None
   last_practiced: datetime | None
+
+
+# ---------------------------------------------------------------------------
+# TTS
+# ---------------------------------------------------------------------------
+
+class TtsVoice(BaseModel):
+  id: str
+  label: str
+  language: str
+  gender: str
+
+
+class TtsGenerateRequest(BaseModel):
+  text: str = Field(min_length=1, max_length=2000)
+  voice_id: str = Field(default="fr-FR-male-1")
+
+
+class TtsGenerateResponse(BaseModel):
+  audio_url: str
+  voice_id: str
+  character_count: int
