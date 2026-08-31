@@ -64,7 +64,8 @@ async def evaluate_pronunciation(
         ct = audio_file.content_type or "audio/webm"
         ext = {"audio/webm": ".webm", "audio/ogg": ".ogg", "audio/mp4": ".mp4",
                "audio/mpeg": ".mp3", "audio/wav": ".wav"}.get(ct, ".webm")
-        audio_filename = f"{user.id}_{uuid.uuid4().hex}{ext}"
+        user_prefix = str(user.id) if user else "anon"
+        audio_filename = f"{user_prefix}_{uuid.uuid4().hex}{ext}"
         audio_path = os.path.join(AUDIO_STORAGE_PATH, audio_filename)
 
         audio_content = await audio_file.read()
@@ -79,21 +80,22 @@ async def evaluate_pronunciation(
             mime_type=ct,
         )
 
-        # Store evaluation in database
-        db_eval = PronunciationEvaluation(
-            user_id=user.id,
-            target_text=target_text,
-            user_text=evaluation.get("user_text", ""),
-            accuracy=evaluation.get("accuracy", 0),
-            clarity=evaluation.get("clarity", 0),
-            mistakes=str(evaluation.get("mistakes", [])),
-            feedback=evaluation.get("feedback", ""),
-            improved_version=evaluation.get("improved_version", ""),
-            audio_url=f"/audio/{audio_filename}",
-            language=language
-        )
-        db.add(db_eval)
-        db.commit()
+        # Store evaluation in database only for authenticated users
+        if user:
+            db_eval = PronunciationEvaluation(
+                user_id=user.id,
+                target_text=target_text,
+                user_text=evaluation.get("user_text", ""),
+                accuracy=evaluation.get("accuracy", 0),
+                clarity=evaluation.get("clarity", 0),
+                mistakes=str(evaluation.get("mistakes", [])),
+                feedback=evaluation.get("feedback", ""),
+                improved_version=evaluation.get("improved_version", ""),
+                audio_url=f"/audio/{audio_filename}",
+                language=language
+            )
+            db.add(db_eval)
+            db.commit()
 
         return PronunciationEvaluationResponse(**evaluation)
     except Exception as e:
