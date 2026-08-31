@@ -366,6 +366,45 @@ export async function saveLearnSession(
   return parseResponse<LearnSessionSummary>(res);
 }
 
+export async function transcribeAudio(blob: Blob): Promise<{ transcript: string }> {
+  const form = new FormData();
+  form.append("audio", blob, "recording.webm");
+  form.append("language", "fr");
+  const res = await fetch(`${API_BASE_URL}/tcf/transcribe-audio`, {
+    method: "POST",
+    headers: { ...authHeaders() },
+    body: form,
+    cache: "no-store"
+  });
+  return parseResponse<{ transcript: string }>(res);
+}
+
+export interface PronunciationEvalResult {
+  accuracy: number;
+  clarity: number;
+  mistakes: string[];
+  feedback: string;
+  improved_version: string;
+  user_text: string;
+}
+
+export async function evaluatePronunciationAudio(
+  targetText: string,
+  blob: Blob
+): Promise<PronunciationEvalResult> {
+  const form = new FormData();
+  form.append("target_text", targetText);
+  form.append("audio_file", blob, "recording.webm");
+  form.append("language", "fr");
+  const res = await fetch(`${API_BASE_URL}/api/pronunciation/evaluate`, {
+    method: "POST",
+    headers: { ...authHeaders() },
+    body: form,
+    cache: "no-store"
+  });
+  return parseResponse<PronunciationEvalResult>(res);
+}
+
 export async function getTtsVoices(): Promise<TtsVoice[]> {
   const res = await fetch(`${API_BASE_URL}/api/tts/voices`, {
     method: "GET",
