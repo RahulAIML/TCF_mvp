@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { MessageCircle, X, Send, Loader, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -11,6 +11,53 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+}
+
+function renderMarkdown(md: string): React.ReactNode {
+  const lines = md.split("\n");
+  const nodes: React.ReactNode[] = [];
+  let listItems: string[] = [];
+
+  const flushList = () => {
+    if (listItems.length) {
+      nodes.push(
+        <ul key={`ul-${nodes.length}`} className="list-disc list-outside ml-4 space-y-0.5 my-1">
+          {listItems.map((item, i) => (
+            <li key={i}>{inlineFormat(item)}</li>
+          ))}
+        </ul>
+      );
+      listItems = [];
+    }
+  };
+
+  const inlineFormat = (text: string): React.ReactNode => {
+    // bold + italic pass — split on ** and *
+    const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g);
+    return parts.map((part, i) => {
+      if (part.startsWith("**") && part.endsWith("**"))
+        return <strong key={i}>{part.slice(2, -2)}</strong>;
+      if (part.startsWith("*") && part.endsWith("*"))
+        return <em key={i}>{part.slice(1, -1)}</em>;
+      return part;
+    });
+  };
+
+  lines.forEach((line, idx) => {
+    const trimmed = line.trim();
+    if (/^[*-] /.test(trimmed)) {
+      listItems.push(trimmed.replace(/^[*-] /, ""));
+    } else {
+      flushList();
+      if (!trimmed) {
+        if (nodes.length) nodes.push(<div key={`sp-${idx}`} className="h-1" />);
+      } else {
+        nodes.push(<p key={idx}>{inlineFormat(trimmed)}</p>);
+      }
+    }
+  });
+  flushList();
+  return <>{nodes}</>;
 }
 
 const WELCOME: Message = {
@@ -152,13 +199,13 @@ export default function FloatingAIAssistant() {
               className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
             >
               <div
-                className={`rounded-xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap break-words ${
+                className={`rounded-xl px-3 py-2 text-sm leading-relaxed break-words ${
                   msg.role === "user"
-                    ? "bg-emerald-600 text-white max-w-[85%]"
+                    ? "bg-emerald-600 text-white max-w-[85%] whitespace-pre-wrap"
                     : "bg-slate-100 text-slate-800 max-w-[90%]"
                 }`}
               >
-                {msg.content}
+                {msg.role === "assistant" ? renderMarkdown(msg.content) : msg.content}
               </div>
             </div>
           ))}
