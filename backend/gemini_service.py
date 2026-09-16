@@ -21,7 +21,7 @@ load_dotenv()
 logger = logging.getLogger("gemini_service")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 
 genai.configure(api_key=GEMINI_API_KEY)
 
@@ -384,7 +384,7 @@ Always provide direct answers."""
             lang_label = "French" if language == "fr" else "English"
             url = (
                 "https://generativelanguage.googleapis.com/v1beta/"
-                f"models/gemini-2.5-flash-preview-tts:generateContent"
+                f"models/gemini-3.8-flash-preview-tts:generateContent"
                 f"?key={GEMINI_API_KEY}"
             )
             payload = {
