@@ -859,7 +859,7 @@ class TtsVoice(BaseModel):
 
 
 class TtsGenerateRequest(BaseModel):
-  text: str = Field(min_length=1, max_length=6000)
+  text: str = Field(min_length=1, max_length=10000)
   voice_id: str = Field(default="fr-FR-male-1")
 
 
@@ -867,3 +867,12 @@ class TtsGenerateResponse(BaseModel):
   audio_url: str
   voice_id: str
   character_count: int
+
+
+class TtsHistoryItem(BaseModel):
+  id: int
+  audio_url: str
+  voice_id: str
+  voice_label: str
+  text_preview: str
+  created_at: str

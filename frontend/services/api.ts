@@ -47,7 +47,7 @@ import type {
   TcfWritingSubmitResponse
 } from "@/types/tcf-writing";
 import type { AuthResponse, LoginRequest, SignupRequest } from "@/types/user";
-import type { TtsGenerateRequest, TtsGenerateResponse, TtsVoice } from "@/types/tts";
+import type { TtsGenerateRequest, TtsGenerateResponse, TtsHistoryItem, TtsVoice } from "@/types/tts";
 import { getAuthToken } from "@/lib/auth";
 import { emitAuthFailure } from "@/lib/auth-events";
 
@@ -412,6 +412,26 @@ export async function getTtsVoices(): Promise<TtsVoice[]> {
     cache: "no-store"
   });
   return parseResponse<TtsVoice[]>(res);
+}
+
+export async function getTtsHistory(): Promise<TtsHistoryItem[]> {
+  const res = await fetch(`${API_BASE_URL}/api/tts/history`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+    cache: "no-store",
+  });
+  return parseResponse<TtsHistoryItem[]>(res);
+}
+
+export async function deleteTtsHistoryItem(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/api/tts/history/${id}`, {
+    method: "DELETE",
+    headers: { ...authHeaders() },
+    cache: "no-store",
+  });
+  if (!res.ok && res.status !== 204) {
+    throw new Error(`Delete failed: ${res.status}`);
+  }
 }
 
 export async function generateTts(
