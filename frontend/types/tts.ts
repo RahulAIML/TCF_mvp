@@ -15,3 +15,12 @@ export interface TtsGenerateResponse {
   voice_id: string;
   character_count: number;
 }
+
+export interface TtsHistoryItem {
+  id: number;
+  audio_url: string;
+  voice_id: string;
+  voice_label: string;
+  text_preview: string;
+  created_at: string;
+}

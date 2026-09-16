@@ -5,6 +5,9 @@ from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, St
 from database import Base
 
 
+
+
+
 class User(Base):
   __tablename__ = "users"
 
@@ -190,3 +193,15 @@ class VocabularyWord(Base):
   created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
   updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
+
+class TtsAudioHistory(Base):
+  """Stores TTS-generated audio files per user for the inventory feature."""
+  __tablename__ = "tts_audio_history"
+
+  id = Column(Integer, primary_key=True, index=True)
+  user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=True)
+  audio_url = Column(String(500), nullable=False)
+  voice_id = Column(String(50), nullable=False)
+  voice_label = Column(String(100), nullable=False)
+  text_preview = Column(String(200), nullable=False)
+  created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

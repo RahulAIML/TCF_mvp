@@ -32,7 +32,7 @@ _GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts"
 
 AUDIO_STORAGE_PATH = os.getenv("AUDIO_STORAGE_PATH", "data/audio")
 
-MAX_TEXT_LENGTH = 6000  # characters — caps ElevenLabs cost per request
+MAX_TEXT_LENGTH = 10000  # characters — caps ElevenLabs cost per request
 
 # ---------------------------------------------------------------------------
 # Voice registry
