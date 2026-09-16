@@ -17,8 +17,11 @@ import {
 import type { TtsVoice } from "@/types/tts";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-const MAX_CHARS = 2000;
+const MAX_CHARS = 6000;
+const MAX_WORDS = 1000;
 const MAX_RECORD_SECS = 60;
+
+const wordCount = (s: string) => s.trim() === "" ? 0 : s.trim().split(/\s+/).length;
 
 type InputMode = "type" | "record";
 type RecordState = "idle" | "recording" | "recorded";
@@ -348,7 +351,11 @@ export default function TtsPage() {
               )}
               <textarea
                 value={text}
-                onChange={(e) => setText(e.target.value.slice(0, MAX_CHARS))}
+                onChange={(e) => {
+                  const val = e.target.value.slice(0, MAX_CHARS);
+                  const words = val.trim().split(/\s+/);
+                  setText(words.length > MAX_WORDS ? words.slice(0, MAX_WORDS).join(" ") : val);
+                }}
                 placeholder={
                   inputMode === "type"
                     ? "Entrez votre texte en français…"
@@ -357,8 +364,8 @@ export default function TtsPage() {
                 rows={5}
                 className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
               />
-              <p className={`text-right text-xs ${text.length > MAX_CHARS * 0.9 ? "text-amber-500" : "text-slate-400"}`}>
-                {text.length} / {MAX_CHARS}
+              <p className={`text-right text-xs ${wordCount(text) > MAX_WORDS * 0.9 ? "text-amber-500" : "text-slate-400"}`}>
+                {wordCount(text)} / {MAX_WORDS} words
               </p>
             </div>
           </CardContent>
