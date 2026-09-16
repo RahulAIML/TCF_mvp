@@ -80,7 +80,7 @@ async def ai_chat(payload: AIChatRequest) -> AIChatResponse:
     import os
 
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     model = genai.GenerativeModel(model_name)
 
     full_prompt = f"{SYSTEM_PROMPT}\n\nUser: {payload.message.strip()}"

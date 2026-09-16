@@ -33,7 +33,7 @@ load_dotenv()
 logger = logging.getLogger("tcf.tts")
 _ELEVENLABS_SESSION = requests.Session()
 
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID")
