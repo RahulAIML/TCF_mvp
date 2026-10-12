@@ -164,7 +164,7 @@ def _generate_via_elevenlabs(text: str, voice: VoiceConfig) -> str:
     }
     headers = {"xi-api-key": _ELEVENLABS_API_KEY, "Content-Type": "application/json"}
     logger.info("ElevenLabs TTS: voice=%s chars=%s", voice["id"], len(text))
-    resp = _SESSION.post(url, headers=headers, json=payload, timeout=30)
+    resp = _SESSION.post(url, headers=headers, json=payload, timeout=(10, 90))
     resp.raise_for_status()
     return _save_mp3(resp.content, voice["id"])
 
