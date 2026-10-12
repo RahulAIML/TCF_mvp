@@ -217,8 +217,8 @@ def generate_tts_audio(text: str, voice_id: str) -> str:
     voice = get_voice(voice_id)
 
     try:
-        return _generate_via_elevenlabs(text, voice)
-    except Exception as el_err:
-        logger.warning("ElevenLabs failed (%s), falling back to Gemini TTS.", el_err)
+        return _generate_via_gemini(text, voice)
+    except Exception as gemini_err:
+        logger.warning("Gemini TTS failed (%s), falling back to ElevenLabs.", gemini_err)
 
-    return _generate_via_gemini(text, voice)
+    return _generate_via_elevenlabs(text, voice)
