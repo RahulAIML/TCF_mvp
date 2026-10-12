@@ -24,3 +24,9 @@ export interface TtsHistoryItem {
   text_preview: string;
   created_at: string;
 }
+
+export interface TtsJobResponse {
+  status: "pending" | "done" | "error";
+  audio_url: string | null;
+  error: string | null;
+}

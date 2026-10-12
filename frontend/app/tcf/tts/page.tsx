@@ -10,7 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   deleteTtsHistoryItem,
   evaluatePronunciationAudio,
-  generateTts,
+  startTtsJob,
+  pollTtsJob,
   getTtsHistory,
   getTtsVoices,
   transcribeAudio,
@@ -198,46 +199,50 @@ export default function TtsPage() {
     } finally { setTranscribing(false); }
   }, [recordBlob]);
 
-  // --- TTS generation ---
+  // --- TTS generation (polling-based to bypass proxy timeout) ---
   const handleGenerate = useCallback(async () => {
     if (!text.trim()) return;
     setGenerating(true); setTtsError(""); setAudioUrl(null);
     setEvalResult(null); setEvalError("");
     try {
       const voice = voices.find((v) => v.id === selectedVoice);
-      const res = await generateTts({ text, voice_id: selectedVoice });
-      const url = `${API_BASE_URL}${res.audio_url}`;
-      setAudioUrl(url);
+      const { job_id } = await startTtsJob({ text, voice_id: selectedVoice });
 
-      // Refresh history from DB (authenticated) or update localStorage (guest)
-      if (getAuthToken()) {
-        getTtsHistory().then(setHistory).catch(() => {});
-      } else {
-        const entry: TtsHistoryItem = {
-          id: Date.now(),
-          audio_url: url,
-          voice_id: selectedVoice,
-          voice_label: voice?.label ?? selectedVoice,
-          text_preview: text.trim().slice(0, 200),
-          created_at: new Date().toISOString(),
-        };
-        setHistory((prev) => {
-          const next = [entry, ...prev].slice(0, MAX_HISTORY);
-          saveGuestHistory(next);
-          return next;
-        });
+      // Poll every 2 s, up to 120 s total
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const job = await pollTtsJob(job_id);
+
+        if (job.status === "done" && job.audio_url) {
+          const url = `${API_BASE_URL}${job.audio_url}`;
+          setAudioUrl(url);
+          if (getAuthToken()) {
+            getTtsHistory().then(setHistory).catch(() => {});
+          } else {
+            const entry: TtsHistoryItem = {
+              id: Date.now(),
+              audio_url: url,
+              voice_id: selectedVoice,
+              voice_label: voice?.label ?? selectedVoice,
+              text_preview: text.trim().slice(0, 200),
+              created_at: new Date().toISOString(),
+            };
+            setHistory((prev) => {
+              const next = [entry, ...prev].slice(0, MAX_HISTORY);
+              saveGuestHistory(next);
+              return next;
+            });
+          }
+          return;
+        }
+
+        if (job.status === "error") {
+          throw new Error("Audio generation failed. Please try again.");
+        }
       }
+      throw new Error("Generation is taking too long. Try with shorter text.");
     } catch (e: unknown) {
-      const raw = e instanceof Error ? e.message : "Generation failed";
-      // Server-side timeout: backend likely finished generating — poll history
-      if (getAuthToken()) {
-        setTtsError("Audio generation is taking longer than usual. Your audio may still appear in History below.");
-        const refresh = () => getTtsHistory().then(setHistory).catch(() => {});
-        setTimeout(refresh, 3000);
-        setTimeout(refresh, 8000);
-      } else {
-        setTtsError(raw);
-      }
+      setTtsError(e instanceof Error ? e.message : "Generation failed. Please try again.");
     } finally { setGenerating(false); }
   }, [text, selectedVoice, voices]);
 
