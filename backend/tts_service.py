@@ -28,9 +28,12 @@ _ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2")
 _ELEVENLABS_OUTPUT_FORMAT = os.getenv("ELEVENLABS_OUTPUT_FORMAT", "mp3_22050_32")
 
 _GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-_GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
+_GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-preview-tts")
 
-AUDIO_STORAGE_PATH = os.getenv("AUDIO_STORAGE_PATH", "data/audio")
+AUDIO_STORAGE_PATH = os.getenv(
+    "AUDIO_STORAGE_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "audio")
+)
 
 MAX_TEXT_LENGTH = 10000  # characters — caps ElevenLabs cost per request
 
@@ -177,22 +180,26 @@ def _generate_via_gemini(text: str, voice: VoiceConfig) -> str:
 
     client = genai_client.Client(api_key=_GEMINI_API_KEY)
     logger.info("Gemini TTS: voice=%s chars=%s", voice["id"], len(text))
-    response = client.models.generate_content(
-        model=_GEMINI_TTS_MODEL,
-        contents=text,
-        config=types.GenerateContentConfig(
-            response_modalities=["AUDIO"],
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name=voice["gemini_voice_name"]
+    try:
+        response = client.models.generate_content(
+            model=_GEMINI_TTS_MODEL,
+            contents=text,
+            config=types.GenerateContentConfig(
+                response_modalities=["AUDIO"],
+                speech_config=types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                            voice_name=voice["gemini_voice_name"]
+                        )
                     )
-                )
+                ),
             ),
-        ),
-    )
-    pcm_bytes = response.candidates[0].content.parts[0].inline_data.data
-    return _save_wav_as_mp3_named(pcm_bytes, voice["id"])
+        )
+        pcm_bytes = response.candidates[0].content.parts[0].inline_data.data
+        return _save_wav_as_mp3_named(pcm_bytes, voice["id"])
+    except Exception as exc:
+        logger.error("Gemini TTS generation failed: %s", exc)
+        raise RuntimeError(f"Gemini TTS failed with model '{_GEMINI_TTS_MODEL}': {exc}") from exc
 
 
 def generate_tts_audio(text: str, voice_id: str) -> str:
