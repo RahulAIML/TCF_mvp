@@ -33,12 +33,14 @@ configured_origins = [
   origin.strip()
   for origin in os.getenv(
     "FRONTEND_ORIGIN",
-    "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000"
+    "https://tcf-trainer.onrender.com,http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000"
   ).split(",")
   if origin.strip()
 ]
 frontend_origins = sorted(
   set(configured_origins).union({
+    "https://tcf-trainer.onrender.com",
+    "https://tcf-mvp.onrender.com",
     "http://localhost:3000",
     "http://localhost:3001",
     "http://127.0.0.1:3000"
@@ -47,9 +49,11 @@ frontend_origins = sorted(
 app.add_middleware(
   CORSMiddleware,
   allow_origins=frontend_origins,
+  allow_origin_regex=r"^https:\/\/.*\.onrender\.com$",
   allow_credentials=True,
   allow_methods=["*"],
-  allow_headers=["*"]
+  allow_headers=["*"],
+  expose_headers=["*"],
 )
 
 app.include_router(dictionary_router)

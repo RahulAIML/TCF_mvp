@@ -186,7 +186,10 @@ export default function TtsPage() {
     try {
       const voice = voices.find((v) => v.id === selectedVoice);
       const res = await generateTts({ text, voice_id: selectedVoice });
-      const url = `${API_BASE_URL}${res.audio_url}`;
+      const rawUrl = res.audio_url;
+      const url = rawUrl.startsWith("http")
+        ? (() => { try { return new URL(rawUrl).pathname; } catch { return rawUrl; } })()
+        : rawUrl;
       setAudioUrl(url);
 
       // Refresh history from DB (authenticated) or update localStorage (guest)
@@ -437,7 +440,12 @@ export default function TtsPage() {
                       </p>
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">
-                      <button onClick={() => handleDownload(entry.audio_url.startsWith("http") ? entry.audio_url : `${API_BASE_URL}${entry.audio_url}`, entry.voice_id)}
+                      <button onClick={() => {
+                        const dlUrl = entry.audio_url.startsWith("http")
+                          ? (() => { try { return new URL(entry.audio_url).pathname; } catch { return entry.audio_url; } })()
+                          : entry.audio_url;
+                        handleDownload(dlUrl, entry.voice_id);
+                      }}
                         title="Download"
                         className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
                         <Download className="h-3.5 w-3.5" />
@@ -449,7 +457,15 @@ export default function TtsPage() {
                       </button>
                     </div>
                   </div>
-                  <audio src={entry.audio_url.startsWith("http") ? entry.audio_url : `${API_BASE_URL}${entry.audio_url}`} controls className="w-full h-8" />
+                  <audio
+                    src={
+                      entry.audio_url.startsWith("http")
+                        ? (() => { try { return new URL(entry.audio_url).pathname; } catch { return entry.audio_url; } })()
+                        : entry.audio_url
+                    }
+                    controls
+                    className="w-full h-8"
+                  />
                 </div>
               ))}
             </CardContent>

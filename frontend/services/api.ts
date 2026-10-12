@@ -396,7 +396,7 @@ export async function evaluatePronunciationAudio(
   form.append("target_text", targetText);
   form.append("audio_file", blob, "recording.webm");
   form.append("language", "fr");
-  const res = await fetch(`${API_BASE_URL}/api/pronunciation/evaluate`, {
+  const res = await fetch(`/api/pronunciation/evaluate`, {
     method: "POST",
     headers: { ...authHeaders() },
     body: form,
@@ -406,7 +406,7 @@ export async function evaluatePronunciationAudio(
 }
 
 export async function getTtsVoices(): Promise<TtsVoice[]> {
-  const res = await fetch(`${API_BASE_URL}/api/tts/voices`, {
+  const res = await fetch(`/api/tts/voices`, {
     method: "GET",
     headers: { ...authHeaders() },
     cache: "no-store"
@@ -415,7 +415,7 @@ export async function getTtsVoices(): Promise<TtsVoice[]> {
 }
 
 export async function getTtsHistory(): Promise<TtsHistoryItem[]> {
-  const res = await fetch(`${API_BASE_URL}/api/tts/history`, {
+  const res = await fetch(`/api/tts/history`, {
     method: "GET",
     headers: { ...authHeaders() },
     cache: "no-store",
@@ -424,7 +424,7 @@ export async function getTtsHistory(): Promise<TtsHistoryItem[]> {
 }
 
 export async function deleteTtsHistoryItem(id: number): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/api/tts/history/${id}`, {
+  const res = await fetch(`/api/tts/history/${id}`, {
     method: "DELETE",
     headers: { ...authHeaders() },
     cache: "no-store",
@@ -437,7 +437,7 @@ export async function deleteTtsHistoryItem(id: number): Promise<void> {
 export async function generateTts(
   payload: TtsGenerateRequest
 ): Promise<TtsGenerateResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/tts/generate`, {
+  const res = await fetch(`/api/tts/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),

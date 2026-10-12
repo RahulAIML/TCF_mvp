@@ -11,8 +11,8 @@ const nextConfig = {
       {
         source: "/(.*)",
         headers: [
-          // Suppress "unload is not allowed" Permissions-Policy warnings from Chrome
-          { key: "Permissions-Policy", value: "unload=()" },
+          // Allow unload to suppress "Permissions policy violation: unload is not allowed" warnings
+          { key: "Permissions-Policy", value: "unload=*" },
         ],
       },
     ];
