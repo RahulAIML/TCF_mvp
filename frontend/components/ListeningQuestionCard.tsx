@@ -59,7 +59,8 @@ export default function ListeningQuestionCard({
   const [autoScroll, setAutoScroll] = useState(true);
   const [isBuffering, setIsBuffering] = useState(false);
 
-  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  // Note: audio URLs from the backend are relative (/audio/...). We use them
+  // directly so requests go through the Next.js proxy, avoiding CORS errors.
   const [localAudioUrl, setLocalAudioUrl] = useState("");
 
   useEffect(() => {
@@ -68,8 +69,8 @@ export default function ListeningQuestionCard({
       setLocalAudioUrl("");
       return;
     }
-    setLocalAudioUrl(url.startsWith("http") ? url : `${apiBase}${url}`);
-  }, [question.audio_url, apiBase]);
+    setLocalAudioUrl(url.startsWith("http") ? (() => { try { return new URL(url).pathname; } catch { return url; } })() : url);
+  }, [question.audio_url]);
 
   const audioSrc = localAudioUrl;
 
@@ -151,7 +152,9 @@ export default function ListeningQuestionCard({
       try {
         const fetched = await onRequestAudio(question);
         if (fetched) {
-          const resolved = fetched.startsWith("http") ? fetched : `${apiBase}${fetched}`;
+          const resolved = fetched.startsWith("http")
+            ? (() => { try { return new URL(fetched).pathname; } catch { return fetched; } })()
+            : fetched;
           setLocalAudioUrl(resolved);
           effectiveSrc = resolved;
         }

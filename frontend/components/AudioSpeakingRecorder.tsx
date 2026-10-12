@@ -16,7 +16,8 @@ import {
 } from "react";
 import { Mic, MicOff, Loader } from "lucide-react";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// NOTE: Use relative /api/... paths for browser-side fetches so they go through
+// the Next.js rewrite proxy rather than hitting the backend directly (CORS).
 
 export interface AudioSpeakingRecorderHandle {
   start: () => void;
@@ -91,7 +92,7 @@ const AudioSpeakingRecorder = forwardRef<
         form.append("audio", blob, `recording.${ext}`);
         form.append("language", language.split("-")[0]); // fr-FR -> fr
 
-        const res = await fetch(`${API_BASE_URL}/tcf/transcribe-audio`, {
+        const res = await fetch(`/api/tcf/transcribe-audio`, {
           method: "POST",
           body: form,
         });

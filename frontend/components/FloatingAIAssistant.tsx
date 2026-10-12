@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { MessageCircle, X, Send, Loader, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Use relative paths for browser-side fetches → go through Next.js proxy (avoids CORS).
 
 interface Message {
   id: string;
@@ -109,7 +109,7 @@ export default function FloatingAIAssistant() {
     setIsLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/ai/chat`, {
+      const res = await fetch(`/api/ai/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text }),

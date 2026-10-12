@@ -6,12 +6,15 @@ import "@/app/globals.css";
 
 const sans = Plus_Jakarta_Sans({
   subsets: ["latin"],
-  variable: "--font-sans"
+  variable: "--font-sans",
+  display: "swap",
 });
 
 const serif = Source_Serif_4({
   subsets: ["latin"],
-  variable: "--font-serif"
+  variable: "--font-serif",
+  display: "swap",
+  preload: false, // Suppress "preloaded but not used" console warnings
 });
 
 export const metadata: Metadata = {
