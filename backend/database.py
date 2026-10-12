@@ -27,7 +27,7 @@ def init_db() -> None:
   from models import (
     ExamAttempt, ListeningAttempt, User, WritingSession, TcfWritingSession,
     SpeakingSession, UserAudioResponse, QuestionValidation, LearnSession,
-    PronunciationEvaluation, VocabularyWord
+    PronunciationEvaluation, VocabularyWord, TtsAudioHistory
   )
 
   Base.metadata.create_all(bind=engine)

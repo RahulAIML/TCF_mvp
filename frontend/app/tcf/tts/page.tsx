@@ -84,6 +84,26 @@ function HighlightedText({ text, mistakes }: { text: string; mistakes: string[] 
   );
 }
 
+function HistoryAudioPlayer({ src }: { src: string }) {
+  const [expired, setExpired] = useState(false);
+  if (expired) {
+    return (
+      <p className="text-xs text-slate-400 italic flex items-center gap-1 py-1">
+        <AlertCircle className="h-3 w-3 text-amber-400 shrink-0" />
+        File expired — audio is stored temporarily on the server
+      </p>
+    );
+  }
+  return (
+    <audio
+      src={src}
+      controls
+      className="w-full h-8"
+      onError={() => setExpired(true)}
+    />
+  );
+}
+
 export default function TtsPage() {
   const [voices, setVoices] = useState<TtsVoice[]>([]);
   const [selectedVoice, setSelectedVoice] = useState("fr-FR-male-1");
@@ -449,7 +469,7 @@ export default function TtsPage() {
                       </button>
                     </div>
                   </div>
-                  <audio src={entry.audio_url.startsWith("http") ? entry.audio_url : `${API_BASE_URL}${entry.audio_url}`} controls className="w-full h-8" />
+                  <HistoryAudioPlayer src={entry.audio_url.startsWith("http") ? entry.audio_url : `${API_BASE_URL}${entry.audio_url}`} />
                 </div>
               ))}
             </CardContent>

@@ -32,14 +32,17 @@ async def post_generate_tts(
     preview = payload.text.strip()[:200]
 
     if user:
-        db.add(TtsAudioHistory(
-            user_id=user.id,
-            audio_url=audio_url,
-            voice_id=payload.voice_id,
-            voice_label=voice["label"],
-            text_preview=preview,
-        ))
-        db.commit()
+        try:
+            db.add(TtsAudioHistory(
+                user_id=user.id,
+                audio_url=audio_url,
+                voice_id=payload.voice_id,
+                voice_label=voice["label"],
+                text_preview=preview,
+            ))
+            db.commit()
+        except Exception:
+            db.rollback()
 
     return TtsGenerateResponse(
         audio_url=audio_url,
