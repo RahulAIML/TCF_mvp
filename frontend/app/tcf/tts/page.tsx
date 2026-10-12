@@ -10,7 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   deleteTtsHistoryItem,
   evaluatePronunciationAudio,
-  generateTts,
+  startTtsJob,
+  pollTtsJob,
   getTtsHistory,
   getTtsVoices,
   transcribeAudio,
@@ -19,6 +20,7 @@ import {
 import type { TtsHistoryItem, TtsVoice } from "@/types/tts";
 import { getAuthToken } from "@/lib/auth";
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const MAX_CHARS = 10000;
 const MAX_WORDS = 1500;
 const MAX_RECORD_SECS = 60;
@@ -80,6 +82,26 @@ function HighlightedText({ text, mistakes }: { text: string; mistakes: string[] 
           : <span key={i}>{w}</span>;
       })}
     </>
+  );
+}
+
+function HistoryAudioPlayer({ src }: { src: string }) {
+  const [expired, setExpired] = useState(false);
+  if (expired) {
+    return (
+      <p className="text-xs text-slate-400 italic flex items-center gap-1 py-1">
+        <AlertCircle className="h-3 w-3 text-amber-400 shrink-0" />
+        File expired — audio is stored temporarily on the server
+      </p>
+    );
+  }
+  return (
+    <audio
+      src={src}
+      controls
+      className="w-full h-8"
+      onError={() => setExpired(true)}
+    />
   );
 }
 
@@ -177,49 +199,50 @@ export default function TtsPage() {
     } finally { setTranscribing(false); }
   }, [recordBlob]);
 
-  // --- TTS generation ---
+  // --- TTS generation (polling-based to bypass proxy timeout) ---
   const handleGenerate = useCallback(async () => {
     if (!text.trim()) return;
     setGenerating(true); setTtsError(""); setAudioUrl(null);
     setEvalResult(null); setEvalError("");
     try {
       const voice = voices.find((v) => v.id === selectedVoice);
-      const res = await generateTts({ text, voice_id: selectedVoice });
-      const rawUrl = res.audio_url;
-      const url = rawUrl.startsWith("http")
-        ? (() => { try { return new URL(rawUrl).pathname; } catch { return rawUrl; } })()
-        : rawUrl;
-      setAudioUrl(url);
+      const { job_id } = await startTtsJob({ text, voice_id: selectedVoice });
 
-      // Refresh history from DB (authenticated) or update localStorage (guest)
-      if (getAuthToken()) {
-        getTtsHistory().then(setHistory).catch(() => {});
-      } else {
-        const entry: TtsHistoryItem = {
-          id: Date.now(),
-          audio_url: url,
-          voice_id: selectedVoice,
-          voice_label: voice?.label ?? selectedVoice,
-          text_preview: text.trim().slice(0, 200),
-          created_at: new Date().toISOString(),
-        };
-        setHistory((prev) => {
-          const next = [entry, ...prev].slice(0, MAX_HISTORY);
-          saveGuestHistory(next);
-          return next;
-        });
+      // Poll every 2 s, up to 120 s total
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const job = await pollTtsJob(job_id);
+
+        if (job.status === "done" && job.audio_url) {
+          const url = `${API_BASE_URL}${job.audio_url}`;
+          setAudioUrl(url);
+          if (getAuthToken()) {
+            getTtsHistory().then(setHistory).catch(() => {});
+          } else {
+            const entry: TtsHistoryItem = {
+              id: Date.now(),
+              audio_url: url,
+              voice_id: selectedVoice,
+              voice_label: voice?.label ?? selectedVoice,
+              text_preview: text.trim().slice(0, 200),
+              created_at: new Date().toISOString(),
+            };
+            setHistory((prev) => {
+              const next = [entry, ...prev].slice(0, MAX_HISTORY);
+              saveGuestHistory(next);
+              return next;
+            });
+          }
+          return;
+        }
+
+        if (job.status === "error") {
+          throw new Error("Audio generation failed. Please try again.");
+        }
       }
+      throw new Error("Generation is taking too long. Try with shorter text.");
     } catch (e: unknown) {
-      const raw = e instanceof Error ? e.message : "Generation failed";
-      // Server-side timeout: backend likely finished generating — poll history
-      if (getAuthToken()) {
-        setTtsError("Audio generation is taking longer than usual. Your audio may still appear in History below.");
-        const refresh = () => getTtsHistory().then(setHistory).catch(() => {});
-        setTimeout(refresh, 3000);
-        setTimeout(refresh, 8000);
-      } else {
-        setTtsError(raw);
-      }
+      setTtsError(e instanceof Error ? e.message : "Generation failed. Please try again.");
     } finally { setGenerating(false); }
   }, [text, selectedVoice, voices]);
 
@@ -448,12 +471,7 @@ export default function TtsPage() {
                       </p>
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">
-                      <button onClick={() => {
-                        const dlUrl = entry.audio_url.startsWith("http")
-                          ? (() => { try { return new URL(entry.audio_url).pathname; } catch { return entry.audio_url; } })()
-                          : entry.audio_url;
-                        handleDownload(dlUrl, entry.voice_id);
-                      }}
+                      <button onClick={() => handleDownload(entry.audio_url.startsWith("http") ? entry.audio_url : `${API_BASE_URL}${entry.audio_url}`, entry.voice_id)}
                         title="Download"
                         className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
                         <Download className="h-3.5 w-3.5" />
@@ -465,15 +483,7 @@ export default function TtsPage() {
                       </button>
                     </div>
                   </div>
-                  <audio
-                    src={
-                      entry.audio_url.startsWith("http")
-                        ? (() => { try { return new URL(entry.audio_url).pathname; } catch { return entry.audio_url; } })()
-                        : entry.audio_url
-                    }
-                    controls
-                    className="w-full h-8"
-                  />
+                  <HistoryAudioPlayer src={entry.audio_url.startsWith("http") ? entry.audio_url : `${API_BASE_URL}${entry.audio_url}`} />
                 </div>
               ))}
             </CardContent>

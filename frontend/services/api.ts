@@ -47,7 +47,7 @@ import type {
   TcfWritingSubmitResponse
 } from "@/types/tcf-writing";
 import type { AuthResponse, LoginRequest, SignupRequest } from "@/types/user";
-import type { TtsGenerateRequest, TtsGenerateResponse, TtsHistoryItem, TtsVoice } from "@/types/tts";
+import type { TtsGenerateRequest, TtsJobResponse, TtsHistoryItem, TtsVoice } from "@/types/tts";
 import { getAuthToken } from "@/lib/auth";
 import { emitAuthFailure } from "@/lib/auth-events";
 
@@ -396,7 +396,7 @@ export async function evaluatePronunciationAudio(
   form.append("target_text", targetText);
   form.append("audio_file", blob, "recording.webm");
   form.append("language", "fr");
-  const res = await fetch(`/api/pronunciation/evaluate`, {
+  const res = await fetch(`${API_BASE_URL}/api/pronunciation/evaluate`, {
     method: "POST",
     headers: { ...authHeaders() },
     body: form,
@@ -406,7 +406,7 @@ export async function evaluatePronunciationAudio(
 }
 
 export async function getTtsVoices(): Promise<TtsVoice[]> {
-  const res = await fetch(`/api/tts/voices`, {
+  const res = await fetch(`${API_BASE_URL}/api/tts/voices`, {
     method: "GET",
     headers: { ...authHeaders() },
     cache: "no-store"
@@ -415,7 +415,7 @@ export async function getTtsVoices(): Promise<TtsVoice[]> {
 }
 
 export async function getTtsHistory(): Promise<TtsHistoryItem[]> {
-  const res = await fetch(`/api/tts/history`, {
+  const res = await fetch(`${API_BASE_URL}/api/tts/history`, {
     method: "GET",
     headers: { ...authHeaders() },
     cache: "no-store",
@@ -424,7 +424,7 @@ export async function getTtsHistory(): Promise<TtsHistoryItem[]> {
 }
 
 export async function deleteTtsHistoryItem(id: number): Promise<void> {
-  const res = await fetch(`/api/tts/history/${id}`, {
+  const res = await fetch(`${API_BASE_URL}/api/tts/history/${id}`, {
     method: "DELETE",
     headers: { ...authHeaders() },
     cache: "no-store",
@@ -434,14 +434,22 @@ export async function deleteTtsHistoryItem(id: number): Promise<void> {
   }
 }
 
-export async function generateTts(
+export async function startTtsJob(
   payload: TtsGenerateRequest
-): Promise<TtsGenerateResponse> {
-  const res = await fetch(`/api/tts/generate`, {
+): Promise<{ job_id: string; status: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/tts/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
     cache: "no-store"
   });
-  return parseResponse<TtsGenerateResponse>(res);
+  return parseResponse<{ job_id: string; status: string }>(res);
+}
+
+export async function pollTtsJob(jobId: string): Promise<TtsJobResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/tts/job/${jobId}`, {
+    headers: { ...authHeaders() },
+    cache: "no-store"
+  });
+  return parseResponse<TtsJobResponse>(res);
 }
