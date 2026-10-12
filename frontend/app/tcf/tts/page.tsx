@@ -210,7 +210,16 @@ export default function TtsPage() {
         });
       }
     } catch (e: unknown) {
-      setTtsError(e instanceof Error ? e.message : "Generation failed");
+      const raw = e instanceof Error ? e.message : "Generation failed";
+      // Server-side timeout: backend likely finished generating — poll history
+      if (getAuthToken()) {
+        setTtsError("Audio generation is taking longer than usual. Your audio may still appear in History below.");
+        const refresh = () => getTtsHistory().then(setHistory).catch(() => {});
+        setTimeout(refresh, 3000);
+        setTimeout(refresh, 8000);
+      } else {
+        setTtsError(raw);
+      }
     } finally { setGenerating(false); }
   }, [text, selectedVoice, voices]);
 
