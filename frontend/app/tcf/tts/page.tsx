@@ -19,7 +19,6 @@ import {
 import type { TtsHistoryItem, TtsVoice } from "@/types/tts";
 import { getAuthToken } from "@/lib/auth";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const MAX_CHARS = 10000;
 const MAX_WORDS = 1500;
 const MAX_RECORD_SECS = 60;
