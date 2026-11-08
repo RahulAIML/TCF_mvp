@@ -28,7 +28,7 @@ _ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2")
 _ELEVENLABS_OUTPUT_FORMAT = os.getenv("ELEVENLABS_OUTPUT_FORMAT", "mp3_22050_32")
 
 _GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-_GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-preview-tts")
+_GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts")
 
 AUDIO_STORAGE_PATH = os.getenv("AUDIO_STORAGE_PATH", "data/audio")
 

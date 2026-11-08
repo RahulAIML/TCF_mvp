@@ -4,12 +4,10 @@ Single, direct endpoint. No mock responses.
 """
 
 import logging
-import re
+import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
-
-from gemini_service import GeminiService
 
 logger = logging.getLogger("ai_chat")
 router = APIRouter()
@@ -70,39 +68,37 @@ class AIChatResponse(BaseModel):
     response: str
 
 
-@router.post("/ai/chat", response_model=AIChatResponse)
-async def ai_chat(payload: AIChatRequest) -> AIChatResponse:
-    """Direct AI assistant — always answers, never asks for more context."""
-    if not payload.message.strip():
-        raise HTTPException(status_code=400, detail="Message cannot be empty")
-
+def _call_gemini(message: str) -> str:
     import google.generativeai as genai
-    import os
-
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY not configured")
+    genai.configure(api_key=api_key)
     model_name = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
     model = genai.GenerativeModel(model_name)
-
-    full_prompt = f"{SYSTEM_PROMPT}\n\nUser: {payload.message.strip()}"
-
+    full_prompt = f"{SYSTEM_PROMPT}\n\nUser: {message}"
     for attempt in range(3):
-        try:
-            resp = model.generate_content(full_prompt)
-            text = resp.text.strip()
+        resp = model.generate_content(full_prompt)
+        text = resp.text.strip()
+        if not _contains_banned_phrase(text):
+            return text
+        logger.warning("Banned phrase in response (attempt %d), retrying", attempt + 1)
+        full_prompt += (
+            "\n\nIMPORTANT: Answer DIRECTLY. Do NOT say 'great question', "
+            "'more context', or ask for clarification. Give the answer now."
+        )
+    return text  # return last attempt even if it has a banned phrase
 
-            if _contains_banned_phrase(text):
-                logger.warning("AI response contained banned phrase (attempt %d), retrying", attempt + 1)
-                full_prompt += (
-                    "\n\nIMPORTANT: Answer DIRECTLY. Do NOT say 'great question', "
-                    "'more context', or ask for clarification. Give the answer now."
-                )
-                continue
 
-            return AIChatResponse(response=text)
-        except Exception as exc:
-            logger.error("AI chat error on attempt %d: %s", attempt + 1, exc)
-            if attempt == 2:
-                raise HTTPException(status_code=500, detail="AI service error. Please try again.")
-
-    # Fallback if all retries produced banned phrases (rare)
-    return AIChatResponse(response="Je ne comprends pas. Pouvez-vous reformuler? / I didn't understand. Could you rephrase?")
+@router.post("/api/ai/chat", response_model=AIChatResponse)
+async def ai_chat(payload: AIChatRequest) -> AIChatResponse:
+    if not payload.message.strip():
+        return AIChatResponse(response="Please type a question.")
+    try:
+        text = _call_gemini(payload.message.strip())
+        return AIChatResponse(response=text)
+    except Exception as exc:
+        logger.error("AI chat error: %s", exc)
+        return AIChatResponse(
+            response="Je suis désolé, le service est temporairement indisponible. / Sorry, the service is temporarily unavailable. Please try again in a moment."
+        )

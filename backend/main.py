@@ -77,5 +77,28 @@ async def root() -> dict[str, str]:
   return {"status": "ok", "service": "tcf-backend"}
 
 
+@app.get("/api/health")
+async def health() -> dict:
+    """Check environment config and Gemini key validity."""
+    import os
+    result: dict = {
+        "GEMINI_API_KEY": "set" if os.getenv("GEMINI_API_KEY") else "MISSING",
+        "GEMINI_MODEL": os.getenv("GEMINI_MODEL", "gemini-2.0-flash (default)"),
+        "GEMINI_TTS_MODEL": os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-preview-tts (default)"),
+        "ELEVENLABS_API_KEY": "set" if os.getenv("ELEVENLABS_API_KEY") else "MISSING",
+        "gemini_chat_test": "untested",
+    }
+    if os.getenv("GEMINI_API_KEY"):
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+            model = genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-2.0-flash"))
+            resp = model.generate_content("Reply with just the word: ok")
+            result["gemini_chat_test"] = "ok" if resp.text else "empty response"
+        except Exception as exc:
+            result["gemini_chat_test"] = f"FAILED: {exc}"
+    return result
+
+
 
 
