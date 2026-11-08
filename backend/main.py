@@ -33,14 +33,12 @@ configured_origins = [
   origin.strip()
   for origin in os.getenv(
     "FRONTEND_ORIGIN",
-    "https://tcf-trainer.onrender.com,http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000"
+    "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000"
   ).split(",")
   if origin.strip()
 ]
 frontend_origins = sorted(
   set(configured_origins).union({
-    "https://tcf-trainer.onrender.com",
-    "https://tcf-mvp.onrender.com",
     "http://localhost:3000",
     "http://localhost:3001",
     "http://127.0.0.1:3000"
@@ -49,11 +47,9 @@ frontend_origins = sorted(
 app.add_middleware(
   CORSMiddleware,
   allow_origins=frontend_origins,
-  allow_origin_regex=r"^https:\/\/.*\.onrender\.com$",
   allow_credentials=True,
   allow_methods=["*"],
-  allow_headers=["*"],
-  expose_headers=["*"],
+  allow_headers=["*"]
 )
 
 app.include_router(dictionary_router)
@@ -79,6 +75,29 @@ async def on_startup() -> None:
 @app.get("/")
 async def root() -> dict[str, str]:
   return {"status": "ok", "service": "tcf-backend"}
+
+
+@app.get("/api/health")
+async def health() -> dict:
+    """Check environment config and Gemini key validity."""
+    import os
+    result: dict = {
+        "GEMINI_API_KEY": "set" if os.getenv("GEMINI_API_KEY") else "MISSING",
+        "GEMINI_MODEL": os.getenv("GEMINI_MODEL", "gemini-2.0-flash (default)"),
+        "GEMINI_TTS_MODEL": os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-preview-tts (default)"),
+        "ELEVENLABS_API_KEY": "set" if os.getenv("ELEVENLABS_API_KEY") else "MISSING",
+        "gemini_chat_test": "untested",
+    }
+    if os.getenv("GEMINI_API_KEY"):
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+            model = genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-2.0-flash"))
+            resp = model.generate_content("Reply with just the word: ok")
+            result["gemini_chat_test"] = "ok" if resp.text else "empty response"
+        except Exception as exc:
+            result["gemini_chat_test"] = f"FAILED: {exc}"
+    return result
 
 
 
