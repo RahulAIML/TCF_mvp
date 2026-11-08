@@ -159,21 +159,17 @@ export default function MockExamPage() {
     }
   };
 
-  const prefetchQuestions = (fromQuestion: number) => {
-    if (!isExamStarted || timeUp || results) {
+  const prefetchQuestions = (fromQuestion: number, endQuestion?: number) => {
+    // Use ref instead of state so this works inside async closures
+    if (!examSessionIdRef.current || timeUp || results) {
       return;
     }
+    const cap = endQuestion ?? diffRange.end;
     for (let offset = 1; offset <= PREFETCH_AHEAD; offset += 1) {
       const questionNumber = fromQuestion + offset;
-      if (questionNumber > TOTAL_QUESTIONS) {
-        break;
-      }
-      if (questionsRef.current[questionNumber]) {
-        continue;
-      }
-      if (inFlightRef.current[questionNumber]) {
-        continue;
-      }
+      if (questionNumber > cap) break;
+      if (questionsRef.current[questionNumber]) continue;
+      if (inFlightRef.current[questionNumber]) continue;
       void ensureQuestion(questionNumber, false).catch(() => undefined);
     }
   };
@@ -190,7 +186,9 @@ export default function MockExamPage() {
     setTimerKey((p) => p + 1);
     setTimerActive(true);
     setShowResumeDialog(false);
-    void ensureQuestion(state.currentQuestion).catch(() => {});
+    void ensureQuestion(state.currentQuestion).then(() => {
+      prefetchQuestions(state.currentQuestion);
+    }).catch(() => {});
   };
 
   const handleStartNew = () => {
@@ -212,8 +210,9 @@ export default function MockExamPage() {
     setError("");
     setSubmitNote("");
     try {
+      // Kick off Q2-Q(PREFETCH_AHEAD+1) immediately — in parallel with Q1
+      prefetchQuestions(startQ, DIFFICULTY_RANGES[difficultyGroup].end);
       await ensureQuestion(startQ);
-      prefetchQuestions(startQ);
       setStartedAt(new Date().toISOString());
       setTimerKey((prev) => prev + 1);
       setTimerActive(true);
