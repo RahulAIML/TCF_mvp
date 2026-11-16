@@ -417,3 +417,10 @@ def test_the_server_instructions_and_tool_description_tell_the_agent_to_ask(clie
   assert "ASK FIRST" in init and "use_defaults=true" in init and "call text_to_speech directly" in init
   tool = next(t for t in rpc(client, token[0], "tools/list").json()["result"]["tools"] if t["name"] == "text_to_speech")
   assert "needs_input" in tool["description"] and "use_defaults" in tool["inputSchema"]["properties"]
+
+
+def test_instructions_say_an_earlier_choice_does_not_carry_over(client, token):
+  init = rpc(client, token[0], "initialize", {"protocolVersion": "2025-06-18"}).json()["result"]["instructions"]
+  assert "IN THIS REQUEST" in init and "earlier message" in init and "same voice as last time" in init
+  tool = next(t for t in rpc(client, token[0], "tools/list").json()["result"]["tools"] if t["name"] == "text_to_speech")
+  assert "IN THIS REQUEST" in tool["description"] and "do not pass language, gender or voice_id" in tool["description"]
