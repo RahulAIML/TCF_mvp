@@ -271,7 +271,7 @@ def test_include_audio_embeds_small_files_only(client, token, fake_tts):
   old = m.EMBED_AUDIO_MAX_BYTES
   m.EMBED_AUDIO_MAX_BYTES = 10
   try:
-    big = call(client, token[0], "text_to_speech", {"text": "Hi", "include_audio": True})
+    big = call(client, token[0], "text_to_speech", {"text": "Hi", "language": "en", "include_audio": True})
     assert [c["type"] for c in big["content"]] == ["text", "resource_link"]
     assert "too large to embed" in big["structuredContent"]["note"]
   finally:
@@ -287,11 +287,11 @@ def test_bad_input_is_a_readable_tool_error_and_never_calls_the_provider(client,
   assert "text is required" in err({})
   assert "text is required" in err({"text": "   "})
   assert "text is required" in err({"text": 123})
-  assert "maximum is 10000" in err({"text": "x" * 10001})
+  assert "maximum is 10000" in err({"text": "x" * 10001, "language": "en"})
   assert "Unsupported language" in err({"text": "Hi", "language": "de"})
   assert "es-ES-female-1" in err({"text": "Hi", "language": "es", "voice_id": "fr-FR-male-1"})
   assert "Unknown voice" in err({"text": "Hi", "voice_id": "robot"})
-  assert "male" in err({"text": "Hi", "gender": "robot"})
+  assert "male" in err({"text": "Hi", "language": "en", "gender": "robot"})
   assert fake_tts == []
 
 
@@ -299,14 +299,14 @@ def test_provider_failure_is_a_clean_message_without_internals(client, token, mo
   def boom(text, voice_id):
     raise RuntimeError("secret api key sk-123 rejected by upstream")
   monkeypatch.setattr(tts_service, "synthesize", boom)
-  res = call(client, token[0], "text_to_speech", {"text": "Hello"})
+  res = call(client, token[0], "text_to_speech", {"text": "Hello", "language": "en"})
   assert res["isError"] is True
   assert "could not be generated" in res["content"][0]["text"] and "sk-123" not in res["content"][0]["text"]
 
 
 def test_generation_is_rate_limited_separately(client, token, fake_tts, monkeypatch):
   monkeypatch.setattr(mcp_server, "GENERATIONS_PER_MIN", 2)
-  texts = [call(client, token[0], "text_to_speech", {"text": f"n{i}"}) for i in range(3)]
+  texts = [call(client, token[0], "text_to_speech", {"text": f"n{i}", "language": "en"}) for i in range(3)]
   assert [t["isError"] for t in texts] == [False, False, True]
   assert "at most 2 per minute" in texts[2]["content"][0]["text"]
   assert len(fake_tts) == 2
@@ -345,3 +345,75 @@ def test_the_existing_voices_endpoint_still_works_and_can_filter_by_language(cli
   assert len(allv) == 16
   assert {v["language"] for v in client.get("/api/tts/voices?language=pt").json()} == {"pt"}
   assert [l["code"] for l in client.get("/api/tts/languages").json()] == ["fr", "en", "es", "pt"]
+
+
+# ----------------------------------- ask first, generate directly when told -----------------------------------
+
+def _asked(res):
+  assert res["isError"] is False
+  assert res["structuredContent"]["needs_input"] is True
+  return res["structuredContent"]
+
+
+def test_nothing_specified_asks_instead_of_guessing(client, token, fake_tts):
+  res = call(client, token[0], "text_to_speech", {"text": "Bonjour tout le monde"})
+  data = _asked(res)
+  assert fake_tts == []  # nothing generated, nothing spent
+  assert [c["type"] for c in res["content"]] == ["text"]
+  assert "ASK THE PERSON" in res["content"][0]["text"]
+  assert [l["code"] for l in data["languages"]] == ["fr", "en", "es", "pt"]
+  assert len(data["voices"]) == 16 and len(data["ask"]) == 2
+  assert "use_defaults" in data["then"]
+
+
+def test_the_question_suggests_the_language_the_text_looks_like(client, token, fake_tts):
+  data = _asked(call(client, token[0], "text_to_speech", {"text": "Hola, quiero una mesa para dos personas en el restaurante"}))
+  assert data["suggested_language"] == "es"
+  assert _asked(call(client, token[0], "text_to_speech", {"text": "ok"}))["suggested_language"] is None
+
+
+@pytest.mark.parametrize("args,voice", [
+  ({"language": "es"}, "es-ES-male-1"),                                  # a language alone is enough
+  ({"language": "en", "gender": "female"}, "en-US-female-1"),
+  ({"voice_id": "pt-BR-female-2"}, "pt-BR-female-2"),                    # a voice alone is enough
+  ({"gender": "female", "voice_id": "fr-FR-female-1"}, "fr-FR-female-1"),
+])
+def test_anything_specified_generates_directly(client, token, fake_tts, args, voice):
+  res = call(client, token[0], "text_to_speech", {"text": "Salut", **args})
+  assert res["isError"] is False and "needs_input" not in res["structuredContent"]
+  assert fake_tts[-1][1] == voice
+
+
+def test_a_gender_alone_uses_the_language_of_the_text(client, token, fake_tts):
+  res = call(client, token[0], "text_to_speech", {"text": "Hola, quiero una mesa para dos personas en el restaurante", "gender": "female"})
+  assert res["structuredContent"]["voice_id"] == "es-ES-female-1"
+  res = call(client, token[0], "text_to_speech", {"text": "Olá, eu gostaria de uma mesa para duas pessoas no restaurante", "gender": "male"})
+  assert res["structuredContent"]["voice_id"] == "pt-BR-male-1"
+
+
+def test_a_gender_alone_with_unclear_text_asks_for_the_language(client, token, fake_tts):
+  data = _asked(call(client, token[0], "text_to_speech", {"text": "ok", "gender": "male"}))
+  assert data["suggested_language"] is None
+  assert fake_tts == []
+
+
+def test_use_defaults_generates_without_asking_and_only_when_true(client, token, fake_tts):
+  res = call(client, token[0], "text_to_speech", {"text": "Bonjour", "use_defaults": True})
+  assert res["structuredContent"]["voice_id"] == "fr-FR-male-1"
+  _asked(call(client, token[0], "text_to_speech", {"text": "Bonjour", "use_defaults": False}))
+  _asked(call(client, token[0], "text_to_speech", {"text": "Bonjour", "use_defaults": "true"}))  # only a real boolean counts
+  assert len(fake_tts) == 1
+
+
+def test_asking_costs_nothing_against_the_generation_limit(client, token, fake_tts, monkeypatch):
+  monkeypatch.setattr(mcp_server, "GENERATIONS_PER_MIN", 1)
+  for _ in range(4):
+    _asked(call(client, token[0], "text_to_speech", {"text": "Bonjour"}))
+  assert call(client, token[0], "text_to_speech", {"text": "Bonjour", "language": "fr"})["isError"] is False
+
+
+def test_the_server_instructions_and_tool_description_tell_the_agent_to_ask(client, token):
+  init = rpc(client, token[0], "initialize", {"protocolVersion": "2025-06-18"}).json()["result"]["instructions"]
+  assert "ASK FIRST" in init and "use_defaults=true" in init and "call text_to_speech directly" in init
+  tool = next(t for t in rpc(client, token[0], "tools/list").json()["result"]["tools"] if t["name"] == "text_to_speech")
+  assert "needs_input" in tool["description"] and "use_defaults" in tool["inputSchema"]["properties"]
