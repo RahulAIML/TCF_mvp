@@ -57,10 +57,16 @@ immediately. Up to 10 active tokens per user.
 - Each language has four voices: 2 male, 2 female (`<locale>-<gender>-<n>`, e.g.
   `fr-FR-male-1`, `en-US-female-2`, `es-ES-male-1`, `pt-BR-female-1`). The existing
   French ids are unchanged.
-- `text_to_speech` picks the voice like this: `voice_id` alone uses that voice (and
-  its language); `language` alone uses that language's first voice (the requested
-  `gender` first); both must agree, otherwise the reply says which voices exist for
-  that language; neither means French.
+- **Grok asks when you have not said, and generates straight away when you have.** If the
+  request names nothing about language or voice, `text_to_speech` does not generate: it
+  returns `needs_input: true` with the languages, the voices and the questions to ask
+  (it also says which language the text looks like), and Grok asks you. If you already said
+  a language, "male"/"female" or a voice, it generates directly with no questions. If you say
+  you do not mind, Grok calls it with `use_defaults: true` (French, first male voice).
+- Picking the voice: `voice_id` alone uses that voice (and its language); `language` alone
+  uses that language's first voice (the requested `gender` first); `gender` alone uses the
+  language of the text when it is clear, otherwise it asks for the language; `language` and
+  `voice_id` together must agree, otherwise the reply lists the voices of that language.
 - Both providers (ElevenLabs `eleven_multilingual_v2`, Gemini TTS) speak the language
   of the text, so write the text in the language you ask for.
 
@@ -134,7 +140,7 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-72 checks: the protocol (initialize, version negotiation, batches, notifications, bad
+83 checks: the protocol (initialize, version negotiation, batches, notifications, bad
 input, size limit), auth (401 and the Bearer challenge, revocation, per-token rate
 limit), the token API (shown once, only the hash stored, ownership, limits), each
 language and voice rule, the signed download (tampered, expired, missing file,
