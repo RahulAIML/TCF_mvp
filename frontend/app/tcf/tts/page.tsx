@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Mic, MicOff, Loader2, Volume2, Download, RotateCcw,
-  CheckCircle2, AlertCircle, Type, AudioLines, Trash2, History,
+  CheckCircle2, AlertCircle, Type, AudioLines, Trash2, History, Languages,
 } from "lucide-react";
 import TcfAppShell from "@/components/TcfAppShell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,6 +26,15 @@ const MAX_WORDS = 1500;
 const MAX_RECORD_SECS = 60;
 const HISTORY_KEY = "tts_audio_history_guest";
 const MAX_HISTORY = 20;
+
+// The four languages text can be spoken in. Names are shown in the language itself.
+const LANGUAGES = [
+  { code: "fr", label: "Français", placeholder: "Entrez votre texte en français…" },
+  { code: "en", label: "English", placeholder: "Enter your text in English…" },
+  { code: "es", label: "Español", placeholder: "Escribe tu texto en español…" },
+  { code: "pt", label: "Português", placeholder: "Digite seu texto em português…" },
+] as const;
+type LanguageCode = (typeof LANGUAGES)[number]["code"];
 
 const wordCount = (s: string) => s.trim() === "" ? 0 : s.trim().split(/\s+/).length;
 const fmt = (s: number) =>
@@ -107,6 +116,7 @@ function HistoryAudioPlayer({ src }: { src: string }) {
 
 export default function TtsPage() {
   const [voices, setVoices] = useState<TtsVoice[]>([]);
+  const [language, setLanguage] = useState<LanguageCode>("fr");
   const [selectedVoice, setSelectedVoice] = useState("fr-FR-male-1");
   const [inputMode, setInputMode] = useState<InputMode>("type");
   const [text, setText] = useState("");
@@ -139,7 +149,11 @@ export default function TtsPage() {
 
   useEffect(() => {
     getTtsVoices()
-      .then((v) => { setVoices(v); if (v.length) setSelectedVoice(v[0].id); })
+      .then((v) => {
+        setVoices(v);
+        const first = v.find((x) => x.language === "fr") ?? v[0];
+        if (first) setSelectedVoice(first.id);
+      })
       .catch(() => {});
 
     if (getAuthToken()) {
@@ -148,6 +162,16 @@ export default function TtsPage() {
       setHistory(loadGuestHistory());
     }
   }, []);
+
+  const languageVoices = voices.filter((v) => v.language === language);
+  const currentLanguage = LANGUAGES.find((l) => l.code === language) ?? LANGUAGES[0];
+
+  // Changing the language switches to that language's first voice (a voice speaks one language here).
+  const handleLanguageChange = useCallback((code: LanguageCode) => {
+    setLanguage(code);
+    const first = voices.find((v) => v.language === code);
+    if (first) setSelectedVoice(first.id);
+  }, [voices]);
 
   // --- Recording ---
   const stopRecording = useCallback(() => {
@@ -296,10 +320,33 @@ export default function TtsPage() {
   return (
     <TcfAppShell
       title="Text-to-Speech"
-      subtitle="Type or record French text — generate audio and evaluate your pronunciation"
+      subtitle="Type or record text in French, English, Spanish or Portuguese — generate an MP3 and evaluate your pronunciation"
       backHref="/tcf"
     >
       <div className="max-w-2xl space-y-5">
+
+        {/* Language selector */}
+        <Card className="border-slate-200 shadow-sm">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
+              <Languages className="h-4 w-4 text-indigo-500" />
+              Language
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Language">
+              {LANGUAGES.map((l) => (
+                <button key={l.code} onClick={() => handleLanguageChange(l.code)}
+                  aria-pressed={language === l.code}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
+                    language === l.code ? "bg-indigo-600 text-white shadow-sm" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  }`}>
+                  {l.label}
+                </button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Voice selector */}
         <Card className="border-slate-200 shadow-sm">
@@ -311,7 +358,7 @@ export default function TtsPage() {
           </CardHeader>
           <CardContent className="pt-0">
             <div className="flex flex-wrap gap-2">
-              {voices.map((v) => (
+              {languageVoices.map((v) => (
                 <button key={v.id} onClick={() => setSelectedVoice(v.id)}
                   className={`px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
                     selectedVoice === v.id ? "bg-indigo-600 text-white shadow-sm" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
@@ -402,7 +449,7 @@ export default function TtsPage() {
                   const ws = val.trim() === "" ? [] : val.trim().split(/\s+/);
                   setText(ws.length > MAX_WORDS ? ws.slice(0, MAX_WORDS).join(" ") : val);
                 }}
-                placeholder={inputMode === "type" ? "Entrez votre texte en français…" : "Transcript will appear here after recording…"}
+                placeholder={inputMode === "type" ? currentLanguage.placeholder : "Transcript will appear here after recording…"}
                 rows={5}
                 className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
               />

@@ -47,7 +47,8 @@ import type {
   TcfWritingSubmitResponse
 } from "@/types/tcf-writing";
 import type { AuthResponse, LoginRequest, SignupRequest } from "@/types/user";
-import type { TtsGenerateRequest, TtsJobResponse, TtsHistoryItem, TtsVoice } from "@/types/tts";
+import type { TtsGenerateRequest, TtsJobResponse, TtsHistoryItem, TtsLanguage, TtsVoice } from "@/types/tts";
+import type { McpCreatedToken, McpInfo, McpTokenRecord } from "@/types/mcp";
 import { getAuthToken } from "@/lib/auth";
 import { emitAuthFailure } from "@/lib/auth-events";
 
@@ -405,8 +406,18 @@ export async function evaluatePronunciationAudio(
   return parseResponse<PronunciationEvalResult>(res);
 }
 
-export async function getTtsVoices(): Promise<TtsVoice[]> {
-  const res = await fetch(`${API_BASE_URL}/api/tts/voices`, {
+export async function getTtsLanguages(): Promise<TtsLanguage[]> {
+  const res = await fetch(`${API_BASE_URL}/api/tts/languages`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+    cache: "no-store"
+  });
+  return parseResponse<TtsLanguage[]>(res);
+}
+
+export async function getTtsVoices(language?: string): Promise<TtsVoice[]> {
+  const query = language ? `?language=${encodeURIComponent(language)}` : "";
+  const res = await fetch(`${API_BASE_URL}/api/tts/voices${query}`, {
     method: "GET",
     headers: { ...authHeaders() },
     cache: "no-store"
@@ -452,4 +463,46 @@ export async function pollTtsJob(jobId: string): Promise<TtsJobResponse> {
     cache: "no-store"
   });
   return parseResponse<TtsJobResponse>(res);
+}
+
+// ── MCP (Connect Grok) ──────────────────────────────────────────────────────
+
+async function mcpError(res: Response, fallback: string): Promise<never> {
+  let message = fallback;
+  try {
+    const body = await res.json();
+    if (typeof body?.detail === "string") message = body.detail;
+  } catch {}
+  throw new Error(message);
+}
+
+export async function getMcpInfo(): Promise<McpInfo> {
+  const res = await fetch(`${API_BASE_URL}/api/mcp/info`, { headers: { ...authHeaders() }, cache: "no-store" });
+  return parseResponse<McpInfo>(res);
+}
+
+export async function listMcpTokens(): Promise<McpTokenRecord[]> {
+  const res = await fetch(`${API_BASE_URL}/api/mcp/tokens`, { headers: { ...authHeaders() }, cache: "no-store" });
+  const body = await parseResponse<{ tokens: McpTokenRecord[] }>(res);
+  return body.tokens;
+}
+
+export async function createMcpToken(name: string): Promise<McpCreatedToken> {
+  const res = await fetch(`${API_BASE_URL}/api/mcp/tokens`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ name }),
+    cache: "no-store"
+  });
+  if (res.status === 409) return mcpError(res, "You have too many active tokens. Revoke one first.");
+  return parseResponse<McpCreatedToken>(res);
+}
+
+export async function revokeMcpToken(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/api/mcp/tokens/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { ...authHeaders() },
+    cache: "no-store"
+  });
+  if (!res.ok && res.status !== 204) return mcpError(res, `Revoke failed: ${res.status}`);
 }

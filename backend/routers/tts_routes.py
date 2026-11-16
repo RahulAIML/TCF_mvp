@@ -9,7 +9,7 @@ from auth import get_current_user, get_optional_user
 from database import SessionLocal, get_db
 from models import TtsAudioHistory, User
 from schemas import TtsGenerateRequest, TtsHistoryItem, TtsVoice
-from tts_service import generate_tts_audio, get_voice, list_active_voices
+from tts_service import generate_tts_audio, get_voice, list_active_voices, list_languages
 
 logger = logging.getLogger("tts_routes")
 router = APIRouter(prefix="/api/tts", tags=["tts"])
@@ -33,8 +33,15 @@ def _evict() -> None:
 # ---------------------------------------------------------------------------
 
 @router.get("/voices", response_model=list[TtsVoice])
-async def get_voices(_user: User = Depends(get_optional_user)) -> list[TtsVoice]:
-    return list_active_voices()
+async def get_voices(language: str | None = None, _user: User = Depends(get_optional_user)) -> list[TtsVoice]:
+    """Every voice, or only those of one language (fr, en, es, pt)."""
+    return list_active_voices(language)
+
+
+@router.get("/languages")
+async def get_languages(_user: User = Depends(get_optional_user)) -> list[dict]:
+    """The languages text can be spoken in, with how many voices each has."""
+    return list_languages()
 
 
 @router.post("/generate")
