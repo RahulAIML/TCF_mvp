@@ -30,3 +30,10 @@ export interface TtsJobResponse {
   audio_url: string | null;
   error: string | null;
 }
+
+export interface TtsLanguage {
+  code: "fr" | "en" | "es" | "pt";
+  locale: string;
+  name: string;
+  voices: number;
+}
