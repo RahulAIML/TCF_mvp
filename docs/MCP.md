@@ -125,6 +125,27 @@ to MP3 with `lameenc` (before this change it was saved as a `.wav` that the page
 called an MP3). If `lameenc` is missing the file is saved as WAV and the reply says
 `audio/wav` instead of pretending.
 
+## Noise at the start and end of the audio
+
+Gemini's raw audio can carry a short loud burst of noise right after the last word and a click at the very start.
+The MP3 encoder is not the cause (a clean tone encodes with no burst at either end), so the fix is applied to the raw
+audio before it is encoded (`backend/audio_clean.py`, called from `tts_service.py`). It removes a run of up to 400 ms of
+frames at either end that are all **loud, noise-like and unvoiced** (speech is voiced, and fricatives such as "s" are
+much quieter than vowels, so real words are kept), replaces the silence around the speech with a short true-silence
+pad, and fades the start (12 ms) and the end (60 ms). It never fails a generation: if anything goes wrong the original
+audio is used. The server logs what it trimmed (`Audio edges cleaned: ...`). Set `TTS_CLEAN_AUDIO=0` to turn it off.
+
+To check a real file (for example one that still sounds wrong) and hear what the server now produces:
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+python scripts/check_audio_ends.py path/to/file.mp3 cleaned.mp3
+```
+
+It prints the level, pitch and noisiness of every 10 ms at both ends, marks the frames it treats as a noise burst,
+and writes the cleaned copy. ElevenLabs audio (the fallback provider) is already an MP3 and is not processed.
+
 ## Configuration
 
 | Variable | Meaning |
@@ -132,6 +153,7 @@ called an MP3). If `lameenc` is missing the file is saved as WAV and the reply s
 | `PUBLIC_BASE_URL` | The public address of this backend, e.g. `https://tcf-mvp.onrender.com`. Used to build download links and the address shown on Connect Grok. Without it the proxy headers are used. |
 | `MCP_AUDIO_SECRET` | Optional key for download-link signatures (defaults to `JWT_SECRET`). Changing it invalidates links already issued. |
 | `GEMINI_API_KEY`, `ELEVENLABS_API_KEY` | The voice providers (as before). |
+| `TTS_CLEAN_AUDIO` | `0` turns off the start/end noise cleaning (on by default). |
 | `ELEVENLABS_VOICE_ID_TTS_M1/M2/F1/F2` | Override the ElevenLabs voice behind each of the four voices (as before; now used for all four languages). |
 
 ## Tests
@@ -142,7 +164,7 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-84 checks: the protocol (initialize, version negotiation, batches, notifications, bad
+102 checks: the protocol (initialize, version negotiation, batches, notifications, bad
 input, size limit), auth (401 and the Bearer challenge, revocation, per-token rate
 limit), the token API (shown once, only the hash stored, ownership, limits), each
 language and voice rule, the signed download (tampered, expired, missing file,
