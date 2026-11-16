@@ -61,7 +61,9 @@ immediately. Up to 10 active tokens per user.
   request names nothing about language or voice, `text_to_speech` does not generate: it
   returns `needs_input: true` with the languages, the voices and the questions to ask
   (it also says which language the text looks like), and Grok asks you. If you already said
-  a language, "male"/"female" or a voice, it generates directly with no questions. If you say
+  a language, "male"/"female" or a voice in that request, it generates directly with no questions.
+  A choice from an earlier message does not carry over: Grok is told to ask again for each new
+  request that does not say it, and not to reuse "the same voice as last time" on its own. If you say
   you do not mind, Grok calls it with `use_defaults: true` (French, first male voice).
 - Picking the voice: `voice_id` alone uses that voice (and its language); `language` alone
   uses that language's first voice (the requested `gender` first); `gender` alone uses the
@@ -140,7 +142,7 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-83 checks: the protocol (initialize, version negotiation, batches, notifications, bad
+84 checks: the protocol (initialize, version negotiation, batches, notifications, bad
 input, size limit), auth (401 and the Bearer challenge, revocation, per-token rate
 limit), the token API (shown once, only the hash stored, ownership, limits), each
 language and voice rule, the signed download (tampered, expired, missing file,
