@@ -15,6 +15,8 @@ from typing import TypedDict
 import requests
 from dotenv import load_dotenv
 
+import audio_clean
+
 load_dotenv()
 
 logger = logging.getLogger("tts_service")
@@ -256,6 +258,26 @@ def _generate_via_elevenlabs(text: str, voice: VoiceConfig) -> AudioResult:
     return {"data": resp.content, "extension": "mp3", "mime_type": "audio/mpeg", "provider": "elevenlabs"}
 
 
+def _clean_edges(pcm_bytes: bytes, voice_id: str) -> bytes:
+    """
+    Remove the loud noise burst Gemini can leave right after the last word, and the click at the start, then fade
+    both ends (audio_clean.py). Never fails the generation: on any problem the original audio is used.
+    """
+    if not audio_clean.enabled():
+        return pcm_bytes
+    try:
+        cleaned, report = audio_clean.clean_pcm(pcm_bytes, GEMINI_SAMPLE_RATE)
+        if report.changed:
+            logger.info(
+                "Audio edges cleaned: voice=%s head -%.0f ms (burst %.0f ms), tail -%.0f ms (burst %.0f ms)",
+                voice_id, report.trimmed_head_ms, report.burst_head_ms, report.trimmed_tail_ms, report.burst_tail_ms,
+            )
+        return cleaned
+    except Exception as exc:
+        logger.warning("Audio cleaning skipped (%s); using the original audio.", exc)
+        return pcm_bytes
+
+
 def _generate_via_gemini(text: str, voice: VoiceConfig) -> AudioResult:
     if not _GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY not configured.")
@@ -282,6 +304,7 @@ def _generate_via_gemini(text: str, voice: VoiceConfig) -> AudioResult:
         ),
     )
     pcm_bytes = response.candidates[0].content.parts[0].inline_data.data
+    pcm_bytes = _clean_edges(pcm_bytes, voice["id"])
     mp3 = _pcm_to_mp3(pcm_bytes)
     if mp3:
         return {"data": mp3, "extension": "mp3", "mime_type": "audio/mpeg", "provider": "gemini"}
