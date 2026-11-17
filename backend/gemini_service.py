@@ -13,7 +13,8 @@ import wave
 from typing import Any, Dict, List, Optional
 
 import requests as _requests
-import google.generativeai as genai
+from google import genai as genai_client
+from google.genai import types
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -21,9 +22,7 @@ load_dotenv()
 logger = logging.getLogger("gemini_service")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-
-genai.configure(api_key=GEMINI_API_KEY)
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 
 class GeminiService:
@@ -45,7 +44,7 @@ class GeminiService:
             with open(audio_path, "rb") as audio_file:
                 audio_data = audio_file.read()
 
-            model = genai.GenerativeModel(GEMINI_MODEL)
+            client = genai_client.Client(api_key=GEMINI_API_KEY)
 
             prompt = (
                 f"Transcribe the following {language.upper()} speech accurately and completely. "
@@ -55,13 +54,11 @@ class GeminiService:
             safe_mime = mime_type if mime_type in (
                 "audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav"
             ) else "audio/webm"
-            response = model.generate_content(
-                [
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=[
                     prompt,
-                    {
-                        "mime_type": safe_mime,
-                        "data": audio_data,
-                    },
+                    types.Part.from_bytes(data=audio_data, mime_type=safe_mime),
                 ]
             )
 
@@ -99,7 +96,7 @@ class GeminiService:
             with open(audio_path, "rb") as audio_file:
                 audio_data = audio_file.read()
 
-            model = genai.GenerativeModel(GEMINI_MODEL)
+            client = genai_client.Client(api_key=GEMINI_API_KEY)
 
             # Transcribe user's speech (use actual mime type from upload)
             transcribe_prompt = (
@@ -110,13 +107,11 @@ class GeminiService:
                 "audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav"
             ) else "audio/webm"
 
-            transcribe_response = model.generate_content(
-                [
+            transcribe_response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=[
                     transcribe_prompt,
-                    {
-                        "mime_type": safe_mime,
-                        "data": audio_data,
-                    },
+                    types.Part.from_bytes(data=audio_data, mime_type=safe_mime),
                 ]
             )
 
@@ -143,7 +138,7 @@ Rules:
 - Give 0 if completely wrong
 - Give 10 only if perfect match"""
 
-            eval_response = model.generate_content(eval_prompt)
+            eval_response = client.models.generate_content(model=GEMINI_MODEL, contents=eval_prompt)
 
             # Parse JSON response
             response_text = eval_response.text.strip()
@@ -205,7 +200,7 @@ Rules:
                 role = "Examiner" if msg.get("role") == "examiner" else "User"
                 context_str += f"{role}: {msg.get('content', '')}\n"
 
-            model = genai.GenerativeModel(GEMINI_MODEL)
+            client = genai_client.Client(api_key=GEMINI_API_KEY)
 
             eval_prompt = f"""You are a TCF speaking evaluator. Assess this response:
 
@@ -238,7 +233,7 @@ Rules:
 - Irrelevant answer = low relevance
 - Return ONLY JSON"""
 
-            response = model.generate_content(eval_prompt)
+            response = client.models.generate_content(model=GEMINI_MODEL, contents=eval_prompt)
             response_text = response.text.strip()
 
             # Handle markdown code blocks
@@ -286,7 +281,7 @@ Rules:
             List of vocab items: [{"word": str, "meaning": str, "example": str, "phonetic": str}]
         """
         try:
-            model = genai.GenerativeModel(GEMINI_MODEL)
+            client = genai_client.Client(api_key=GEMINI_API_KEY)
 
             topic_str = f" on the topic of '{topic}'" if topic else ""
             seed = random.randint(1000, 9999)
@@ -312,7 +307,7 @@ Rules:
 - Vary your selection — avoid common textbook words like bonjour, merci, etc.
 - Return ONLY the JSON array, no markdown, no extra text"""
 
-            response = model.generate_content(vocab_prompt)
+            response = client.models.generate_content(model=GEMINI_MODEL, contents=vocab_prompt)
             response_text = response.text.strip()
 
             # Handle markdown code blocks
@@ -344,7 +339,7 @@ Rules:
             Assistant response
         """
         try:
-            model = genai.GenerativeModel(GEMINI_MODEL)
+            client = genai_client.Client(api_key=GEMINI_API_KEY)
 
             system_prompt = """You are an expert French language tutor specialized in TCF and TEF exams.
 
@@ -363,8 +358,9 @@ Never start with:
 
 Always provide direct answers."""
 
-            response = model.generate_content(
-                f"{system_prompt}\n\nUser question: {user_message}"
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=f"{system_prompt}\n\nUser question: {user_message}"
             )
 
             return response.text.strip()

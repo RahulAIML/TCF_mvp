@@ -20,7 +20,6 @@ import wave
 from collections import deque
 from typing import Any, Dict, Tuple
 
-import google.generativeai as genai
 import requests
 from dotenv import load_dotenv
 from google import genai as genai_client
@@ -37,7 +36,7 @@ MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID")
-GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-preview-tts")
+GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts")
 ELEVENLABS_OUTPUT_FORMAT = os.getenv("ELEVENLABS_OUTPUT_FORMAT", "mp3_22050_32")
 ELEVENLABS_OPTIMIZE_LATENCY = int(os.getenv("ELEVENLABS_OPTIMIZE_LATENCY", "4"))
 AUDIO_STORAGE_PATH = os.getenv(
@@ -405,7 +404,7 @@ def _generate_gemini_tts_audio(script: str, question_number: int, session_id: st
                 speech_config=types.SpeechConfig(
                     voice_config=types.VoiceConfig(
                         prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                            voice_name="Kore"
+                            voice_name=random.choice(["Kore", "Charon", "Fenrir", "Aoede", "Puck", "Leda"])
                         )
                     )
                 )
@@ -512,12 +511,12 @@ def _extract_json(text: str) -> Dict[str, Any]:
 
 def _generate_json(prompt: str, temperature: float = 0.7) -> Dict[str, Any]:
     _ensure_api_key()
-    genai.configure(api_key=API_KEY)
-    model = genai.GenerativeModel(MODEL_NAME)
+    client = genai_client.Client(api_key=API_KEY)
     try:
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt,
+            config=types.GenerateContentConfig(
                 temperature=temperature,
                 response_mime_type="application/json"
             )
@@ -531,14 +530,13 @@ def _generate_json(prompt: str, temperature: float = 0.7) -> Dict[str, Any]:
 
 def _generate_text(prompt: str, temperature: float = 0.4) -> str:
     _ensure_api_key()
-    genai.configure(api_key=API_KEY)
-    model = genai.GenerativeModel(MODEL_NAME)
+    client = genai_client.Client(api_key=API_KEY)
     try:
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt,
+            config=types.GenerateContentConfig(
                 temperature=temperature,
-                response_mime_type="text/plain"
             )
         )
     except Exception as error:
@@ -751,89 +749,216 @@ def generate_tcf_exam_question(
     ) from last_error
 
 
+# ── Listening format pools by CEFR band ─────────────────────────────────────
+
+_LISTENING_FORMATS = {
+    "C2": [
+        "un entretien entre un journaliste et un expert (deux voix distinctes)",
+        "un extrait de documentaire avec un narrateur",
+        "une discussion entre deux professionnels sur un sujet de société",
+    ],
+    "C1": [
+        "un reportage radio avec un journaliste et un témoin",
+        "un débat entre deux intervenants",
+        "un entretien professionnel approfondi",
+    ],
+    "B2": [
+        "une interview radio d'un professionnel",
+        "un reportage sur un sujet culturel ou social",
+        "une conversation téléphonique entre deux collègues",
+    ],
+    "B1": [
+        "un dialogue entre deux amis qui planifient quelque chose",
+        "un message sur répondeur téléphonique",
+        "une émission de radio courte sur la vie quotidienne",
+    ],
+    "A2": [
+        "un court dialogue entre deux personnes dans un lieu public",
+        "une annonce publique simple (gare, magasin, école)",
+        "un message vocal court laissé à un ami",
+    ],
+    "A1": [
+        "un échange très court entre deux personnes (bonjour, merci, au revoir)",
+        "une annonce d'une seule phrase simple",
+        "un message court de 10 à 15 mots",
+    ],
+}
+
+_LISTENING_SPECS = {
+    "C2": {
+        "word_count": "80 à 110 mots",
+        "complexity": (
+            "Vocabulaire avancé et nuancé, NATUREL (pas de jargon artificiel). "
+            "Registre formel soutenu. L'information-clé est implicite ou déduite du contexte. "
+            "Exemples de vocabulaire C2 NATUREL : 'exacerber', 'incontournable', 'pragmatique', "
+            "'contreproductif'. ÉVITER : néologismes académiques inventés, jargon incompréhensible."
+        ),
+        "answer_difficulty": "inférence ou implication non explicitée dans le texte",
+    },
+    "C1": {
+        "word_count": "65 à 90 mots",
+        "complexity": (
+            "Vocabulaire riche et varié, registre formel. "
+            "Arguments développés, quelques nuances implicites. "
+            "Exemples : 'engager', 'valoriser', 'préconiser', 'envisager', 'résoudre'."
+        ),
+        "answer_difficulty": "compréhension d'un point de vue ou d'une argumentation",
+    },
+    "B2": {
+        "word_count": "50 à 70 mots",
+        "complexity": (
+            "Vocabulaire courant et varié, quelques mots moins fréquents. "
+            "Registre neutre à formel. Information directe mais avec quelques détails."
+        ),
+        "answer_difficulty": "compréhension d'un fait précis ou d'une opinion exprimée",
+    },
+    "B1": {
+        "word_count": "35 à 55 mots",
+        "complexity": (
+            "Vocabulaire courant, phrases simples et composées. "
+            "Registre neutre ou légèrement informel. Contenu concret de la vie quotidienne."
+        ),
+        "answer_difficulty": "compréhension d'une information factuelle directe",
+    },
+    "A2": {
+        "word_count": "20 à 35 mots",
+        "complexity": (
+            "Vocabulaire très simple et fréquent. Phrases courtes. "
+            "Sujet concret : heure, lieu, prix, activité, personne. "
+            "EXEMPLES de mots A2 : fermer, ouvrir, venir, aller, aujourd'hui, demain, euro, heure."
+        ),
+        "answer_difficulty": "compréhension littérale d'une information très simple",
+    },
+    "A1": {
+        "word_count": "10 à 20 mots MAXIMUM",
+        "complexity": (
+            "Vocabulaire de base uniquement : bonjour, merci, oui, non, s'il vous plaît, "
+            "aujourd'hui, demain, fermé, ouvert, ici, là. "
+            "UNE seule idée par échange. Phrases de 3 à 7 mots."
+        ),
+        "answer_difficulty": "compréhension immédiate d'un seul mot ou d'une seule idée",
+    },
+}
+
+
+def _infer_cefr_from_question_number(question_number: int) -> str:
+    if question_number <= 10:
+        return "C2"
+    elif question_number <= 20:
+        return "C1"
+    elif question_number <= 30:
+        return "B2"
+    else:
+        return "A2"
+
+
+def _shuffle_answer_options(normalized: dict) -> dict:
+    """Randomly reassign which position (A/B/C/D) holds the correct answer."""
+    letters = ["A", "B", "C", "D"]
+    options = normalized["options"][:]
+    correct_letter = normalized["correct_answer"]
+
+    correct_idx = letters.index(correct_letter)
+    correct_text = options[correct_idx].split(". ", 1)[-1] if ". " in options[correct_idx] else options[correct_idx]
+
+    texts = [opt.split(". ", 1)[-1] if ". " in opt else opt for opt in options]
+    random.shuffle(texts)
+
+    new_options = [f"{letters[i]}. {texts[i]}" for i in range(4)]
+    new_correct_idx = texts.index(correct_text)
+    new_correct_letter = letters[new_correct_idx]
+
+    normalized["options"] = new_options
+    normalized["correct_answer"] = new_correct_letter
+    return normalized
+
+
 def generate_tcf_listening_question(
     question_number: int,
     session_id: str | None = None,
-    defer_audio: bool = False
+    defer_audio: bool = False,
+    target_level: str | None = None,
 ) -> ListeningQuestionResponse:
     """
     Generate one TCF Canada listening question.
     39 questions, 35 minutes, progressive difficulty A1→C2.
-    Audio generation is delegated to the shared TTS helpers in ai_service.py.
+    target_level overrides CEFR inference from question_number (used in practice mode).
     """
-    # Determine CEFR band from question number (hard → easy, C2 first)
-    if question_number <= 10:
-        cefr = "C2"
-        style = "débat académique, extrait de documentaire complexe ou conférence spécialisée"
-        complexity = "vocabulaire très soutenu, argumentation dense, références culturelles implicites"
-    elif question_number <= 20:
-        cefr = "B2–C1"
-        style = "débat, interview journalistique ou émission de radio argumentative"
-        complexity = "vocabulaire soutenu, argumentation développée, registre formel"
-    elif question_number <= 30:
-        cefr = "B1–B2"
-        style = "reportage radio, entretien professionnel ou émission culturelle"
-        complexity = "vocabulaire varié, registres formel et informel"
+    if target_level and target_level.upper() in _LISTENING_SPECS:
+        cefr = target_level.upper()
     else:
-        cefr = "A2–B1"
-        style = "annonce simple, dialogue quotidien ou message court"
-        complexity = "vocabulaire courant, phrases simples et directes"
+        cefr = _infer_cefr_from_question_number(question_number)
+
+    spec = _LISTENING_SPECS[cefr]
+    formats = _LISTENING_FORMATS[cefr]
+    chosen_format = random.choice(formats)
 
     domain = _pick_domain()
     freshness_token = _freshness_token()
     place, context = _scenario_from_seed(freshness_token)
 
-    prompt = f"""Tu es un concepteur d'epreuves TCF Canada. Genere UNE question de comprehension orale en francais.
+    is_dialogue = any(kw in chosen_format for kw in [
+        "dialogue", "voix", "deux personnes", "journaliste et",
+        "intervenants", "collègues", "amis", "témoin"
+    ])
 
-Numero : {question_number} sur 39
-Niveau : {cefr}
-Style du document audio : {style}
-Complexite lexicale : {complexity}
-Domaine thematique : {domain}
+    if is_dialogue:
+        script_instruction = (
+            f"Le script doit être un dialogue entre DEUX personnes avec des répliques alternées. "
+            f"Format : 'Personne A : ...' et 'Personne B : ...'. "
+            f"Au total {spec['word_count']}."
+        )
+    else:
+        script_instruction = (
+            f"Le script doit être {chosen_format}. "
+            f"Au total {spec['word_count']}."
+        )
+
+    prompt = f"""Tu es un concepteur expert d'épreuves TCF Canada. Génère UNE question de compréhension orale.
+
+Numéro : {question_number} sur 39
+Niveau CEFR CIBLE : {cefr}
+Format audio : {chosen_format}
+Domaine : {domain}
 Lieu : {place}, contexte : {context}
-Jeton de fraicheur : {freshness_token} (ne pas inclure dans la sortie)
+Jeton de fraîcheur : {freshness_token} (ne pas inclure dans la sortie)
 
----
-EXEMPLE DE FORMAT ATTENDU (ne pas reproduire cet exemple) :
+CONSIGNES DE SCRIPT :
+{script_instruction}
+Complexité linguistique : {spec['complexity']}
+Type de réponse attendue : {spec['answer_difficulty']}
 
-Script :
-Bonsoir a tous, le musee sera ferme lundi pour des travaux.
+CONSIGNES GÉNÉRALES :
+- Le script doit sonner NATUREL et AUTHENTIQUE, comme une vraie conversation ou émission.
+- NE PAS utiliser de jargon académique inventé ou incompréhensible.
+- Les 4 options de réponse doivent être PLAUSIBLES (pas d'options évidemment fausses).
+- La bonne réponse doit être placée ALÉATOIREMENT parmi A, B, C ou D.
+- La bonne réponse doit être {spec['answer_difficulty']}.
+- Écrire des distracteurs crédibles qui testent vraiment la compréhension.
 
-Question :
-Pourquoi le musee sera-t-il ferme ?
-
-A) Pour une greve
-B) Pour des travaux
-C) Pour une exposition
-D) Pour un demenagement
-
-Bonne reponse : B
----
-
-Regles :
-- Script : 35 a 80 mots selon le niveau {cefr} (parle naturellement, 8-20 secondes).
-- Une seule question a choix multiples portant sur le contenu du script.
-- 4 options, une seule bonne reponse (A, B, C ou D).
-- Sortie : JSON valide uniquement.
+FORMAT DE SORTIE — JSON valide uniquement, PAS de Markdown :
 {{
   "script": "...",
   "question": "...",
   "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
-  "correct_answer": "A",
-  "explanation": "..."
+  "correct_answer": "A ou B ou C ou D",
+  "explanation": "...",
+  "format_type": "dialogue ou monologue ou announcement ou phone_message ou radio_clip"
 }}
 """
 
     last_error: Exception | None = None
     for _ in range(3):
         try:
-            payload = _generate_json(prompt, temperature=0.8)
+            payload = _generate_json(prompt, temperature=0.85)
             normalized = _normalize_listening_question(payload)
+            normalized["format_type"] = str(payload.get("format_type", "monologue")).strip()
+
+            normalized = _shuffle_answer_options(normalized)
 
             fp = _fingerprint(
                 normalized["script"] + normalized["question"] + "".join(normalized["options"])
             )
-            script_fp = _fingerprint(normalized["script"])
 
             session_cache = _tcf_listening_hashes_by_session.setdefault(
                 session_id or "__global__", deque(maxlen=80)
@@ -1892,21 +2017,18 @@ Regles STRICTES :
 
 def extract_text_from_image_bytes(raw: bytes, content_type: str) -> str:
     """Extract text from an image using Gemini vision."""
-    import base64
     _ensure_api_key()
-    genai.configure(api_key=API_KEY)
-    model = genai.GenerativeModel(MODEL_NAME)
-    b64 = base64.b64encode(raw).decode("utf-8")
+    client = genai_client.Client(api_key=API_KEY)
     mime = content_type or "image/jpeg"
     try:
-        response = model.generate_content(
-            [
-                {"mime_type": mime, "data": b64},
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=[
+                types.Part.from_bytes(data=raw, mime_type=mime),
                 "Extract all readable text from this image. Output plain text only."
             ],
-            generation_config=genai.types.GenerationConfig(
+            config=types.GenerateContentConfig(
                 temperature=0.1,
-                response_mime_type="text/plain"
             )
         )
         return str(response.text).strip() if getattr(response, "text", None) else ""

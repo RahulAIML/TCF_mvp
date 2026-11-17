@@ -69,16 +69,15 @@ class AIChatResponse(BaseModel):
 
 
 def _call_gemini(message: str) -> str:
-    import google.generativeai as genai
+    from google import genai as genai_client
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY not configured")
-    genai.configure(api_key=api_key)
-    model_name = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-    model = genai.GenerativeModel(model_name)
+    client = genai_client.Client(api_key=api_key)
+    model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
     full_prompt = f"{SYSTEM_PROMPT}\n\nUser: {message}"
     for attempt in range(3):
-        resp = model.generate_content(full_prompt)
+        resp = client.models.generate_content(model=model_name, contents=full_prompt)
         text = resp.text.strip()
         if not _contains_banned_phrase(text):
             return text
@@ -87,7 +86,7 @@ def _call_gemini(message: str) -> str:
             "\n\nIMPORTANT: Answer DIRECTLY. Do NOT say 'great question', "
             "'more context', or ask for clarification. Give the answer now."
         )
-    return text  # return last attempt even if it has a banned phrase
+    return text
 
 
 @router.post("/api/ai/chat", response_model=AIChatResponse)

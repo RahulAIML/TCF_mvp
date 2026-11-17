@@ -27,6 +27,10 @@ interface ListeningQuestionCardProps {
   showTranslation?: boolean;
   /** When true, Replay resets position AND immediately plays (practice mode). Default: false (exam mode — reset only). */
   replayPlays?: boolean;
+  /** When true, hide the Replay button (exam mode). */
+  hideReplay?: boolean;
+  /** When true, hide the speed controls (exam mode). */
+  hideSpeedControls?: boolean;
 }
 
 const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5];
@@ -49,6 +53,8 @@ export default function ListeningQuestionCard({
   isTranslating = false,
   showTranslation = false,
   replayPlays = false,
+  hideReplay = false,
+  hideSpeedControls = false,
 }: ListeningQuestionCardProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
@@ -290,14 +296,16 @@ export default function ListeningQuestionCard({
             </Button>
 
             {/* Replay from start */}
-            <Button
-              variant="outline"
-              onClick={() => void handleReplayClick()}
-              disabled={!audioSrc && !isPlaying}
-              title="Restart from beginning"
-            >
-              ↺ Replay
-            </Button>
+            {!hideReplay && (
+              <Button
+                variant="outline"
+                onClick={() => void handleReplayClick()}
+                disabled={!audioSrc && !isPlaying}
+                title="Restart from beginning"
+              >
+                ↺ Replay
+              </Button>
+            )}
 
             {/* Remaining plays badge */}
             {remainingPlays !== null && remainingPlays > 0 && (

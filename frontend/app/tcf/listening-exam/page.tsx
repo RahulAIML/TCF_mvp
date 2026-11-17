@@ -78,6 +78,7 @@ export default function ListeningExamPage() {
   const [practiceAnswer, setPracticeAnswer] = useState<AnswerOption | "">("");
   const [practiceCount, setPracticeCount] = useState(1);
   const [practicePlayCount, setPracticePlayCount] = useState(0);
+  const [practiceScore, setPracticeScore] = useState({ correct: 0, total: 0 });
 
   const [helperText, setHelperText] = useState("");
   const [helperResult, setHelperResult] = useState<ExplainTextResponse | null>(null);
@@ -90,21 +91,35 @@ export default function ListeningExamPage() {
   const [showTranslation, setShowTranslation] = useState(false);
   const [isTranslating, setIsTranslating] = useState(false);
 
+  const [pendingPracticeLevel, setPendingPracticeLevel] = useState<PracticeLevel | null>(null);
+
   const questionsRef = useRef<Record<number, ListeningQuestion>>({});
   const inFlightRef = useRef<Partial<Record<number, Promise<ListeningQuestion>>>>({});
   const examSessionIdRef = useRef<string | null>(null);
   const practiceSessionIdRef = useRef<string | null>(null);
+  const nextPracticeRef = useRef<Promise<ListeningQuestion> | null>(null);
 
   useEffect(() => {
     questionsRef.current = questions;
   }, [questions]);
 
   useEffect(() => {
-    if (mode === "practice") {
-      setShowTranscript(true);
-    } else {
-      setShowTranscript(false);
+    setShowTranscript(false);
+  }, [mode]);
+
+  // URL deep-link: read ?mode on mount, sync on mode change
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlMode = params.get("mode");
+    if (urlMode === "practice" || urlMode === "exam") {
+      setMode(urlMode);
     }
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("mode", mode);
+    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
   }, [mode]);
 
   useEffect(() => {
@@ -333,6 +348,21 @@ export default function ListeningExamPage() {
     });
   };
 
+  const fetchPracticeQuestion = (level: PracticeLevel, sessionId: string): Promise<ListeningQuestion> => {
+    const [minQ, maxQ] = PRACTICE_LEVEL_RANGES[level];
+    const qNum = Math.floor(Math.random() * (maxQ - minQ + 1)) + minQ;
+    return generateTcfListeningQuestion({
+      question_number: qNum,
+      session_id: sessionId,
+      defer_audio: false,
+      target_level: level,
+    }).then((question) => ({
+      ...question,
+      transcript: question.transcript ?? question.script,
+      user_answer: ""
+    }));
+  };
+
   const loadPracticeQuestion = async () => {
     const sessionId = practiceSessionIdRef.current
       ?? (typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -344,23 +374,20 @@ export default function ListeningExamPage() {
     setLoadingQuestion(true);
     setShowTranslation(false);
     try {
-      // Pick a random question number from the selected practice level range
-      const [minQ, maxQ] = PRACTICE_LEVEL_RANGES[practiceLevel];
-      const qNum = Math.floor(Math.random() * (maxQ - minQ + 1)) + minQ;
-      const question = await generateTcfListeningQuestion({
-        question_number: qNum,
-        session_id: sessionId ?? undefined,
-        defer_audio: false
-      });
-      const normalizedQuestion: ListeningQuestion = {
-        ...question,
-        transcript: question.transcript ?? question.script,
-        user_answer: ""
-      };
+      let normalizedQuestion: ListeningQuestion;
+      if (nextPracticeRef.current) {
+        const prefetched = nextPracticeRef.current;
+        nextPracticeRef.current = null;
+        normalizedQuestion = await prefetched;
+      } else {
+        normalizedQuestion = await fetchPracticeQuestion(practiceLevel, sessionId);
+      }
       setPracticeQuestion(normalizedQuestion);
       setPracticeAnswer("");
       setPracticePlayCount(0);
       setPracticeCount((prev) => prev + 1);
+      // start prefetching the next one immediately
+      nextPracticeRef.current = fetchPracticeQuestion(practiceLevel, sessionId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load practice question.");
     } finally {
@@ -373,7 +400,15 @@ export default function ListeningExamPage() {
   };
 
   const handlePracticeAnswer = (value: AnswerOption) => {
+    if (practiceAnswer) return;
     setPracticeAnswer(value);
+    setShowTranscript(true);
+    if (practiceQuestion) {
+      setPracticeScore((prev) => ({
+        correct: prev.correct + (value === practiceQuestion.correct_answer ? 1 : 0),
+        total: prev.total + 1,
+      }));
+    }
   };
 
   const handleExplainText = async () => {
@@ -448,7 +483,18 @@ export default function ListeningExamPage() {
                     {(Object.keys(PRACTICE_LEVEL_RANGES) as PracticeLevel[]).map((lvl) => (
                       <button
                         key={lvl}
-                        onClick={() => { setPracticeLevel(lvl); setPracticeQuestion(null); setPracticeCount(1); }}
+                        onClick={() => {
+                          if (lvl === practiceLevel) return;
+                          if (practiceQuestion && !practiceAnswer) {
+                            setPendingPracticeLevel(lvl);
+                          } else {
+                            setPracticeLevel(lvl);
+                            setPracticeQuestion(null);
+                            setPracticeCount(1);
+                            setPracticeScore({ correct: 0, total: 0 });
+                            nextPracticeRef.current = null;
+                          }
+                        }}
                         disabled={loadingQuestion}
                         className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
                           practiceLevel === lvl
@@ -459,6 +505,27 @@ export default function ListeningExamPage() {
                         {lvl}
                       </button>
                     ))}
+                    {pendingPracticeLevel && (
+                      <div className="w-full mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 flex items-center gap-3">
+                        <span>Switch to <strong>{pendingPracticeLevel}</strong>? Current question will be discarded.</span>
+                        <button
+                          className="font-semibold text-amber-900 underline"
+                          onClick={() => {
+                            const lvl = pendingPracticeLevel;
+                            setPendingPracticeLevel(null);
+                            setPracticeLevel(lvl);
+                            setPracticeQuestion(null);
+                            setPracticeCount(1);
+                            setPracticeScore({ correct: 0, total: 0 });
+                            nextPracticeRef.current = null;
+                          }}
+                        >Confirm</button>
+                        <button
+                          className="font-semibold text-amber-700 underline"
+                          onClick={() => setPendingPracticeLevel(null)}
+                        >Cancel</button>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -484,6 +551,11 @@ export default function ListeningExamPage() {
                     <span className="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700">
                       {practiceLevel}
                     </span>
+                    {practiceScore.total > 0 && (
+                      <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                        Score: {practiceScore.correct}/{practiceScore.total}
+                      </span>
+                    )}
                   </div>
                   <ListeningQuestionCard
                     question={practiceQuestion}
@@ -534,7 +606,7 @@ export default function ListeningExamPage() {
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Practice Tips</p>
                   <ul className="space-y-1.5 text-xs text-slate-500">
                     <li className="flex gap-2"><span className="text-slate-300">•</span>Audio plays once per question</li>
-                    <li className="flex gap-2"><span className="text-slate-300">•</span>Transcript is shown below the audio controls</li>
+                    <li className="flex gap-2"><span className="text-slate-300">•</span>Transcript revealed after you answer</li>
                     <li className="flex gap-2"><span className="text-slate-300">•</span>Use the translation toggle inside the transcript</li>
                     <li className="flex gap-2"><span className="text-slate-300">•</span>Select transcript text → Phrase Helper auto-fills</li>
                   </ul>
@@ -643,6 +715,8 @@ export default function ListeningExamPage() {
                       onTranslate={() => void handleTranslateTranscript(currentQuestionData.script, `exam-${currentQuestion}`)}
                       isTranslating={isTranslating}
                       showTranslation={showTranslation}
+                      hideReplay={true}
+                      hideSpeedControls={true}
                     />
                   )}
                   <div className="flex flex-wrap items-center gap-3">

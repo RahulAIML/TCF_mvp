@@ -90,10 +90,12 @@ async def health() -> dict:
     }
     if os.getenv("GEMINI_API_KEY"):
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-            model = genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-2.0-flash"))
-            resp = model.generate_content("Reply with just the word: ok")
+            from google import genai as genai_client
+            _client = genai_client.Client(api_key=os.getenv("GEMINI_API_KEY"))
+            resp = _client.models.generate_content(
+                model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+                contents="Reply with just the word: ok"
+            )
             result["gemini_chat_test"] = "ok" if resp.text else "empty response"
         except Exception as exc:
             result["gemini_chat_test"] = f"FAILED: {exc}"
