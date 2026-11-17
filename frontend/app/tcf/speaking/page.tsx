@@ -25,7 +25,6 @@ import type {
 } from "@/types/tcf-speaking";
 
 const EXAM_DURATION_SECONDS = 12 * 60;
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const MAX_EXCHANGES = 5;
 
 type ConvState = "idle" | "listening" | "processing" | "speaking";
@@ -182,8 +181,17 @@ export default function SpeakingPage() {
 
   const buildAudioUrl = (audioUrl?: string | null) => {
     if (!audioUrl) return null;
-    if (audioUrl.startsWith("http")) return audioUrl;
-    return `${API_BASE_URL}${audioUrl}`;
+    // Audio URLs from the backend are relative paths like /audio/...
+    // Always use the Next.js proxy (/audio/...) so the browser never
+    // makes a cross-origin request directly to the backend (CORS fix).
+    if (audioUrl.startsWith("/audio/")) return audioUrl;
+    // Strip the backend origin prefix and let the Next.js rewrite handle it.
+    try {
+      const parsed = new URL(audioUrl);
+      return parsed.pathname; // e.g. "/audio/file.mp3"
+    } catch {
+      return audioUrl; // already relative, return as-is
+    }
   };
 
   const handleEvaluate = useCallback(async () => {

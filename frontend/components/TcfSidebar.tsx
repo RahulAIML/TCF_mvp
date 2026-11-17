@@ -16,6 +16,7 @@ import {
   ChevronLeft,
   GraduationCap,
   AudioLines,
+  Plug,
 } from "lucide-react";
 
 const groups = [
@@ -40,6 +41,7 @@ const groups = [
       { href: "/tcf/pronunciation", label: "Pronunciation",   icon: Volume2,     color: "text-pink-400"    },
       { href: "/tcf/vocabulary",    label: "Vocabulary",     icon: BookMarked,  color: "text-cyan-400"    },
       { href: "/tcf/tts",           label: "Text-to-Speech", icon: AudioLines,  color: "text-indigo-400"  },
+      { href: "/tcf/grok",          label: "Connect Grok",   icon: Plug,        color: "text-orange-400"  },
     ],
   },
   {

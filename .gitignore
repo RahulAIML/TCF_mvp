@@ -41,3 +41,8 @@ npm-debug.log*
 
 # Audio (generated at runtime)
 backend/data/audio/
+
+# Agent / Tooling
+.claire/
+.claude/
+*.tsbuildinfo

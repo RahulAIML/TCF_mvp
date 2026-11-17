@@ -33,6 +33,11 @@ Full-stack platform for TCF Canada preparation. Includes reading, listening, wri
 ### Dashboard
 - Progress overview and recent performance
 
+### Text-to-Speech and Grok (MCP)
+- Type or record text in French, English, Spanish or Portuguese, pick the language and a voice, generate an MP3
+- **Connect Grok** page: create an access token and let Grok generate MP3 files through the platform's MCP server
+  (`POST /mcp`). Full guide: [docs/MCP.md](docs/MCP.md)
+
 ## Tech Stack
 
 - Frontend: Next.js 14, React, TypeScript, TailwindCSS

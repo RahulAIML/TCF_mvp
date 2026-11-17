@@ -12,13 +12,19 @@ interface ListeningResultsProps {
 }
 
 function ListeningResultCard({ item }: { item: ListeningResultItem }) {
-  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  // Note: audio URLs from backend are relative (/audio/...). Use them directly
+  // so they route through the Next.js proxy and avoid CORS errors.
   const [showTranscript, setShowTranscript] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioSrc = useMemo(() => {
     if (!item.audio_url) return "";
-    return item.audio_url.startsWith("http") ? item.audio_url : `${apiBase}${item.audio_url}`;
-  }, [item.audio_url, apiBase]);
+    // If the backend erroneously returns an absolute URL, strip origin so the
+    // Next.js /audio/* rewrite proxy handles it (CORS fix).
+    if (item.audio_url.startsWith("http")) {
+      try { return new URL(item.audio_url).pathname; } catch { return item.audio_url; }
+    }
+    return item.audio_url;
+  }, [item.audio_url]);
   const transcriptText = item.transcript ?? "";
 
   const handlePlay = async () => {

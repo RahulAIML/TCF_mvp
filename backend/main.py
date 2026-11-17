@@ -20,6 +20,7 @@ from routers.enhanced_speaking import router as enhanced_speaking_router
 from routers.pronunciation_routes import router as pronunciation_router
 from routers.ai_chat_routes import router as ai_chat_router
 from routers.tts_routes import router as tts_router
+from routers.mcp_routes import McpOpenCorsMiddleware, router as mcp_router
 
 load_dotenv()
 
@@ -51,6 +52,8 @@ app.add_middleware(
   allow_methods=["*"],
   allow_headers=["*"]
 )
+# Added after CORSMiddleware, so it runs first: /mcp is open to any origin (bearer token only, no cookies).
+app.add_middleware(McpOpenCorsMiddleware)
 
 app.include_router(dictionary_router)
 app.include_router(passage_router)
@@ -65,6 +68,7 @@ app.include_router(enhanced_speaking_router)
 app.include_router(pronunciation_router)
 app.include_router(ai_chat_router)
 app.include_router(tts_router)
+app.include_router(mcp_router)
 
 
 @app.on_event("startup")
@@ -100,7 +104,3 @@ async def health() -> dict:
         except Exception as exc:
             result["gemini_chat_test"] = f"FAILED: {exc}"
     return result
-
-
-
-
