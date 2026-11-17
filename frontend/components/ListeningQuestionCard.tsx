@@ -27,6 +27,10 @@ interface ListeningQuestionCardProps {
   showTranslation?: boolean;
   /** When true, Replay resets position AND immediately plays (practice mode). Default: false (exam mode — reset only). */
   replayPlays?: boolean;
+  /** When true, hide the Replay button (exam mode). */
+  hideReplay?: boolean;
+  /** When true, hide the speed controls (exam mode). */
+  hideSpeedControls?: boolean;
 }
 
 const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5];
@@ -49,6 +53,8 @@ export default function ListeningQuestionCard({
   isTranslating = false,
   showTranslation = false,
   replayPlays = false,
+  hideReplay = false,
+  hideSpeedControls = false,
 }: ListeningQuestionCardProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
@@ -59,8 +65,7 @@ export default function ListeningQuestionCard({
   const [autoScroll, setAutoScroll] = useState(true);
   const [isBuffering, setIsBuffering] = useState(false);
 
-  // Note: audio URLs from the backend are relative (/audio/...). We use them
-  // directly so requests go through the Next.js proxy, avoiding CORS errors.
+  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
   const [localAudioUrl, setLocalAudioUrl] = useState("");
 
   useEffect(() => {
@@ -69,8 +74,8 @@ export default function ListeningQuestionCard({
       setLocalAudioUrl("");
       return;
     }
-    setLocalAudioUrl(url.startsWith("http") ? (() => { try { return new URL(url).pathname; } catch { return url; } })() : url);
-  }, [question.audio_url]);
+    setLocalAudioUrl(url.startsWith("http") ? url : `${apiBase}${url}`);
+  }, [question.audio_url, apiBase]);
 
   const audioSrc = localAudioUrl;
 
@@ -152,9 +157,7 @@ export default function ListeningQuestionCard({
       try {
         const fetched = await onRequestAudio(question);
         if (fetched) {
-          const resolved = fetched.startsWith("http")
-            ? (() => { try { return new URL(fetched).pathname; } catch { return fetched; } })()
-            : fetched;
+          const resolved = fetched.startsWith("http") ? fetched : `${apiBase}${fetched}`;
           setLocalAudioUrl(resolved);
           effectiveSrc = resolved;
         }
@@ -293,14 +296,16 @@ export default function ListeningQuestionCard({
             </Button>
 
             {/* Replay from start */}
-            <Button
-              variant="outline"
-              onClick={() => void handleReplayClick()}
-              disabled={!audioSrc && !isPlaying}
-              title="Restart from beginning"
-            >
-              ↺ Replay
-            </Button>
+            {!hideReplay && (
+              <Button
+                variant="outline"
+                onClick={() => void handleReplayClick()}
+                disabled={!audioSrc && !isPlaying}
+                title="Restart from beginning"
+              >
+                ↺ Replay
+              </Button>
+            )}
 
             {/* Remaining plays badge */}
             {remainingPlays !== null && remainingPlays > 0 && (

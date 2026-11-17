@@ -78,6 +78,7 @@ export default function ListeningExamPage() {
   const [practiceAnswer, setPracticeAnswer] = useState<AnswerOption | "">("");
   const [practiceCount, setPracticeCount] = useState(1);
   const [practicePlayCount, setPracticePlayCount] = useState(0);
+  const [practiceScore, setPracticeScore] = useState({ correct: 0, total: 0 });
 
   const [helperText, setHelperText] = useState("");
   const [helperResult, setHelperResult] = useState<ExplainTextResponse | null>(null);
@@ -100,11 +101,7 @@ export default function ListeningExamPage() {
   }, [questions]);
 
   useEffect(() => {
-    if (mode === "practice") {
-      setShowTranscript(true);
-    } else {
-      setShowTranscript(false);
-    }
+    setShowTranscript(false);
   }, [mode]);
 
   useEffect(() => {
@@ -350,7 +347,8 @@ export default function ListeningExamPage() {
       const question = await generateTcfListeningQuestion({
         question_number: qNum,
         session_id: sessionId ?? undefined,
-        defer_audio: false
+        defer_audio: false,
+        target_level: practiceLevel,
       });
       const normalizedQuestion: ListeningQuestion = {
         ...question,
@@ -373,7 +371,15 @@ export default function ListeningExamPage() {
   };
 
   const handlePracticeAnswer = (value: AnswerOption) => {
+    if (practiceAnswer) return;
     setPracticeAnswer(value);
+    setShowTranscript(true);
+    if (practiceQuestion) {
+      setPracticeScore((prev) => ({
+        correct: prev.correct + (value === practiceQuestion.correct_answer ? 1 : 0),
+        total: prev.total + 1,
+      }));
+    }
   };
 
   const handleExplainText = async () => {
@@ -448,7 +454,7 @@ export default function ListeningExamPage() {
                     {(Object.keys(PRACTICE_LEVEL_RANGES) as PracticeLevel[]).map((lvl) => (
                       <button
                         key={lvl}
-                        onClick={() => { setPracticeLevel(lvl); setPracticeQuestion(null); setPracticeCount(1); }}
+                        onClick={() => { setPracticeLevel(lvl); setPracticeQuestion(null); setPracticeCount(1); setPracticeScore({ correct: 0, total: 0 }); }}
                         disabled={loadingQuestion}
                         className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
                           practiceLevel === lvl
@@ -484,6 +490,11 @@ export default function ListeningExamPage() {
                     <span className="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700">
                       {practiceLevel}
                     </span>
+                    {practiceScore.total > 0 && (
+                      <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                        Score: {practiceScore.correct}/{practiceScore.total}
+                      </span>
+                    )}
                   </div>
                   <ListeningQuestionCard
                     question={practiceQuestion}
@@ -534,7 +545,7 @@ export default function ListeningExamPage() {
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Practice Tips</p>
                   <ul className="space-y-1.5 text-xs text-slate-500">
                     <li className="flex gap-2"><span className="text-slate-300">•</span>Audio plays once per question</li>
-                    <li className="flex gap-2"><span className="text-slate-300">•</span>Transcript is shown below the audio controls</li>
+                    <li className="flex gap-2"><span className="text-slate-300">•</span>Transcript revealed after you answer</li>
                     <li className="flex gap-2"><span className="text-slate-300">•</span>Use the translation toggle inside the transcript</li>
                     <li className="flex gap-2"><span className="text-slate-300">•</span>Select transcript text → Phrase Helper auto-fills</li>
                   </ul>
@@ -643,6 +654,8 @@ export default function ListeningExamPage() {
                       onTranslate={() => void handleTranslateTranscript(currentQuestionData.script, `exam-${currentQuestion}`)}
                       isTranslating={isTranslating}
                       showTranslation={showTranslation}
+                      hideReplay={true}
+                      hideSpeedControls={true}
                     />
                   )}
                   <div className="flex flex-wrap items-center gap-3">

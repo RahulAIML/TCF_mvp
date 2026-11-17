@@ -23,7 +23,7 @@ async def post_generate_listening_question(
   payload: TcfGenerateListeningQuestionRequest,
   _user: User = Depends(get_optional_user)
 ) -> ListeningQuestionResponse:
-  return generate_tcf_listening_question(payload.question_number, payload.session_id, payload.defer_audio)
+  return generate_tcf_listening_question(payload.question_number, payload.session_id, payload.defer_audio, payload.target_level)
 
 
 @router.post("/generate-listening-audio", response_model=GenerateListeningAudioResponse)

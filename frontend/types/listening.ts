@@ -4,6 +4,7 @@ export interface GenerateListeningQuestionRequest {
   question_number: number;
   session_id?: string;
   defer_audio?: boolean;
+  target_level?: string;
 }
 
 export interface GenerateListeningAudioRequest {
@@ -25,6 +26,7 @@ export interface ListeningQuestion {
   correct_answer: AnswerOption;
   explanation: string;
   user_answer?: AnswerOption | "";
+  format_type?: string;
 }
 
 export interface ListeningResultItem {

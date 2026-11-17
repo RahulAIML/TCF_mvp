@@ -213,6 +213,7 @@ class TcfGenerateListeningQuestionRequest(BaseModel):
   question_number: int = Field(ge=1, le=39)
   session_id: str | None = None
   defer_audio: bool = False
+  target_level: str | None = None
 
 
 class ListeningQuestionResponse(BaseModel):
@@ -222,6 +223,7 @@ class ListeningQuestionResponse(BaseModel):
   options: List[str] = Field(default_factory=list)
   correct_answer: AnswerOption
   explanation: str
+  format_type: str = "monologue"
 
   @field_validator("options")
   @classmethod
