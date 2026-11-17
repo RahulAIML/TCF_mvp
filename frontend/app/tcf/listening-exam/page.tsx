@@ -91,10 +91,13 @@ export default function ListeningExamPage() {
   const [showTranslation, setShowTranslation] = useState(false);
   const [isTranslating, setIsTranslating] = useState(false);
 
+  const [pendingPracticeLevel, setPendingPracticeLevel] = useState<PracticeLevel | null>(null);
+
   const questionsRef = useRef<Record<number, ListeningQuestion>>({});
   const inFlightRef = useRef<Partial<Record<number, Promise<ListeningQuestion>>>>({});
   const examSessionIdRef = useRef<string | null>(null);
   const practiceSessionIdRef = useRef<string | null>(null);
+  const nextPracticeRef = useRef<Promise<ListeningQuestion> | null>(null);
 
   useEffect(() => {
     questionsRef.current = questions;
@@ -102,6 +105,21 @@ export default function ListeningExamPage() {
 
   useEffect(() => {
     setShowTranscript(false);
+  }, [mode]);
+
+  // URL deep-link: read ?mode on mount, sync on mode change
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlMode = params.get("mode");
+    if (urlMode === "practice" || urlMode === "exam") {
+      setMode(urlMode);
+    }
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("mode", mode);
+    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
   }, [mode]);
 
   useEffect(() => {
@@ -330,6 +348,21 @@ export default function ListeningExamPage() {
     });
   };
 
+  const fetchPracticeQuestion = (level: PracticeLevel, sessionId: string): Promise<ListeningQuestion> => {
+    const [minQ, maxQ] = PRACTICE_LEVEL_RANGES[level];
+    const qNum = Math.floor(Math.random() * (maxQ - minQ + 1)) + minQ;
+    return generateTcfListeningQuestion({
+      question_number: qNum,
+      session_id: sessionId,
+      defer_audio: false,
+      target_level: level,
+    }).then((question) => ({
+      ...question,
+      transcript: question.transcript ?? question.script,
+      user_answer: ""
+    }));
+  };
+
   const loadPracticeQuestion = async () => {
     const sessionId = practiceSessionIdRef.current
       ?? (typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -341,24 +374,20 @@ export default function ListeningExamPage() {
     setLoadingQuestion(true);
     setShowTranslation(false);
     try {
-      // Pick a random question number from the selected practice level range
-      const [minQ, maxQ] = PRACTICE_LEVEL_RANGES[practiceLevel];
-      const qNum = Math.floor(Math.random() * (maxQ - minQ + 1)) + minQ;
-      const question = await generateTcfListeningQuestion({
-        question_number: qNum,
-        session_id: sessionId ?? undefined,
-        defer_audio: false,
-        target_level: practiceLevel,
-      });
-      const normalizedQuestion: ListeningQuestion = {
-        ...question,
-        transcript: question.transcript ?? question.script,
-        user_answer: ""
-      };
+      let normalizedQuestion: ListeningQuestion;
+      if (nextPracticeRef.current) {
+        const prefetched = nextPracticeRef.current;
+        nextPracticeRef.current = null;
+        normalizedQuestion = await prefetched;
+      } else {
+        normalizedQuestion = await fetchPracticeQuestion(practiceLevel, sessionId);
+      }
       setPracticeQuestion(normalizedQuestion);
       setPracticeAnswer("");
       setPracticePlayCount(0);
       setPracticeCount((prev) => prev + 1);
+      // start prefetching the next one immediately
+      nextPracticeRef.current = fetchPracticeQuestion(practiceLevel, sessionId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load practice question.");
     } finally {
@@ -454,7 +483,18 @@ export default function ListeningExamPage() {
                     {(Object.keys(PRACTICE_LEVEL_RANGES) as PracticeLevel[]).map((lvl) => (
                       <button
                         key={lvl}
-                        onClick={() => { setPracticeLevel(lvl); setPracticeQuestion(null); setPracticeCount(1); setPracticeScore({ correct: 0, total: 0 }); }}
+                        onClick={() => {
+                          if (lvl === practiceLevel) return;
+                          if (practiceQuestion && !practiceAnswer) {
+                            setPendingPracticeLevel(lvl);
+                          } else {
+                            setPracticeLevel(lvl);
+                            setPracticeQuestion(null);
+                            setPracticeCount(1);
+                            setPracticeScore({ correct: 0, total: 0 });
+                            nextPracticeRef.current = null;
+                          }
+                        }}
                         disabled={loadingQuestion}
                         className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
                           practiceLevel === lvl
@@ -465,6 +505,27 @@ export default function ListeningExamPage() {
                         {lvl}
                       </button>
                     ))}
+                    {pendingPracticeLevel && (
+                      <div className="w-full mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 flex items-center gap-3">
+                        <span>Switch to <strong>{pendingPracticeLevel}</strong>? Current question will be discarded.</span>
+                        <button
+                          className="font-semibold text-amber-900 underline"
+                          onClick={() => {
+                            const lvl = pendingPracticeLevel;
+                            setPendingPracticeLevel(null);
+                            setPracticeLevel(lvl);
+                            setPracticeQuestion(null);
+                            setPracticeCount(1);
+                            setPracticeScore({ correct: 0, total: 0 });
+                            nextPracticeRef.current = null;
+                          }}
+                        >Confirm</button>
+                        <button
+                          className="font-semibold text-amber-700 underline"
+                          onClick={() => setPendingPracticeLevel(null)}
+                        >Cancel</button>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
