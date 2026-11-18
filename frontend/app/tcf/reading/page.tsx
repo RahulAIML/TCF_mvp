@@ -78,8 +78,8 @@ export default function ReadingPage() {
           {modes.map((mode) => {
             const Icon = mode.icon;
             return (
-              <Card key={mode.href} className="group border-slate-200 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
-                <CardContent className="flex flex-col gap-5 p-6">
+              <Card key={mode.href} className="group flex flex-col border-slate-200 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
+                <CardContent className="flex flex-col flex-1 gap-5 p-6">
                   <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${mode.accent} text-white shadow-sm`}>
                     <Icon className="h-5 w-5" />
                   </div>
