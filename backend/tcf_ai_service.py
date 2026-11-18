@@ -80,10 +80,9 @@ SCENARIO_CONTEXTS = [
 # ── TCF Reading question profiles (CEFR-levelled parts) ─────────────────────
 # (start, end, key, cefr_label, description)
 TCF_QUESTION_PROFILES = [
-    (1, 10, "part1_c2", "C2", "Articles analytiques, textes littéraires ou éditoriaux complexes"),
-    (11, 20, "part2_b2c1", "B2-C1", "Articles de presse, rapports argumentatifs"),
-    (21, 30, "part3_b1b2", "B1-B2", "Documents informatifs ou argumentatifs"),
-    (31, 39, "part4_a2", "A2", "Documents simples de la vie quotidienne"),
+    (1, 13, "part4_a2", "A2", "Documents simples de la vie quotidienne"),
+    (14, 26, "part3_b1b2", "B1-B2", "Documents informatifs ou argumentatifs"),
+    (27, 39, "part1_c2", "C1-C2", "Articles analytiques, textes littéraires ou éditoriaux complexes"),
 ]
 
 TCF_PART_GUIDANCE = {
@@ -373,6 +372,9 @@ _tcf_listening_script_hashes_global: deque[str] = deque(maxlen=200)
 _TCF_PASSAGE_HASHES: deque[str] = deque(maxlen=25)
 
 _last_domain: str | None = None
+
+# Server-side question cache: (session_id, question_number) -> TcfExamQuestion
+_question_cache: dict[str, "TcfExamQuestion"] = {}
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -679,16 +681,13 @@ def generate_tcf_exam_question(
     session_id: str | None = None
 ) -> TcfExamQuestion:
     """
-    Generate one TCF Canada reading question.
-
-    Structure (39 questions total):
-      Part 1  Q1–10   A1–A2   Documents simples
-      Part 2  Q11–20  A2–B1   Textes courants
-      Part 3  Q21–30  B1–B2   Documents informatifs
-      Part 4  Q31–39  B2–C2   Articles de presse / textes complexes
-
-    Uses structured example-based prompting as required.
+    Generate one TCF Canada reading question (A1-A2 first, C1-C2 last).
+    Caches result per (session_id, question_number) to avoid re-generation.
     """
+    cache_key = f"{session_id or '__anon__'}:{question_number}"
+    if cache_key in _question_cache:
+        return _question_cache[cache_key]
+
     question_type, cefr_label, part_desc = _tcf_question_profile(question_number)
     guidance = TCF_PART_GUIDANCE[question_type]
     freshness_token = _freshness_token()
@@ -711,7 +710,7 @@ def generate_tcf_exam_question(
     last_error: Exception | None = None
     for _ in range(8):
         try:
-            payload = _generate_json(prompt, temperature=1.0)
+            payload = _generate_json(prompt, temperature=0.7)
             normalized = _normalize_exam_question(payload, question_type)
             question = TcfExamQuestion.model_validate(normalized)
 
@@ -738,6 +737,7 @@ def generate_tcf_exam_question(
             global_cache.append(fp)
             global_cache_all.append(fp)
             global_text_cache_all.append(text_fp)
+            _question_cache[cache_key] = question
             return question
 
         except Exception as error:
