@@ -1091,6 +1091,77 @@ RÃ©ponds uniquement avec l'exemple.
     return "Action non prise en charge."
 
 
+def _build_writing_prompt(action: str, message: str, direction: str | None, context: str | None) -> tuple[str, float]:
+    clean = message.strip()
+    context_block = f"\nContexte de la consigne :\n{context}\n" if context else ""
+
+    if action == "translate":
+        if direction == "en-fr":
+            return (
+                "Translate the following English text to French. "
+                "Output only the French translation - no explanations, no labels.\n\n"
+                f"English text:\n{clean}",
+                0.2,
+            )
+        return (
+            "Translate the following French text to English. "
+            "Output only the English translation - no explanations, no labels.\n\n"
+            f"French text:\n{clean}",
+            0.2,
+        )
+
+    if action == "grammar":
+        return (
+            f"Tu es correcteur de français. Corrige la grammaire, l'orthographe et la ponctuation.\n"
+            f"{context_block}Texte :\n{clean}\n\n"
+            "Réponds uniquement avec la version corrigée, sans explications.",
+            0.2,
+        )
+
+    if action == "suggestions":
+        return (
+            f"Tu es coach TCF Canada en expression écrite. Donne 3 à 5 suggestions concrètes et concises "
+            f"pour améliorer la réponse.\n{context_block}Texte :\n{clean}\n\n"
+            "Réponds par une liste simple (tirets), sans texte supplémentaire.",
+            0.3,
+        )
+
+    if action == "example":
+        return (
+            f"Tu es examinateur TCF Canada. Génère un exemple de réponse claire et naturelle.\n"
+            f"{context_block}Consigne ou sujet :\n{clean}\n\n"
+            "Contraintes :\n- 80 à 140 mots.\n- Français naturel et cohérent.\n- Pas de titres, pas de puces.\n\n"
+            "Réponds uniquement avec l'exemple.",
+            0.4,
+        )
+
+    return ("Action non prise en charge.", 0.0)
+
+
+def stream_assist_tcf_writing(
+    action: str,
+    message: str,
+    direction: str | None = None,
+    context: str | None = None
+):
+    clean = message.strip()
+    if not clean:
+        yield "Veuillez fournir un texte pour continuer."
+        return
+
+    prompt, temperature = _build_writing_prompt(action, clean, direction, context)
+    _ensure_api_key()
+    client = genai_client.Client(api_key=API_KEY)
+    for chunk in client.models.generate_content_stream(
+        model=MODEL_NAME,
+        contents=prompt,
+        config=types.GenerateContentConfig(temperature=temperature),
+    ):
+        token = getattr(chunk, "text", None)
+        if token:
+            yield token
+
+
 def evaluate_tcf_writing_task(
     task_type: str,
     prompt_text: str,

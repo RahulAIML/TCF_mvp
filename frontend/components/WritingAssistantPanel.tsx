@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { sendTcfWritingAssistant } from "@/services/api";
 import type {
   TcfWritingAssistantAction,
   TcfWritingTranslationDirection
 } from "@/types/tcf-writing";
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 interface WritingAssistantPanelProps {
   contextLabel?: string;
@@ -50,20 +51,78 @@ export default function WritingAssistantPanel({
   const handleSend = async () => {
     const text = input.trim();
     if (!text || isLoading) return;
-    setMessages((prev) => [...prev, { role: "user", content: text }]);
+
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: text },
+      { role: "assistant", content: "" },
+    ]);
     setInput("");
     setIsLoading(true);
+
     try {
-      const response = await sendTcfWritingAssistant({
-        message: text,
-        action,
-        direction: action === "translate" ? direction : undefined,
-        context: assistantContext
+      const res = await fetch(`${API_BASE_URL}/tcf/writing/assistant/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: text,
+          action,
+          direction: action === "translate" ? direction : undefined,
+          context: assistantContext,
+        }),
+        cache: "no-store",
       });
-      setMessages((prev) => [...prev, { role: "assistant", content: response.reply }]);
+
+      if (!res.ok || !res.body) throw new Error(`Status ${res.status}`);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const raw = line.slice(6).trim();
+          if (raw === "[DONE]") break;
+          try {
+            const parsed = JSON.parse(raw) as { token?: string; error?: string };
+            if (parsed.token) {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last?.role === "assistant") {
+                  updated[updated.length - 1] = { ...last, content: last.content + parsed.token };
+                }
+                return updated;
+              });
+            } else if (parsed.error) {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last?.role === "assistant") {
+                  updated[updated.length - 1] = { ...last, content: `⚠ ${parsed.error}` };
+                }
+                return updated;
+              });
+            }
+          } catch { /* malformed chunk — skip */ }
+        }
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Assistant failed to respond.";
-      setMessages((prev) => [...prev, { role: "assistant", content: `⚠ ${msg}` }]);
+      setMessages((prev) => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last?.role === "assistant") {
+          updated[updated.length - 1] = { ...last, content: `⚠ ${msg}` };
+        }
+        return updated;
+      });
     } finally {
       setIsLoading(false);
     }
@@ -158,18 +217,17 @@ export default function WritingAssistantPanel({
               <p className="text-[10px] uppercase tracking-wide opacity-60 mb-0.5">
                 {msg.role === "user" ? "You" : "Support"}
               </p>
-              <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+              {msg.role === "assistant" && msg.content === "" && isLoading ? (
+                <div className="flex items-center gap-1.5 py-0.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:0ms]" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:150ms]" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:300ms]" />
+                </div>
+              ) : (
+                <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+              )}
             </div>
           ))}
-          {isLoading && (
-            <div className="rounded-xl bg-slate-100 px-3 py-2.5 mr-4">
-              <div className="flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:0ms]" />
-                <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:150ms]" />
-                <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:300ms]" />
-              </div>
-            </div>
-          )}
           <div ref={bottomRef} />
         </div>
 

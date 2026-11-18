@@ -2,6 +2,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from auth import get_optional_user
@@ -23,6 +24,7 @@ from schemas import (
 )
 from tcf_ai_service import (
   assist_tcf_writing,
+  stream_assist_tcf_writing,
   evaluate_tcf_writing_step,
   evaluate_tcf_writing_task,
   generate_tcf_writing_tasks
@@ -86,6 +88,32 @@ async def post_writing_assistant(
     raise HTTPException(status_code=500, detail=str(error)) from error
 
   return TcfWritingAssistantResponse(reply=reply)
+
+
+@router.post("/writing/assistant/stream")
+async def post_writing_assistant_stream(
+  payload: TcfWritingAssistantRequest,
+  _user: User = Depends(get_optional_user)
+) -> StreamingResponse:
+  async def _generate():
+    try:
+      for token in stream_assist_tcf_writing(
+        action=payload.action,
+        message=payload.message,
+        direction=payload.direction,
+        context=payload.context,
+      ):
+        yield f"data: {json.dumps({'token': token})}\n\n"
+      yield "data: [DONE]\n\n"
+    except Exception as exc:
+      yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+      yield "data: [DONE]\n\n"
+
+  return StreamingResponse(
+    _generate(),
+    media_type="text/event-stream",
+    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+  )
 
 
 @router.post("/writing/save-progress", response_model=WritingProgressResponse)
