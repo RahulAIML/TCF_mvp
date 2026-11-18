@@ -842,14 +842,13 @@ _LISTENING_SPECS = {
 
 
 def _infer_cefr_from_question_number(question_number: int) -> str:
-    if question_number <= 10:
-        return "C2"
-    elif question_number <= 20:
-        return "C1"
-    elif question_number <= 30:
-        return "B2"
-    else:
+    # TCF Canada: progressive A1→C2 (easiest first)
+    if question_number <= 13:
         return "A2"
+    elif question_number <= 26:
+        return "B1"
+    else:
+        return "C1"
 
 
 def _shuffle_answer_options(normalized: dict) -> dict:
@@ -1123,7 +1122,7 @@ def evaluate_tcf_writing_task(
         "criteria": "Accomplissement de la tâche, grammaire, cohérence, vocabulaire.",
     })
 
-    prompt = f"""Tu es evaluateur TCF Canada pour l'expression ecrite.
+    prompt = f"""Tu es evaluateur officiel TCF Canada pour l'expression ecrite. Sois strict et realiste.
 
 Type de tache : {config['label']}
 Nombre de mots attendu : {config['word_range']}
@@ -1134,6 +1133,15 @@ Consigne :
 
 Production du candidat :
 {response_text}
+
+Calibration OBLIGATOIRE des scores (barème TCF Canada) :
+- 9-10 : C1-C2, production quasi-parfaite, erreurs negligeables. Réservé aux excellents.
+- 7-8 : B2, bonne maîtrise, quelques erreurs mineures.
+- 5-6 : B1, communication réussie mais erreurs régulières, vocabulaire limité.
+- 3-4 : A2, communication partielle, erreurs fréquentes, structure basique.
+- 0-2 : A1 ou hors-sujet, communication très difficile.
+Un email ou message simple = maximum 5-6/10. Ne donne JAMAIS 8+ pour une réponse ordinaire.
+Sois exigeant : identifie les vraies faiblesses grammaticales, lexicales et structurelles.
 
 Retourne un JSON avec :
 {{
@@ -1148,22 +1156,9 @@ Retourne un JSON avec :
   "improved_version": "..."
 }}
 
-EXEMPLE DE SORTIE (ne pas reproduire cet exemple) :
-{{
-  "level": "B1",
-  "scores": {{
-    "structure": 6,
-    "grammar": 7,
-    "coherence": 6,
-    "vocab": 6
-  }},
-  "feedback": ["Clarifier la demande", "Ajouter un connecteur logique"],
-  "improved_version": "..."
-}}
-
 Regles :
-- Scores entiers entre 0 et 10.
-- 3 a 6 points de feedback concrets et actionnables.
+- Scores entiers entre 0 et 10. Anchores sur le bareme ci-dessus.
+- 3 a 6 points de feedback concrets et actionnables (pas de compliments vides).
 - improved_version : version amelioree respectant la plage de mots.
 - Sortie : JSON valide uniquement.
 """

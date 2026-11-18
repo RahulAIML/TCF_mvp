@@ -29,29 +29,28 @@ const MAX_PLAYS = 1;
 type ListeningDifficultyGroup = "all" | "c2" | "c1" | "b2" | "b1" | "a2" | "a1";
 const LISTENING_DIFFICULTY_RANGES: Record<ListeningDifficultyGroup, { start: number; end: number; label: string }> = {
   all: { start: 1,  end: 39, label: "All Levels" },
-  c2:  { start: 1,  end: 10, label: "C2" },
-  c1:  { start: 11, end: 20, label: "C1" },
-  b2:  { start: 11, end: 20, label: "B2" },
-  b1:  { start: 21, end: 30, label: "B1" },
-  a2:  { start: 31, end: 39, label: "A2" },
-  a1:  { start: 31, end: 39, label: "A1" },
+  a1:  { start: 1,  end: 13, label: "A1" },
+  a2:  { start: 1,  end: 13, label: "A2" },
+  b1:  { start: 14, end: 26, label: "B1" },
+  b2:  { start: 14, end: 26, label: "B2" },
+  c1:  { start: 27, end: 39, label: "C1" },
+  c2:  { start: 27, end: 39, label: "C2" },
 };
 
 type PracticeLevel = "C2" | "C1" | "B2" | "B1" | "A2" | "A1";
 const PRACTICE_LEVEL_RANGES: Record<PracticeLevel, [number, number]> = {
-  "C2": [1,  10],
-  "C1": [11, 20],
-  "B2": [11, 20],
-  "B1": [21, 30],
-  "A2": [31, 39],
-  "A1": [31, 39],
+  "A1": [1,  13],
+  "A2": [1,  13],
+  "B1": [14, 26],
+  "B2": [14, 26],
+  "C1": [27, 39],
+  "C2": [27, 39],
 };
 
 const levelLabel = (questionNumber: number) => {
-  if (questionNumber <= 10) return "C2";
-  if (questionNumber <= 20) return "B2-C1";
-  if (questionNumber <= 30) return "B1-B2";
-  return "A2-B1";
+  if (questionNumber <= 13) return "A1-A2";
+  if (questionNumber <= 26) return "B1-B2";
+  return "C1-C2";
 };
 
 export default function ListeningExamPage() {
@@ -86,7 +85,7 @@ export default function ListeningExamPage() {
 
   // Difficulty + translation state
   const [examDifficulty, setExamDifficulty] = useState<ListeningDifficultyGroup>("all");
-  const [practiceLevel, setPracticeLevel] = useState<PracticeLevel>("B1");
+  const [practiceLevel, setPracticeLevel] = useState<PracticeLevel>("A1");
   const [transcriptTranslations, setTranscriptTranslations] = useState<Record<string, string>>({});
   const [showTranslation, setShowTranslation] = useState(false);
   const [isTranslating, setIsTranslating] = useState(false);
@@ -135,6 +134,11 @@ export default function ListeningExamPage() {
       setPracticeAnswer("");
     }
   }, [mode]);
+
+  // Reset transcript when moving between exam questions (exam integrity)
+  useEffect(() => {
+    if (mode === "exam") setShowTranscript(false);
+  }, [currentQuestion, mode]);
 
   const ensureQuestion = async (questionNumber: number, showLoader = true) => {
     const existing = questionsRef.current[questionNumber];
@@ -709,7 +713,7 @@ export default function ListeningExamPage() {
                       playCount={currentPlays}
                       onPlay={() => handlePlay(currentQuestion)}
                       showTranscript={showTranscript}
-                      onToggleTranscript={() => setShowTranscript((prev) => !prev)}
+                      onToggleTranscript={currentAnswer ? () => setShowTranscript((prev) => !prev) : undefined}
                       onTranscriptSelect={handleTranscriptSelection}
                       translationText={transcriptTranslations[`exam-${currentQuestion}`]}
                       onTranslate={() => void handleTranslateTranscript(currentQuestionData.script, `exam-${currentQuestion}`)}
