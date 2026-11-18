@@ -33,11 +33,11 @@ logger = logging.getLogger("audio_clean")
 FRAME_MS = 10
 MAX_EDGE_MS = 400            # the longest burst that is treated as an artifact
 MIN_BURST_MS = 30            # shorter than this is a click: handled by the fades
-TAIL_LOUD_FRACTION = 0.5     # a burst frame must be at least this fraction of the speech level
-FLATNESS_MIN = 0.30          # spectral flatness (0 = a pure tone, 1 = white noise)
-VOICED_MAX = 0.45            # normalised autocorrelation peak; above this the frame has a pitch
+TAIL_LOUD_FRACTION = 0.28    # a burst frame must be at least this fraction of the speech level
+FLATNESS_MIN = 0.25          # spectral flatness (0 = a pure tone, 1 = white noise)
+VOICED_MAX = 0.65            # normalised autocorrelation peak; above this the frame has a pitch
 SILENCE_FRACTION = 0.03      # below this fraction of the speech level a frame counts as silence
-KEEP_PAD_MS = 60             # silence kept before the first and after the last sound
+KEEP_PAD_MS = 100            # silence kept before the first and after the last sound
 FADE_IN_MS = 12
 FADE_OUT_MS = 60
 MIN_SPEECH_MS = 150
