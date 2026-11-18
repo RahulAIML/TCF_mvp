@@ -64,6 +64,8 @@ export default function ListeningQuestionCard({
   const [currentWordIndex, setCurrentWordIndex] = useState(0);
   const [autoScroll, setAutoScroll] = useState(true);
   const [isBuffering, setIsBuffering] = useState(false);
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
 
   const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
   const [localAudioUrl, setLocalAudioUrl] = useState("");
@@ -107,20 +109,25 @@ export default function ListeningQuestionCard({
       setIsBuffering(false);
     };
     const handlePause = () => setIsPlaying(false);
-    const handleEnded = () => setIsPlaying(false);
-
+    const handleEnded = () => { setIsPlaying(false); setAudioCurrentTime(audio.duration || 0); };
     const handleCanPlay = () => setIsBuffering(false);
+    const handleTimeUpdate = () => setAudioCurrentTime(audio.currentTime);
+    const handleLoadedMetadata = () => setAudioDuration(audio.duration || 0);
 
     audio.addEventListener("play", handlePlay);
     audio.addEventListener("pause", handlePause);
     audio.addEventListener("ended", handleEnded);
     audio.addEventListener("canplaythrough", handleCanPlay);
+    audio.addEventListener("timeupdate", handleTimeUpdate);
+    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
 
     return () => {
       audio.removeEventListener("play", handlePlay);
       audio.removeEventListener("pause", handlePause);
       audio.removeEventListener("ended", handleEnded);
       audio.removeEventListener("canplaythrough", handleCanPlay);
+      audio.removeEventListener("timeupdate", handleTimeUpdate);
+      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
     };
   }, []);
 
@@ -314,6 +321,22 @@ export default function ListeningQuestionCard({
               </span>
             )}
           </div>
+
+          {/* Audio progress bar + time */}
+          {audioDuration > 0 && (
+            <div className="space-y-1">
+              <div className="relative h-1.5 w-full rounded-full bg-slate-200 overflow-hidden">
+                <div
+                  className="absolute inset-y-0 left-0 rounded-full bg-indigo-500 transition-all"
+                  style={{ width: `${(audioCurrentTime / audioDuration) * 100}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[10px] text-slate-400 select-none">
+                <span>{Math.floor(audioCurrentTime / 60)}:{String(Math.floor(audioCurrentTime % 60)).padStart(2, "0")}</span>
+                <span>{Math.floor(audioDuration / 60)}:{String(Math.floor(audioDuration % 60)).padStart(2, "0")}</span>
+              </div>
+            </div>
+          )}
 
           {/* Speed segmented control */}
           <div className="flex items-center gap-2">

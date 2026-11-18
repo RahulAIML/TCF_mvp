@@ -770,12 +770,28 @@ export default function WritingPage() {
                       onClick={() => handleEvaluateTask("task1")}
                       disabled={task1EvalLoading || !task1Combined.trim()}
                     >
-                      {task1EvalLoading ? "Evaluating..." : "Evaluate Task 1"}
+                      {task1EvalLoading ? "Analysing…" : "Evaluate Task 1"}
                     </Button>
                   </CardContent>
                 </Card>
 
-                {task1Evaluation && (
+                {task1EvalLoading && (
+                  <Card className="border-slate-200 shadow-sm animate-pulse">
+                    <CardContent className="p-6 space-y-3">
+                      <div className="h-3 w-1/3 rounded bg-slate-200" />
+                      <div className="grid grid-cols-4 gap-3">
+                        {[1,2,3,4].map(i => <div key={i} className="h-12 rounded-xl bg-slate-100" />)}
+                      </div>
+                      <div className="h-3 w-full rounded bg-slate-100" />
+                      <div className="h-3 w-4/5 rounded bg-slate-100" />
+                      <p className="text-xs text-slate-400 flex items-center gap-1.5 pt-1">
+                        <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping inline-block" />
+                        Evaluating your writing…
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+                {task1Evaluation && !task1EvalLoading && (
                   <WritingEvaluationCard title="Task 1 Evaluation" evaluation={task1Evaluation} />
                 )}
 
@@ -811,12 +827,27 @@ export default function WritingPage() {
                       onClick={() => handleEvaluateTask("task2")}
                       disabled={task2EvalLoading || !task2Combined.trim()}
                     >
-                      {task2EvalLoading ? "Evaluating..." : "Evaluate Task 2"}
+                      {task2EvalLoading ? "Analysing…" : "Evaluate Task 2"}
                     </Button>
                   </CardContent>
                 </Card>
 
-                {task2Evaluation && (
+                {task2EvalLoading && (
+                  <Card className="border-slate-200 shadow-sm animate-pulse">
+                    <CardContent className="p-6 space-y-3">
+                      <div className="h-3 w-1/3 rounded bg-slate-200" />
+                      <div className="grid grid-cols-4 gap-3">
+                        {[1,2,3,4].map(i => <div key={i} className="h-12 rounded-xl bg-slate-100" />)}
+                      </div>
+                      <div className="h-3 w-full rounded bg-slate-100" />
+                      <p className="text-xs text-slate-400 flex items-center gap-1.5 pt-1">
+                        <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping inline-block" />
+                        Evaluating your writing…
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+                {task2Evaluation && !task2EvalLoading && (
                   <WritingEvaluationCard title="Task 2 Evaluation" evaluation={task2Evaluation} />
                 )}
 
@@ -852,12 +883,27 @@ export default function WritingPage() {
                       onClick={() => handleEvaluateTask("task3")}
                       disabled={task3EvalLoading || !task3Combined.trim()}
                     >
-                      {task3EvalLoading ? "Evaluating..." : "Evaluate Task 3"}
+                      {task3EvalLoading ? "Analysing…" : "Evaluate Task 3"}
                     </Button>
                   </CardContent>
                 </Card>
 
-                {task3Evaluation && (
+                {task3EvalLoading && (
+                  <Card className="border-slate-200 shadow-sm animate-pulse">
+                    <CardContent className="p-6 space-y-3">
+                      <div className="h-3 w-1/3 rounded bg-slate-200" />
+                      <div className="grid grid-cols-4 gap-3">
+                        {[1,2,3,4].map(i => <div key={i} className="h-12 rounded-xl bg-slate-100" />)}
+                      </div>
+                      <div className="h-3 w-full rounded bg-slate-100" />
+                      <p className="text-xs text-slate-400 flex items-center gap-1.5 pt-1">
+                        <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping inline-block" />
+                        Evaluating your writing…
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+                {task3Evaluation && !task3EvalLoading && (
                   <WritingEvaluationCard title="Task 3 Evaluation" evaluation={task3Evaluation} />
                 )}
 

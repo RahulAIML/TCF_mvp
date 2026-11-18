@@ -29,19 +29,18 @@ const PREFETCH_AHEAD = 5;
 type DifficultyGroup = "all" | "c2" | "c1" | "b2" | "b1" | "a2" | "a1";
 const DIFFICULTY_RANGES: Record<DifficultyGroup, { start: number; end: number; label: string }> = {
   all: { start: 1,  end: 39, label: "All Levels" },
-  c2:  { start: 1,  end: 10, label: "C2" },
-  c1:  { start: 11, end: 20, label: "C1" },
-  b2:  { start: 11, end: 20, label: "B2" },
-  b1:  { start: 21, end: 30, label: "B1" },
-  a2:  { start: 31, end: 39, label: "A2" },
-  a1:  { start: 31, end: 39, label: "A1" },
+  a1:  { start: 1,  end: 13, label: "A1" },
+  a2:  { start: 1,  end: 13, label: "A2" },
+  b1:  { start: 14, end: 26, label: "B1" },
+  b2:  { start: 14, end: 26, label: "B2" },
+  c1:  { start: 27, end: 39, label: "C1" },
+  c2:  { start: 27, end: 39, label: "C2" },
 };
 
 const partLabel = (questionNumber: number) => {
-  if (questionNumber <= 10) return "Part 1 - C2";
-  if (questionNumber <= 20) return "Part 2 - B2-C1";
-  if (questionNumber <= 30) return "Part 3 - B1-B2";
-  return "Part 4 - A2";
+  if (questionNumber <= 13) return "Part 1 - A1-A2";
+  if (questionNumber <= 26) return "Part 2 - B1-B2";
+  return "Part 3 - C1-C2";
 };
 
 export default function MockExamPage() {
@@ -451,7 +450,22 @@ export default function MockExamPage() {
                 </div>
               )}
               {loadingQuestion && (
-                <p className="text-sm text-slate-500">Generating question...</p>
+                <Card className="border-slate-200 shadow-sm rounded-2xl animate-pulse">
+                  <CardContent className="p-6 space-y-4">
+                    <div className="h-4 w-3/4 rounded bg-slate-200" />
+                    <div className="h-3 w-full rounded bg-slate-100" />
+                    <div className="h-3 w-5/6 rounded bg-slate-100" />
+                    <div className="grid grid-cols-2 gap-3 pt-2">
+                      {[1, 2, 3, 4].map((i) => (
+                        <div key={i} className="h-10 rounded-xl bg-slate-100" />
+                      ))}
+                    </div>
+                    <p className="text-xs text-slate-400 pt-1 flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping inline-block" />
+                      Generating question…
+                    </p>
+                  </CardContent>
+                </Card>
               )}
               {currentQuestionData && (
                 <div onMouseUp={handleTextSelection} className="mx-auto w-full max-w-3xl space-y-3">

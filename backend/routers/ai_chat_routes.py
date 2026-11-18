@@ -1,12 +1,14 @@
 """
 AI Chat Route — powers the FloatingAIAssistant on the frontend.
-Single, direct endpoint. No mock responses.
+Single endpoint + streaming SSE endpoint. No mock responses.
 """
 
+import json
 import logging
 import os
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger("ai_chat")
@@ -107,3 +109,44 @@ async def ai_chat(payload: AIChatRequest) -> AIChatResponse:
         return AIChatResponse(
             response="Je suis désolé, le service est temporairement indisponible. / Sorry, the service is temporarily unavailable. Please try again in a moment."
         )
+
+
+@router.post("/api/ai/chat/stream")
+async def ai_chat_stream(payload: AIChatRequest) -> StreamingResponse:
+    """Server-Sent Events streaming endpoint — tokens appear as they are generated."""
+
+    async def _generate():
+        if not payload.message.strip():
+            yield f"data: {json.dumps({'token': 'Please type a question.'})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        from google import genai as genai_client
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            yield f"data: {json.dumps({'error': 'GEMINI_API_KEY not configured'})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        client = genai_client.Client(api_key=api_key)
+        model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+        full_prompt = f"{SYSTEM_PROMPT}\n\nUser: {payload.message.strip()}"
+
+        try:
+            for chunk in client.models.generate_content_stream(
+                model=model_name, contents=full_prompt
+            ):
+                token = getattr(chunk, "text", None)
+                if token:
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as exc:
+            logger.error("AI chat stream error: %s", exc)
+            yield f"data: {json.dumps({'error': 'Service temporarily unavailable. Please try again.'})}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

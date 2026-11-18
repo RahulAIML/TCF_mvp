@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { MessageCircle, X, Send, Loader, Trash2 } from "lucide-react";
+import { MessageCircle, X, Send, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -104,36 +104,55 @@ export default function FloatingAIAssistant() {
       content: text,
       timestamp: Date.now(),
     };
-    setMessages((prev) => [...prev, userMsg]);
+    const aiMsgId = `a-${Date.now()}`;
+    setMessages((prev) => [...prev, userMsg, { id: aiMsgId, role: "assistant", content: "", timestamp: Date.now() }]);
     setInput("");
     setIsLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/ai/chat`, {
+      const res = await fetch(`${API_BASE_URL}/api/ai/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text }),
         cache: "no-store",
       });
 
-      if (!res.ok) throw new Error(`Status ${res.status}`);
+      if (!res.ok || !res.body) throw new Error(`Status ${res.status}`);
 
-      const data = await res.json() as { response: string };
-      const aiMsg: Message = {
-        id: `a-${Date.now()}`,
-        role: "assistant",
-        content: data.response,
-        timestamp: Date.now(),
-      };
-      setMessages((prev) => [...prev, aiMsg]);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const raw = line.slice(6).trim();
+          if (raw === "[DONE]") break;
+          try {
+            const parsed = JSON.parse(raw) as { token?: string; error?: string };
+            if (parsed.token) {
+              setMessages((prev) =>
+                prev.map((m) => m.id === aiMsgId ? { ...m, content: m.content + parsed.token } : m)
+              );
+            } else if (parsed.error) {
+              setMessages((prev) =>
+                prev.map((m) => m.id === aiMsgId ? { ...m, content: parsed.error ?? "Error" } : m)
+              );
+            }
+          } catch { /* malformed chunk — skip */ }
+        }
+      }
     } catch {
-      const errMsg: Message = {
-        id: `e-${Date.now()}`,
-        role: "assistant",
-        content: "Connection error. Please check the server and try again.",
-        timestamp: Date.now(),
-      };
-      setMessages((prev) => [...prev, errMsg]);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === aiMsgId ? { ...m, content: "Connection error. Please check the server and try again." } : m
+        )
+      );
     } finally {
       setIsLoading(false);
     }
@@ -205,18 +224,25 @@ export default function FloatingAIAssistant() {
                     : "bg-slate-100 text-slate-800 max-w-[90%]"
                 }`}
               >
-                {msg.role === "assistant" ? renderMarkdown(msg.content) : msg.content}
+                {msg.role === "assistant" && msg.content === "" && isLoading ? (
+                  /* Typing indicator — shown while first token hasn't arrived yet */
+                  <span className="flex items-center gap-1 py-0.5">
+                    {[0, 150, 300].map((delay) => (
+                      <span
+                        key={delay}
+                        className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce"
+                        style={{ animationDelay: `${delay}ms` }}
+                      />
+                    ))}
+                  </span>
+                ) : msg.role === "assistant" ? (
+                  renderMarkdown(msg.content)
+                ) : (
+                  msg.content
+                )}
               </div>
             </div>
           ))}
-          {isLoading && (
-            <div className="flex justify-start">
-              <div className="bg-slate-100 rounded-xl px-3 py-2 flex items-center gap-2">
-                <Loader className="h-3 w-3 animate-spin text-slate-500" />
-                <span className="text-xs text-slate-500">Thinking…</span>
-              </div>
-            </div>
-          )}
           <div ref={messagesEndRef} />
         </div>
 
