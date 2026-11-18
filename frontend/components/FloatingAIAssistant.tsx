@@ -18,10 +18,10 @@ function stripLatex(text: string): string {
   return text
     .replace(/\$([^$]+)\$/g, (_, inner) =>
       inner
-        .replace(/_\{([^}]+)\}/g, (__, sub) => sub.split("").map((c: string) => "₀₁₂₃₄₅₆₇₈₉".includes(c) ? c : c).join(""))
-        .replace(/_(\d)/g, (__, d) => "₀₁₂₃₄₅₆₇₈₉"[Number(d)])
-        .replace(/\^\{([^}]+)\}/g, (__, sup) => sup)
-        .replace(/\^(\d)/g, (__, d) => "⁰¹²³⁴⁵⁶⁷⁸⁹"[Number(d)])
+        .replace(/_\{([^}]+)\}/g, (_m: string, sub: string) => sub.split("").map((c: string) => "₀₁₂₃₄₅₆₇₈₉".includes(c) ? c : c).join(""))
+        .replace(/_(\d)/g, (_m: string, d: string) => "₀₁₂₃₄₅₆₇₈₉"[Number(d)])
+        .replace(/\^\{([^}]+)\}/g, (_m: string, sup: string) => sup)
+        .replace(/\^(\d)/g, (_m: string, d: string) => "⁰¹²³⁴⁵⁶⁷⁸⁹"[Number(d)])
     );
 }
 
