@@ -338,26 +338,28 @@ export default function ListeningQuestionCard({
             </div>
           )}
 
-          {/* Speed segmented control */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-400 font-medium w-10">Speed</span>
-            <div className="flex rounded-lg border border-slate-200 bg-white overflow-hidden divide-x divide-slate-200">
-              {SPEED_OPTIONS.map((speed) => (
-                <button
-                  key={`speed-${speed}`}
-                  type="button"
-                  onClick={() => setPlaybackRate(speed)}
-                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                    playbackRate === speed
-                      ? "bg-indigo-600 text-white"
-                      : "text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  {speed}x
-                </button>
-              ))}
+          {/* Speed segmented control — hidden in exam mode */}
+          {!hideSpeedControls && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400 font-medium w-10">Speed</span>
+              <div className="flex rounded-lg border border-slate-200 bg-white overflow-hidden divide-x divide-slate-200">
+                {SPEED_OPTIONS.map((speed) => (
+                  <button
+                    key={`speed-${speed}`}
+                    type="button"
+                    onClick={() => setPlaybackRate(speed)}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                      playbackRate === speed
+                        ? "bg-indigo-600 text-white"
+                        : "text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    {speed}x
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           <audio ref={audioRef} src={audioSrc || undefined} preload="auto" />
         </div>

@@ -377,6 +377,7 @@ export default function ListeningExamPage() {
     setError("");
     setLoadingQuestion(true);
     setShowTranslation(false);
+    setShowTranscript(false);
     try {
       let normalizedQuestion: ListeningQuestion;
       if (nextPracticeRef.current) {
@@ -489,7 +490,7 @@ export default function ListeningExamPage() {
                         key={lvl}
                         onClick={() => {
                           if (lvl === practiceLevel) return;
-                          if (practiceQuestion && !practiceAnswer) {
+                          if ((practiceQuestion || loadingQuestion) && !practiceAnswer) {
                             setPendingPracticeLevel(lvl);
                           } else {
                             setPracticeLevel(lvl);
@@ -570,13 +571,14 @@ export default function ListeningExamPage() {
                     playCount={practicePlayCount}
                     onPlay={handlePracticePlay}
                     showTranscript={showTranscript}
-                    onToggleTranscript={() => setShowTranscript((prev) => !prev)}
+                    onToggleTranscript={practiceAnswer ? () => setShowTranscript((prev) => !prev) : undefined}
                     onTranscriptSelect={handleTranscriptSelection}
                     translationText={transcriptTranslations[`practice-${practiceCount}`]}
                     onTranslate={() => void handleTranslateTranscript(practiceQuestion.script, `practice-${practiceCount}`)}
                     isTranslating={isTranslating}
                     showTranslation={showTranslation}
-                    replayPlays={true}
+                    replayPlays={!!practiceAnswer}
+                    hideReplay={!practiceAnswer}
                   />
                   {practiceAnswer && (
                     <Card className={`rounded-2xl shadow-sm ${practiceAnswer === practiceQuestion.correct_answer ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>

@@ -13,8 +13,20 @@ interface Message {
   timestamp: number;
 }
 
+function stripLatex(text: string): string {
+  // Convert common LaTeX subscript/superscript, strip $ delimiters
+  return text
+    .replace(/\$([^$]+)\$/g, (_, inner) =>
+      inner
+        .replace(/_\{([^}]+)\}/g, (__, sub) => sub.split("").map((c: string) => "₀₁₂₃₄₅₆₇₈₉".includes(c) ? c : c).join(""))
+        .replace(/_(\d)/g, (__, d) => "₀₁₂₃₄₅₆₇₈₉"[Number(d)])
+        .replace(/\^\{([^}]+)\}/g, (__, sup) => sup)
+        .replace(/\^(\d)/g, (__, d) => "⁰¹²³⁴⁵⁶⁷⁸⁹"[Number(d)])
+    );
+}
+
 function renderMarkdown(md: string): React.ReactNode {
-  const lines = md.split("\n");
+  const lines = stripLatex(md).split("\n");
   const nodes: React.ReactNode[] = [];
   let listItems: string[] = [];
 

@@ -16,7 +16,7 @@ const modes = [
     stats: [
       { icon: Clock, label: "60 minutes" },
       { icon: Target, label: "39 questions" },
-      { icon: Layers, label: "C2 → A2" }
+      { icon: Layers, label: "A1 → C2" }
     ],
     cta: "Start Mock Exam"
   },
@@ -61,10 +61,9 @@ export default function ReadingPage() {
         <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
           <div className="flex flex-wrap items-start gap-6">
             {[
-              { label: "C2",    range: "Q 1–10",  color: "bg-rose-100 text-rose-700" },
-              { label: "C1/B2", range: "Q 11–20", color: "bg-amber-100 text-amber-700" },
-              { label: "B1",    range: "Q 21–30", color: "bg-emerald-100 text-emerald-700" },
-              { label: "A2/A1", range: "Q 31–39", color: "bg-indigo-100 text-indigo-700" },
+              { label: "A1-A2", range: "Q 1–13",  color: "bg-indigo-100 text-indigo-700" },
+              { label: "B1-B2", range: "Q 14–26", color: "bg-emerald-100 text-emerald-700" },
+              { label: "C1-C2", range: "Q 27–39", color: "bg-rose-100 text-rose-700" },
             ].map(({ label, range, color }) => (
               <div key={label} className="flex items-center gap-2">
                 <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${color}`}>{label}</span>
@@ -101,7 +100,7 @@ export default function ReadingPage() {
 
                   <Link
                     href={mode.href}
-                    className={`inline-flex items-center justify-center gap-2 rounded-xl ${mode.accent} px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90`}
+                    className={`mt-auto inline-flex items-center justify-center gap-2 rounded-xl ${mode.accent} px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90`}
                   >
                     {mode.cta}
                     <ArrowRight className="h-4 w-4" />
