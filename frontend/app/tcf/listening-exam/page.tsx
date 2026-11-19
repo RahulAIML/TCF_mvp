@@ -407,7 +407,6 @@ export default function ListeningExamPage() {
   const handlePracticeAnswer = (value: AnswerOption) => {
     if (practiceAnswer) return;
     setPracticeAnswer(value);
-    setShowTranscript(true);
     if (practiceQuestion) {
       setPracticeScore((prev) => ({
         correct: prev.correct + (value === practiceQuestion.correct_answer ? 1 : 0),
@@ -567,18 +566,15 @@ export default function ListeningExamPage() {
                     questionNumber={practiceCount - 1}
                     selectedAnswer={practiceAnswer}
                     onSelect={handlePracticeAnswer}
-                    maxPlays={MAX_PLAYS}
-                    playCount={practicePlayCount}
                     onPlay={handlePracticePlay}
                     showTranscript={showTranscript}
-                    onToggleTranscript={practiceAnswer ? () => setShowTranscript((prev) => !prev) : undefined}
+                    onToggleTranscript={() => setShowTranscript((prev) => !prev)}
                     onTranscriptSelect={handleTranscriptSelection}
                     translationText={transcriptTranslations[`practice-${practiceCount}`]}
                     onTranslate={() => void handleTranslateTranscript(practiceQuestion.script, `practice-${practiceCount}`)}
                     isTranslating={isTranslating}
                     showTranslation={showTranslation}
-                    replayPlays={!!practiceAnswer}
-                    hideReplay={!practiceAnswer}
+                    replayPlays={true}
                   />
                   {practiceAnswer && (
                     <Card className={`rounded-2xl shadow-sm ${practiceAnswer === practiceQuestion.correct_answer ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
