@@ -408,33 +408,72 @@ def _extract_dialogue_speakers(script: str) -> list[str]:
     return seen if len(seen) >= 2 else []
 
 
+_DIALOGUE_VOICE_IDS = ["fr-FR-male-1", "fr-FR-female-1", "fr-FR-male-2", "fr-FR-female-2"]
+
+
+def _generate_dialogue_audio_segmented(script: str, speakers: list[str], question_number: int, session_id: str | None) -> str:
+    """Generate dialogue TTS by synthesising each speaker's lines separately with distinct voices."""
+    from tts_service import synthesize as _tts_synthesize
+
+    speaker_voice = {name: _DIALOGUE_VOICE_IDS[i % len(_DIALOGUE_VOICE_IDS)] for i, name in enumerate(speakers)}
+
+    segments: list[tuple[str, str]] = []
+    current_speaker: str | None = None
+    current_lines: list[str] = []
+
+    for line in script.splitlines():
+        m = _SPEAKER_LINE_RE.match(line)
+        if m:
+            name = m.group(1).strip()
+            if name in speaker_voice:
+                if current_speaker and current_lines:
+                    segments.append((current_speaker, " ".join(current_lines)))
+                current_speaker = name
+                rest = line[m.end():].strip()
+                current_lines = [rest] if rest else []
+                continue
+        if current_speaker and line.strip():
+            current_lines.append(line.strip())
+    if current_speaker and current_lines:
+        segments.append((current_speaker, " ".join(current_lines)))
+
+    if not segments:
+        raise RuntimeError("No dialogue segments found in script.")
+
+    logger.info("Dialogue TTS (segmented): %d segments, speaker→voice=%s", len(segments), speaker_voice)
+
+    audio_parts: list[bytes] = []
+    ext = "mp3"
+    for speaker, text in segments:
+        if not text.strip():
+            continue
+        result = _tts_synthesize(text, speaker_voice[speaker])
+        audio_parts.append(result["data"])
+        ext = result["extension"]
+
+    if not audio_parts:
+        raise RuntimeError("No audio segments generated.")
+
+    os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
+    combined = b"".join(audio_parts)
+    file_name = f"tcf_audio_{question_number}_{session_id or 'global'}_{uuid.uuid4().hex[:8]}.{ext}"
+    with open(os.path.join(AUDIO_STORAGE_PATH, file_name), "wb") as f:
+        f.write(combined)
+
+    logger.info("Dialogue TTS complete: %d segments → %s (%d bytes)", len(audio_parts), file_name, len(combined))
+    return f"/audio/{file_name}"
+
+
 def _generate_gemini_tts_audio(script: str, question_number: int, session_id: str | None) -> str:
+    speakers = _extract_dialogue_speakers(script)
+    if speakers:
+        return _generate_dialogue_audio_segmented(script, speakers, question_number, session_id)
+
     _ensure_api_key()
     os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
     client = genai_client.Client(api_key=API_KEY)
 
-    speakers = _extract_dialogue_speakers(script)
-    if speakers:
-        speaker_configs = [
-            types.SpeakerVoiceConfig(
-                speaker=name,
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name=_DIALOGUE_VOICE_POOL[i % len(_DIALOGUE_VOICE_POOL)]
-                    )
-                ),
-            )
-            for i, name in enumerate(speakers)
-        ]
-        speech_config = types.SpeechConfig(
-            multi_speaker_voice_config=types.MultiSpeakerVoiceConfig(
-                speaker_voice_configs=speaker_configs
-            )
-        )
-        logger.info("Gemini TTS: dialogue detected — speakers=%s voices=%s",
-                    speakers, [_DIALOGUE_VOICE_POOL[i % len(_DIALOGUE_VOICE_POOL)] for i in range(len(speakers))])
-    else:
-        speech_config = types.SpeechConfig(
+    speech_config = types.SpeechConfig(
             voice_config=types.VoiceConfig(
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(
                     voice_name=random.choice(["Kore", "Charon", "Fenrir", "Aoede", "Puck", "Leda"])
@@ -480,7 +519,11 @@ def _generate_gemini_tts_audio(script: str, question_number: int, session_id: st
 
 
 def _generate_tts_audio(script: str, question_number: int, session_id: str | None) -> str:
-    """Generate TTS audio. Tries ElevenLabs first, falls back to Gemini TTS."""
+    """Generate TTS audio. Dialogue scripts get per-speaker voices; monologues use ElevenLabs then Gemini."""
+    speakers = _extract_dialogue_speakers(script)
+    if speakers:
+        return _generate_dialogue_audio_segmented(script, speakers, question_number, session_id)
+
     if not ELEVENLABS_API_KEY or not ELEVENLABS_VOICE_ID:
         return _generate_gemini_tts_audio(script, question_number, session_id)
 
