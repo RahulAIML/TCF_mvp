@@ -411,8 +411,74 @@ def _extract_dialogue_speakers(script: str) -> list[str]:
 _DIALOGUE_VOICE_IDS = ["fr-FR-male-1", "fr-FR-female-1", "fr-FR-male-2", "fr-FR-female-2"]
 
 
+def _generate_gemini_multispeaker_tts(script: str, speakers: list[str], question_number: int, session_id: str | None) -> str:
+    """Gemini multi-speaker TTS — one API call, natural prosody, distinct prebuilt voices per speaker."""
+    _ensure_api_key()
+    os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
+    client = genai_client.Client(api_key=API_KEY)
+
+    speaker_configs = [
+        types.SpeakerVoiceConfig(
+            speaker=name,
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=_DIALOGUE_VOICE_POOL[i % len(_DIALOGUE_VOICE_POOL)]
+                )
+            ),
+        )
+        for i, name in enumerate(speakers)
+    ]
+    logger.info("Gemini multi-speaker TTS: speakers=%s voices=%s",
+                speakers, [_DIALOGUE_VOICE_POOL[i % len(_DIALOGUE_VOICE_POOL)] for i in range(len(speakers))])
+
+    response = client.models.generate_content(
+        model=GEMINI_TTS_MODEL,
+        # Pass as Content object so the SDK sends speaker labels correctly
+        contents=[types.Content(role="user", parts=[types.Part(text=script)])],
+        config=types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
+            speech_config=types.SpeechConfig(
+                multi_speaker_voice_config=types.MultiSpeakerVoiceConfig(
+                    speaker_voice_configs=speaker_configs
+                )
+            ),
+        ),
+    )
+
+    audio_bytes = response.candidates[0].content.parts[0].inline_data.data
+    if not audio_bytes:
+        raise RuntimeError("Gemini multi-speaker TTS returned empty audio.")
+
+    # Detect whether response is already WAV (RIFF header) or raw 24kHz PCM
+    if audio_bytes[:4] == b"RIFF":
+        output_bytes = audio_bytes
+    else:
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(24000)
+            wf.writeframes(audio_bytes)
+        output_bytes = buf.getvalue()
+
+    file_name = f"tcf_audio_{question_number}_{session_id or 'global'}_{uuid.uuid4().hex[:8]}.wav"
+    with open(os.path.join(AUDIO_STORAGE_PATH, file_name), "wb") as f:
+        f.write(output_bytes)
+    logger.info("Gemini multi-speaker TTS success: %s (%d bytes)", file_name, len(output_bytes))
+    return f"/audio/{file_name}"
+
+
+def _generate_dialogue_audio(script: str, speakers: list[str], question_number: int, session_id: str | None) -> str:
+    """Try corrected Gemini multi-speaker first; fall back to ElevenLabs per-segment on any error."""
+    try:
+        return _generate_gemini_multispeaker_tts(script, speakers, question_number, session_id)
+    except Exception as err:
+        logger.warning("Gemini multi-speaker TTS failed (%s) — falling back to ElevenLabs segmented.", err)
+        return _generate_dialogue_audio_segmented(script, speakers, question_number, session_id)
+
+
 def _generate_dialogue_audio_segmented(script: str, speakers: list[str], question_number: int, session_id: str | None) -> str:
-    """Generate dialogue TTS by synthesising each speaker's lines separately with distinct voices."""
+    """ElevenLabs fallback: synthesise each speaker's lines separately with distinct voices."""
     from tts_service import synthesize_elevenlabs as _tts_synthesize
 
     speaker_voice = {name: _DIALOGUE_VOICE_IDS[i % len(_DIALOGUE_VOICE_IDS)] for i, name in enumerate(speakers)}
@@ -467,7 +533,7 @@ def _generate_dialogue_audio_segmented(script: str, speakers: list[str], questio
 def _generate_gemini_tts_audio(script: str, question_number: int, session_id: str | None) -> str:
     speakers = _extract_dialogue_speakers(script)
     if speakers:
-        return _generate_dialogue_audio_segmented(script, speakers, question_number, session_id)
+        return _generate_dialogue_audio(script, speakers, question_number, session_id)
 
     _ensure_api_key()
     os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
@@ -522,7 +588,7 @@ def _generate_tts_audio(script: str, question_number: int, session_id: str | Non
     """Generate TTS audio. Dialogue scripts get per-speaker voices; monologues use ElevenLabs then Gemini."""
     speakers = _extract_dialogue_speakers(script)
     if speakers:
-        return _generate_dialogue_audio_segmented(script, speakers, question_number, session_id)
+        return _generate_dialogue_audio(script, speakers, question_number, session_id)
 
     if not ELEVENLABS_API_KEY or not ELEVENLABS_VOICE_ID:
         return _generate_gemini_tts_audio(script, question_number, session_id)
