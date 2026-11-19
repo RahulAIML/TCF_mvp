@@ -607,8 +607,8 @@ export default function ListeningExamPage() {
                 <CardContent className="p-4 space-y-2">
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Practice Tips</p>
                   <ul className="space-y-1.5 text-xs text-slate-500">
-                    <li className="flex gap-2"><span className="text-slate-300">•</span>Audio plays once per question</li>
-                    <li className="flex gap-2"><span className="text-slate-300">•</span>Transcript revealed after you answer</li>
+                    <li className="flex gap-2"><span className="text-slate-300">•</span>Listen as many times as you need</li>
+                    <li className="flex gap-2"><span className="text-slate-300">•</span>Show transcript anytime — before or after answering</li>
                     <li className="flex gap-2"><span className="text-slate-300">•</span>Use the translation toggle inside the transcript</li>
                     <li className="flex gap-2"><span className="text-slate-300">•</span>Select transcript text → Phrase Helper auto-fills</li>
                   </ul>

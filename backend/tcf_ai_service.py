@@ -393,7 +393,19 @@ def _ensure_elevenlabs_config() -> None:
         raise RuntimeError("Missing ELEVENLABS_VOICE_ID for ElevenLabs TTS.")
 
 
-_DIALOGUE_RE = re.compile(r"^Personne [AB]\s*:", re.MULTILINE)
+# Matches "Speaker : text" at the start of a line — catches "Personne A :", "Journaliste :", "Marc :", etc.
+_SPEAKER_LINE_RE = re.compile(r"^([\wÀ-ž][\wÀ-ž\s]{0,30}?)\s*:", re.MULTILINE)
+_DIALOGUE_VOICE_POOL = ["Puck", "Aoede", "Fenrir", "Leda", "Kore", "Charon"]
+
+
+def _extract_dialogue_speakers(script: str) -> list[str]:
+    """Return unique speaker names in order of first appearance, or [] if not a dialogue."""
+    seen: list[str] = []
+    for m in _SPEAKER_LINE_RE.finditer(script):
+        name = m.group(1).strip()
+        if name and name not in seen:
+            seen.append(name)
+    return seen if len(seen) >= 2 else []
 
 
 def _generate_gemini_tts_audio(script: str, question_number: int, session_id: str | None) -> str:
@@ -401,27 +413,26 @@ def _generate_gemini_tts_audio(script: str, question_number: int, session_id: st
     os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
     client = genai_client.Client(api_key=API_KEY)
 
-    is_dialogue = bool(_DIALOGUE_RE.search(script))
-    if is_dialogue:
+    speakers = _extract_dialogue_speakers(script)
+    if speakers:
+        speaker_configs = [
+            types.SpeakerVoiceConfig(
+                speaker=name,
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=_DIALOGUE_VOICE_POOL[i % len(_DIALOGUE_VOICE_POOL)]
+                    )
+                ),
+            )
+            for i, name in enumerate(speakers)
+        ]
         speech_config = types.SpeechConfig(
             multi_speaker_voice_config=types.MultiSpeakerVoiceConfig(
-                speaker_voice_configs=[
-                    types.SpeakerVoiceConfig(
-                        speaker="Personne A",
-                        voice_config=types.VoiceConfig(
-                            prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Puck")
-                        ),
-                    ),
-                    types.SpeakerVoiceConfig(
-                        speaker="Personne B",
-                        voice_config=types.VoiceConfig(
-                            prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Aoede")
-                        ),
-                    ),
-                ]
+                speaker_voice_configs=speaker_configs
             )
         )
-        logger.info("Gemini TTS: dialogue script detected — using multi-speaker (Puck / Aoede)")
+        logger.info("Gemini TTS: dialogue detected — speakers=%s voices=%s",
+                    speakers, [_DIALOGUE_VOICE_POOL[i % len(_DIALOGUE_VOICE_POOL)] for i in range(len(speakers))])
     else:
         speech_config = types.SpeechConfig(
             voice_config=types.VoiceConfig(
