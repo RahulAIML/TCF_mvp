@@ -311,6 +311,19 @@ def _generate_via_gemini(text: str, voice: VoiceConfig) -> AudioResult:
     return {"data": _pcm_to_wav(pcm_bytes), "extension": "wav", "mime_type": "audio/wav", "provider": "gemini"}
 
 
+def synthesize_elevenlabs(text: str, voice_id: str) -> AudioResult:
+    """
+    Generate audio via ElevenLabs only — no Gemini fallback.
+    Use for cases where a real human-sounding distinct voice is required (e.g. dialogue TTS).
+    """
+    text = text.strip()
+    if not text:
+        raise ValueError("Text must not be empty.")
+    if len(text) > MAX_TEXT_LENGTH:
+        raise ValueError(f"Text exceeds maximum length of {MAX_TEXT_LENGTH} characters.")
+    return _generate_via_elevenlabs(text, get_voice(voice_id))
+
+
 def synthesize(text: str, voice_id: str) -> AudioResult:
     """
     Generate the audio for `text` with the requested voice and return it (nothing is written to disk).

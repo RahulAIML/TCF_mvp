@@ -413,7 +413,7 @@ _DIALOGUE_VOICE_IDS = ["fr-FR-male-1", "fr-FR-female-1", "fr-FR-male-2", "fr-FR-
 
 def _generate_dialogue_audio_segmented(script: str, speakers: list[str], question_number: int, session_id: str | None) -> str:
     """Generate dialogue TTS by synthesising each speaker's lines separately with distinct voices."""
-    from tts_service import synthesize as _tts_synthesize
+    from tts_service import synthesize_elevenlabs as _tts_synthesize
 
     speaker_voice = {name: _DIALOGUE_VOICE_IDS[i % len(_DIALOGUE_VOICE_IDS)] for i, name in enumerate(speakers)}
 
