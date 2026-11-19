@@ -393,23 +393,51 @@ def _ensure_elevenlabs_config() -> None:
         raise RuntimeError("Missing ELEVENLABS_VOICE_ID for ElevenLabs TTS.")
 
 
+_DIALOGUE_RE = re.compile(r"^Personne [AB]\s*:", re.MULTILINE)
+
+
 def _generate_gemini_tts_audio(script: str, question_number: int, session_id: str | None) -> str:
     _ensure_api_key()
     os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
     client = genai_client.Client(api_key=API_KEY)
+
+    is_dialogue = bool(_DIALOGUE_RE.search(script))
+    if is_dialogue:
+        speech_config = types.SpeechConfig(
+            multi_speaker_voice_config=types.MultiSpeakerVoiceConfig(
+                speaker_voice_configs=[
+                    types.SpeakerVoiceConfig(
+                        speaker="Personne A",
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Puck")
+                        ),
+                    ),
+                    types.SpeakerVoiceConfig(
+                        speaker="Personne B",
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Aoede")
+                        ),
+                    ),
+                ]
+            )
+        )
+        logger.info("Gemini TTS: dialogue script detected — using multi-speaker (Puck / Aoede)")
+    else:
+        speech_config = types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=random.choice(["Kore", "Charon", "Fenrir", "Aoede", "Puck", "Leda"])
+                )
+            )
+        )
+
     try:
         response = client.models.generate_content(
             model=GEMINI_TTS_MODEL,
             contents=script,
             config=types.GenerateContentConfig(
                 response_modalities=["AUDIO"],
-                speech_config=types.SpeechConfig(
-                    voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                            voice_name=random.choice(["Kore", "Charon", "Fenrir", "Aoede", "Puck", "Leda"])
-                        )
-                    )
-                )
+                speech_config=speech_config,
             )
         )
     except Exception as error:
