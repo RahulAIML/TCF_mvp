@@ -16,8 +16,8 @@ import {
 } from "react";
 import { Mic, MicOff, Loader } from "lucide-react";
 
-// NOTE: Use relative /api/... paths for browser-side fetches so they go through
-// the Next.js rewrite proxy rather than hitting the backend directly (CORS).
+// NOTE: Use bare /tcf/... paths — Next.js rewrites them to the backend via the
+// catch-all rewrite rule. /api/tcf/... would forward to backend/api/tcf/... (404).
 
 export interface AudioSpeakingRecorderHandle {
   start: () => void;
@@ -92,7 +92,7 @@ const AudioSpeakingRecorder = forwardRef<
         form.append("audio", blob, `recording.${ext}`);
         form.append("language", language.split("-")[0]); // fr-FR -> fr
 
-        const res = await fetch(`/api/tcf/transcribe-audio`, {
+        const res = await fetch(`/tcf/transcribe-audio`, {
           method: "POST",
           body: form,
         });
