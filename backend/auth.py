@@ -7,6 +7,7 @@ from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -83,7 +84,16 @@ def _get_or_create_demo_user(db: Session) -> User:
 
   user = User(email=DEMO_EMAIL, password_hash=_unusable_password_hash())
   db.add(user)
-  db.commit()
+  try:
+    db.commit()
+  except IntegrityError:
+    # Another request created the guest account at the same moment: use that one.
+    db.rollback()
+    existing = db.query(User).filter(User.email == DEMO_EMAIL).first()
+    if existing is None:
+      raise
+    _demo_password_secured = True
+    return existing
   db.refresh(user)
   _demo_password_secured = True
   return user
