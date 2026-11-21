@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   generateTcfListeningQuestion,
+  generateTcfListeningAudio,
   submitTcfListeningExam,
   explainText,
   translatePassage
@@ -165,7 +166,7 @@ export default function ListeningExamPage() {
       const request = generateTcfListeningQuestion({
         question_number: questionNumber,
         session_id: examSessionIdRef.current ?? undefined,
-        defer_audio: false
+        defer_audio: true
       }).then((question) => {
         const normalizedQuestion: ListeningQuestion = {
           ...question,
@@ -358,7 +359,7 @@ export default function ListeningExamPage() {
     return generateTcfListeningQuestion({
       question_number: qNum,
       session_id: sessionId,
-      defer_audio: false,
+      defer_audio: true,
       target_level: level,
     }).then((question) => ({
       ...question,
@@ -402,6 +403,15 @@ export default function ListeningExamPage() {
 
   const handlePracticePlay = () => {
     setPracticePlayCount((prev) => (prev >= MAX_PLAYS ? prev : prev + 1));
+  };
+
+  const handleRequestAudio = async (question: ListeningQuestion): Promise<string | undefined> => {
+    try {
+      const res = await generateTcfListeningAudio({ script: question.script, question_number: 0, session_id: undefined });
+      return res.audio_url;
+    } catch {
+      return undefined;
+    }
   };
 
   const handlePracticeAnswer = (value: AnswerOption) => {
@@ -542,7 +552,7 @@ export default function ListeningExamPage() {
                       Practice one question at a time. Level: <strong>{practiceLevel}</strong>. Transcript is enabled by default.
                     </p>
                     <Button className="mt-4" onClick={loadPracticeQuestion} disabled={loadingQuestion}>
-                      {loadingQuestion ? "Preparing audio..." : "Start Practice"}
+                      {loadingQuestion ? "Generating question..." : "Start Practice"}
                     </Button>
                   </CardContent>
                 </Card>
@@ -567,6 +577,7 @@ export default function ListeningExamPage() {
                     selectedAnswer={practiceAnswer}
                     onSelect={handlePracticeAnswer}
                     onPlay={handlePracticePlay}
+                    onRequestAudio={handleRequestAudio}
                     showTranscript={showTranscript}
                     onToggleTranscript={() => setShowTranscript((prev) => !prev)}
                     onTranscriptSelect={handleTranscriptSelection}
@@ -709,7 +720,7 @@ export default function ListeningExamPage() {
                         </div>
                         <p className="text-xs text-slate-400 flex items-center gap-1.5">
                           <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping inline-block" />
-                          Preparing audio question…
+                          Generating question…
                         </p>
                       </CardContent>
                     </Card>
@@ -724,6 +735,7 @@ export default function ListeningExamPage() {
                       maxPlays={MAX_PLAYS}
                       playCount={currentPlays}
                       onPlay={() => handlePlay(currentQuestion)}
+                      onRequestAudio={handleRequestAudio}
                       showTranscript={showTranscript}
                       onToggleTranscript={currentAnswer ? () => setShowTranscript((prev) => !prev) : undefined}
                       onTranscriptSelect={handleTranscriptSelection}
