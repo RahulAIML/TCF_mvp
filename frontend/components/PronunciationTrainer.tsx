@@ -5,28 +5,19 @@ import { Volume2, CheckCircle, AlertCircle, Loader } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import AudioRecorder from "@/components/AudioRecorder";
-
-interface PronunciationFeedback {
-  accuracy: number;
-  clarity: number;
-  mistakes: string[];
-  feedback: string;
-  improved_version: string;
-  user_text: string;
-}
+import { streamPronunciationEvaluation } from "@/services/speakingApi";
+import type { PronunciationEvalResult } from "@/types/tcf-speaking";
 
 interface PronunciationTrainerProps {
   targetText: string;
   language?: string;
-  onFeedbackReceived?: (feedback: PronunciationFeedback) => void;
+  onFeedbackReceived?: (feedback: PronunciationEvalResult) => void;
 }
 
-/** Play text via ElevenLabs (backend) with browser speechSynthesis as fallback. */
+/** Native pronunciation from the backend (ElevenLabs/Gemini), browser speech synthesis as a fallback. */
 async function playAudio(text: string, language: string): Promise<void> {
   try {
-    const res = await fetch(
-      `/api/pronunciation/guide/${encodeURIComponent(text)}?language=${language}`
-    );
+    const res = await fetch(`/api/pronunciation/guide/${encodeURIComponent(text)}?language=${language}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
@@ -37,7 +28,6 @@ async function playAudio(text: string, language: string): Promise<void> {
       audio.play().catch(() => { URL.revokeObjectURL(url); resolve(); });
     });
   } catch {
-    // Fallback: browser built-in TTS
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       return new Promise((resolve) => {
         const utt = new SpeechSynthesisUtterance(text);
@@ -52,21 +42,22 @@ async function playAudio(text: string, language: string): Promise<void> {
   }
 }
 
-const PronunciationTrainer = ({
-  targetText,
-  language = "fr",
-  onFeedbackReceived,
-}: PronunciationTrainerProps) => {
-  const [step, setStep] = useState<"ready" | "recording" | "evaluating" | "results">("ready");
-  const [feedback, setFeedback] = useState<PronunciationFeedback | null>(null);
+type Step = "ready" | "recording" | "evaluating" | "results";
+
+const PronunciationTrainer = ({ targetText, language = "fr", onFeedbackReceived }: PronunciationTrainerProps) => {
+  const [step, setStep] = useState<Step>("ready");
+  const [userText, setUserText] = useState("");
+  const [feedbackText, setFeedbackText] = useState("");
+  const [scores, setScores] = useState<PronunciationEvalResult | null>(null);
+  const [noSpeech, setNoSpeech] = useState("");
   const [error, setError] = useState("");
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [recorderKey, setRecorderKey] = useState(0);
 
   const handlePlayNative = async () => {
     if (isPlayingAudio) return;
     setIsPlayingAudio(true);
-    setError("");
     try {
       await playAudio(targetText, language);
     } finally {
@@ -75,41 +66,50 @@ const PronunciationTrainer = ({
   };
 
   const evaluatePronunciation = async () => {
-    if (!audioBlob) { setError("No audio recorded"); return; }
+    if (!audioBlob) {
+      setError("Record yourself first.");
+      return;
+    }
     setStep("evaluating");
     setError("");
+    setNoSpeech("");
+    setUserText("");
+    setFeedbackText("");
+    setScores(null);
+    let finalScores: PronunciationEvalResult | null = null;
+    let feedback = "";
     try {
-      const formData = new FormData();
-      formData.append("target_text", targetText);
-      formData.append("audio_file", audioBlob, "recording.webm");
-      formData.append("language", language);
-
-      const response = await fetch("/api/pronunciation/evaluate", {
-        method: "POST",
-        body: formData,
+      await streamPronunciationEvaluation(targetText, audioBlob, language, {
+        onTranscript: (text) => { setUserText(text); setStep("results"); },
+        onFeedbackToken: (token) => { feedback += token; setFeedbackText(feedback); },
+        onScores: (s) => { finalScores = s; setScores(s); },
+        onNoSpeech: (result) => { setNoSpeech(result.feedback); },
       });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error((errorData as { detail?: string }).detail || "Evaluation failed");
+      if (finalScores) {
+        const result: PronunciationEvalResult = { ...(finalScores as PronunciationEvalResult), feedback: feedback.trim() };
+        onFeedbackReceived?.(result);
+        setStep("results");
+      } else {
+        setStep("recording");
       }
-
-      const result: PronunciationFeedback = await response.json();
-      setFeedback(result);
-      setStep("results");
-      onFeedbackReceived?.(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Evaluation failed");
-      setStep("recording");
+      setError(err instanceof Error ? err.message : "Evaluation failed. Please try again.");
+      setStep(audioBlob ? "recording" : "ready");
     }
   };
 
   const resetTraining = () => {
     setStep("ready");
-    setFeedback(null);
+    setScores(null);
+    setUserText("");
+    setFeedbackText("");
+    setNoSpeech("");
     setError("");
     setAudioBlob(null);
+    setRecorderKey((k) => k + 1);
   };
+
+  const accuracy = scores?.accuracy ?? 0;
 
   return (
     <Card className="w-full">
@@ -121,29 +121,21 @@ const PronunciationTrainer = ({
       </CardHeader>
 
       <CardContent className="space-y-6">
-        {/* Target Text */}
         <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
           <p className="text-sm text-blue-600 mb-2">Pronounce this text:</p>
           <p className="text-xl font-semibold text-slate-900">{targetText}</p>
-          <Button
-            onClick={handlePlayNative}
-            disabled={isPlayingAudio}
-            variant="outline"
-            size="sm"
-            className="mt-3 flex gap-2"
-          >
+          <Button onClick={handlePlayNative} disabled={isPlayingAudio} variant="outline" size="sm" className="mt-3 flex gap-2">
             {isPlayingAudio
               ? <><Loader className="h-4 w-4 animate-spin" /> Playing…</>
-              : <><Volume2 className="h-4 w-4" /> Play Native Pronunciation</>
-            }
+              : <><Volume2 className="h-4 w-4" /> Play Native Pronunciation</>}
           </Button>
         </div>
 
-        {/* Audio Recorder */}
-        {step !== "results" && (
+        {step !== "results" && step !== "evaluating" && (
           <AudioRecorder
-            onAudioReady={(blob) => { setAudioBlob(blob); setStep("recording"); }}
-            onRecordingChange={(rec) => { if (rec) setStep("recording"); }}
+            key={recorderKey}
+            onAudioReady={(blob) => { setAudioBlob(blob); setStep("recording"); setNoSpeech(""); }}
+            onRecordingChange={(rec) => { if (rec) { setStep("recording"); setAudioBlob(null); } }}
             maxDurationMs={15000}
           />
         )}
@@ -152,6 +144,13 @@ const PronunciationTrainer = ({
           <div className="flex gap-2 p-3 bg-red-50 rounded-lg text-red-700 text-sm">
             <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
             {error}
+          </div>
+        )}
+
+        {noSpeech && (
+          <div className="flex gap-2 p-3 bg-amber-50 rounded-lg border border-amber-200 text-amber-800 text-sm">
+            <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+            {noSpeech}
           </div>
         )}
 
@@ -164,64 +163,66 @@ const PronunciationTrainer = ({
         {step === "evaluating" && (
           <div className="flex items-center gap-3 p-4 bg-slate-50 rounded-lg">
             <Loader className="h-5 w-5 animate-spin text-emerald-600" />
-            <span className="text-sm text-slate-600">Evaluating your pronunciation…</span>
+            <span className="text-sm text-slate-600">Listening to your recording…</span>
           </div>
         )}
 
-        {step === "results" && feedback && (
+        {step === "results" && (
           <div className="space-y-4">
+            {userText && (
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <p className="text-xs text-slate-600 mb-1">You said:</p>
+                <p className="text-sm text-slate-900 italic">&quot;{userText}&quot;</p>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 bg-slate-100 rounded-lg">
-                <p className="text-xs text-slate-600">Accuracy</p>
-                <p className="text-2xl font-bold text-slate-900">{feedback.accuracy}/10</p>
-              </div>
-              <div className="p-3 bg-slate-100 rounded-lg">
-                <p className="text-xs text-slate-600">Clarity</p>
-                <p className="text-2xl font-bold text-slate-900">{feedback.clarity}/10</p>
-              </div>
+              {[{ label: "Accuracy", value: scores?.accuracy }, { label: "Clarity", value: scores?.clarity }].map(({ label, value }) => (
+                <div key={label} className="p-3 bg-slate-100 rounded-lg">
+                  <p className="text-xs text-slate-600">{label}</p>
+                  {value === undefined
+                    ? <Loader className="mt-2 h-5 w-5 animate-spin text-slate-400" />
+                    : <p className="text-2xl font-bold text-slate-900">{value}/10</p>}
+                </div>
+              ))}
             </div>
 
-            <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-              <p className="text-xs text-slate-600 mb-1">You said:</p>
-              <p className="text-sm text-slate-900 italic">&quot;{feedback.user_text}&quot;</p>
-            </div>
-
-            {feedback.mistakes.length > 0 && (
+            {scores && scores.mistakes.length > 0 && (
               <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
-                <p className="text-xs text-amber-600 font-semibold mb-2">Mistakes detected:</p>
+                <p className="text-xs text-amber-600 font-semibold mb-2">Words to work on:</p>
                 <ul className="text-sm text-amber-700 space-y-1">
-                  {feedback.mistakes.map((m, i) => <li key={i}>• {m}</li>)}
+                  {scores.mistakes.map((m, i) => <li key={i}>• {m}</li>)}
                 </ul>
               </div>
             )}
 
-            <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
-              <p className="text-sm text-slate-900">{feedback.feedback}</p>
-            </div>
-
-            <div className="p-3 bg-green-50 rounded-lg border border-green-200">
-              <p className="text-xs text-green-600 font-semibold mb-2">Correct Pronunciation:</p>
-              <p className="text-sm text-slate-900 font-medium">{feedback.improved_version}</p>
-            </div>
-
-            <div className={`p-3 rounded-lg text-center ${
-              feedback.accuracy >= 8 ? "bg-green-100 text-green-700"
-              : feedback.accuracy >= 6 ? "bg-yellow-100 text-yellow-700"
-              : "bg-red-100 text-red-700"
-            }`}>
-              <div className="flex gap-2 items-center justify-center">
-                {feedback.accuracy >= 6
-                  ? <CheckCircle className="h-4 w-4" />
-                  : <AlertCircle className="h-4 w-4" />}
-                <span className="font-semibold">
-                  {feedback.accuracy >= 8 ? "Excellent pronunciation!"
-                    : feedback.accuracy >= 6 ? "Good, but needs improvement"
-                    : "Practice more for better results"}
-                </span>
+            {feedbackText && (
+              <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                <p className="text-sm text-slate-900">{feedbackText}</p>
               </div>
-            </div>
+            )}
 
-            <Button onClick={resetTraining} variant="outline" className="w-full">
+            {scores?.improved_version && (
+              <div className="p-3 bg-green-50 rounded-lg border border-green-200">
+                <p className="text-xs text-green-600 font-semibold mb-2">Correct Pronunciation:</p>
+                <p className="text-sm text-slate-900 font-medium">{scores.improved_version}</p>
+              </div>
+            )}
+
+            {scores && (
+              <div className={`p-3 rounded-lg text-center ${
+                accuracy >= 8 ? "bg-green-100 text-green-700" : accuracy >= 6 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-700"
+              }`}>
+                <div className="flex gap-2 items-center justify-center">
+                  {accuracy >= 6 ? <CheckCircle className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+                  <span className="font-semibold">
+                    {accuracy >= 8 ? "Excellent pronunciation!" : accuracy >= 6 ? "Good, but needs improvement" : "Practice more for better results"}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <Button onClick={resetTraining} variant="outline" className="w-full" disabled={!scores && !error}>
               Try Again
             </Button>
           </div>

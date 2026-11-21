@@ -564,12 +564,21 @@ class TcfConversationRequest(BaseModel):
   hints: bool = False
   session_id: str | None = None
   session_topic: str | None = None
+  examiner_name: str | None = None
 
 
 class TcfConversationResponse(BaseModel):
   reply: str
   audio_url: str | None = None
   session_topic: str | None = None
+  examiner_name: str | None = None
+
+
+class TcfSpeakingOpeningRequest(BaseModel):
+  task_type: TcfSpeakingTaskType
+  mode: TcfSpeakingMode | None = None
+  hints: bool = False
+  session_id: str | None = None
 
 
 class TcfSpeakingEvaluationRequest(BaseModel):
@@ -585,6 +594,7 @@ class TcfSpeakingEvaluationResponse(BaseModel):
   interaction: int
   feedback: List[str]
   improved_response: str
+  cefr_level: str | None = None
 
 
 # ── Learn Module ────────────────────────────────────────────────────────────
@@ -679,78 +689,6 @@ class LearnSaveSessionRequest(BaseModel):
   exercises_completed: int = 0
 
 
-# ── ENHANCED SPEAKING MODULE ────────────────────────────────────────────────
-
-class EnhancedConversationMessage(BaseModel):
-  """Extended conversation message with audio support for speaking module."""
-  role: Literal["examiner", "user"]
-  content: str
-  audio_url: str | None = None  # URL to audio file (examiner TTS or user recording)
-  timestamp: int | None = None  # Unix timestamp
-
-
-class SpeakingSessionInitRequest(BaseModel):
-  """Initialize a speaking session with topic and task type."""
-  task_type: TcfSpeakingTaskType
-  mode: TcfSpeakingMode = "practice"
-
-
-class SpeakingSessionInitResponse(BaseModel):
-  """Response with session initialization details."""
-  session_id: str
-  topic: str
-  initial_question: str
-  initial_audio_url: str | None = None
-
-
-class EnhancedTcfConversationRequest(BaseModel):
-  """Enhanced conversation request with conversation context tracking."""
-  session_id: str
-  message: str  # User's spoken response (transcribed)
-  user_audio_url: str | None = None  # URL to user's recorded audio blob
-  history: List[EnhancedConversationMessage] = Field(default_factory=list)
-  task_type: TcfSpeakingTaskType
-  mode: TcfSpeakingMode = "practice"
-  exchange_count: int = 0  # Track number of exchanges (max 5)
-
-
-class EnhancedTcfConversationResponse(BaseModel):
-  """Enhanced response with follow-up questions and context awareness."""
-  session_id: str
-  reply: str  # Examiner's next question/statement
-  audio_url: str | None = None  # TTS-generated audio
-  topic: str  # Persistent topic for session
-  exchange_count: int  # Incremented exchange counter
-  is_complete: bool = False  # True if 5 exchanges reached
-  follow_up_category: str | None = None  # "follow_up", "clarification", "deepening"
-
-
-class UserAudioBlobRequest(BaseModel):
-  """Store user's audio blob during speaking test."""
-  session_id: str
-  exchange_number: int
-  audio_data: str  # Base64-encoded audio blob
-  transcript: str | None = None  # User's transcribed response
-
-
-class UserAudioBlobResponse(BaseModel):
-  """Response with stored audio URL."""
-  audio_url: str
-  stored_successfully: bool
-
-
-class EnhancedSpeakingEvaluationResponse(BaseModel):
-  """Realistic evaluation with multiple scoring criteria."""
-  transcription_accuracy: float  # 0-10: How accurately was speech recognized
-  grammar_score: float  # 0-10: Grammar correctness
-  relevance_score: float  # 0-10: Answer relevance to question
-  length_score: float  # 0-10: Response length/completeness
-  overall_score: float  # Weighted average
-  feedback: List[str]
-  recommendations: List[str]
-  should_improve: bool  # True if score < 6
-
-
 # ── ENHANCED WRITING MODULE ────────────────────────────────────────────────
 
 class WritingStepFeedbackRequest(BaseModel):
@@ -835,6 +773,7 @@ class PronunciationEvaluationResponse(BaseModel):
   feedback: str  # Explanation
   improved_version: str  # Correction guide
   user_text: str  # What user actually said
+  no_speech: bool = False
 
 
 # ── VOCABULARY MANAGEMENT ────────────────────────────────────────────────────
@@ -843,8 +782,23 @@ class VocabularyWordRequest(BaseModel):
   """Request to generate vocabulary words"""
   level: str = "A2"  # A1, A2, B1, B2, C1, C2
   count: int = 5
-  topic: str | None = None  # Optional topic
+  topic: str | None = Field(default=None, max_length=80)
   language: str = "fr"
+  session_id: str | None = Field(default=None, max_length=100)
+
+  @field_validator("count", mode="before")
+  @classmethod
+  def clamp_count(cls, value: object) -> int:
+    try:
+      return max(1, min(20, int(value)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+      return 5
+
+  @field_validator("level", mode="before")
+  @classmethod
+  def normalize_level(cls, value: object) -> str:
+    level = str(value or "A2").strip().upper()
+    return level if level in {"A1", "A2", "B1", "B2", "C1", "C2"} else "A2"
 
 
 class VocabularyWordItem(BaseModel):

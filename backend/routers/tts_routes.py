@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user, get_optional_user
 from database import SessionLocal, get_db
+from guest import is_guest
 from models import TtsAudioHistory, User
 from schemas import TtsGenerateRequest, TtsHistoryItem, TtsVoice
 from tts_service import generate_tts_audio, get_voice, list_active_voices, list_languages
@@ -45,18 +46,24 @@ async def get_languages(_user: User = Depends(get_optional_user)) -> list[dict]:
 
 
 @router.post("/generate")
-async def post_generate_tts(
+def post_generate_tts(
     payload: TtsGenerateRequest,
     user: User = Depends(get_optional_user),
-    db: Session = Depends(get_db),
 ) -> dict:
     """Start generation in a background thread; return job_id immediately."""
+    try:
+        voice = get_voice(payload.voice_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Cette voix n'est pas disponible.") from exc
+    if not payload.text.strip():
+        raise HTTPException(status_code=400, detail="Le texte est vide.")
     job_id = str(uuid4())
     with _lock:
         _evict()
         _jobs[job_id] = {"status": "pending", "audio_url": None, "error": None}
 
-    user_id = user.id if user else None
+    # Guests share one demo account: their history lives in the browser, not the database.
+    user_id = None if is_guest(user) else user.id
 
     def _run() -> None:
         try:
@@ -68,7 +75,6 @@ async def post_generate_tts(
             if user_id is not None:
                 session = SessionLocal()
                 try:
-                    voice = get_voice(payload.voice_id)
                     session.add(TtsAudioHistory(
                         user_id=user_id,
                         audio_url=audio_url,
@@ -87,7 +93,7 @@ async def post_generate_tts(
             logger.error("TTS job %s failed: %s", job_id, exc)
             with _lock:
                 _jobs[job_id]["status"] = "error"
-                _jobs[job_id]["error"] = str(exc)
+                _jobs[job_id]["error"] = "La génération audio a échoué. Réessayez."
 
     threading.Thread(target=_run, daemon=True).start()
     return {"job_id": job_id, "status": "pending"}
@@ -104,7 +110,7 @@ async def get_tts_job(job_id: str) -> dict:
 
 
 @router.get("/history", response_model=list[TtsHistoryItem])
-async def get_history(
+def get_history(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[TtsHistoryItem]:
@@ -129,7 +135,7 @@ async def get_history(
 
 
 @router.delete("/history/{item_id}", status_code=204)
-async def delete_history_item(
+def delete_history_item(
     item_id: int,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),

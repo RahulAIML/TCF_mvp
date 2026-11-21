@@ -15,7 +15,7 @@ const SAMPLE_WORDS_FR = [
   { text: "Je m'appelle", phonetic: "ʒə mapɛl", level: "A1" },
   { text: "S'il vous plaît", phonetic: "sil vu plɛ", level: "A1" },
   { text: "Au revoir", phonetic: "o ʁəvwaʁ", level: "A1" },
-  { text: "Comment allez-vous?", phonetic: "kɔmɑ̃ tale vu", level: "A2" },
+  { text: "Comment allez-vous ?", phonetic: "kɔmɑ̃ tale vu", level: "A2" },
   { text: "Je voudrais un café", phonetic: "ʒə vudʁɛ œ̃ kafe", level: "A2" },
   { text: "L'environnement", phonetic: "lɑ̃viʁɔnmɑ̃", level: "B1" },
   { text: "La citoyenneté", phonetic: "la sitwajɛnte", level: "B2" },
@@ -157,6 +157,7 @@ export default function PronunciationPage() {
                   {activeText}
                 </div>
                 <PronunciationTrainer
+                  key={activeText}
                   targetText={activeText}
                   language={language}
                   onFeedbackReceived={handleFeedback}

@@ -1,6 +1,5 @@
 """
-Gemini Service - Centralized AI Processing
-Handles transcription, pronunciation evaluation, vocabulary generation, and speaking evaluation.
+Gemini Service - transcription, pronunciation evaluation, vocabulary generation and fallback TTS.
 """
 
 import base64
@@ -9,63 +8,150 @@ import json
 import logging
 import os
 import random
+import re
 import wave
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 import requests as _requests
-from google import genai as genai_client
 from google.genai import types
 from dotenv import load_dotenv
+
+from audio_mime import NO_SPEECH_MESSAGE, NO_SPEECH_TOKEN, base_mime, clean_transcript
+from tcf_ai_service import _gemini_generate
 
 load_dotenv()
 
 logger = logging.getLogger("gemini_service")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts")
+
+MAX_VOCAB_COUNT = 20
+
+_LANG_NAMES = {"fr": "French", "en": "English", "es": "Spanish", "pt": "Portuguese"}
+
+
+def _lang_name(language: str) -> str:
+    return _LANG_NAMES.get((language or "fr").split("-")[0].lower(), "French")
+
+
+def _strip_code_fence(text: str) -> str:
+    text = text.strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    return text.strip()
+
+
+def _parse_json(text: str) -> Any:
+    cleaned = _strip_code_fence(text)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", cleaned)
+        if not match:
+            raise
+        return json.loads(match.group(0))
+
+
+def _clamp_score(value: Any) -> float:
+    try:
+        return round(max(0.0, min(10.0, float(value))), 1)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def no_speech_pronunciation_result(expected_text: str) -> Dict[str, Any]:
+    return {
+        "accuracy": 0,
+        "clarity": 0,
+        "mistakes": [],
+        "feedback": NO_SPEECH_MESSAGE,
+        "improved_version": expected_text,
+        "user_text": "",
+        "no_speech": True,
+    }
 
 
 class GeminiService:
-    """Centralized Gemini API service for TCF platform"""
+    """Gemini calls for the speaking, pronunciation and vocabulary modules."""
+
+    @staticmethod
+    def transcribe_bytes(audio_data: bytes, language: str = "fr", mime_type: str = "audio/webm") -> str:
+        """Verbatim transcript, or "" when the recording has no intelligible speech."""
+        if not audio_data:
+            return ""
+        prompt = (
+            f"Transcribe the {_lang_name(language)} speech in this recording verbatim.\n"
+            f"- If there is no intelligible human speech (silence, background noise, breathing, music, "
+            f"a click), reply with exactly {NO_SPEECH_TOKEN} and nothing else.\n"
+            "- Never guess, complete or invent words that were not clearly spoken.\n"
+            "- Return ONLY the transcribed text, no quotes, no commentary."
+        )
+        response = _gemini_generate(
+            [prompt, types.Part.from_bytes(data=audio_data, mime_type=base_mime(mime_type))],
+            temperature=0.0,
+        )
+        return clean_transcript(getattr(response, "text", "") or "")
 
     @staticmethod
     def transcribe_speech(audio_path: str, language: str = "fr", mime_type: str = "audio/webm") -> str:
-        """
-        Transcribe audio file to text using Gemini.
+        with open(audio_path, "rb") as audio_file:
+            return GeminiService.transcribe_bytes(audio_file.read(), language, mime_type)
 
-        Args:
-            audio_path: Path to audio file
-            language: Language code (fr, en)
+    @staticmethod
+    def _pronunciation_prompt(expected_text: str, user_text: str, language: str, with_feedback: bool) -> str:
+        feedback_field = '  "feedback": "2-3 sentences in English explaining the main issues",\n' if with_feedback else ""
+        return f"""You are a strict {_lang_name(language)} pronunciation examiner.
 
-        Returns:
-            Transcribed text
-        """
+Expected text: "{expected_text}"
+What the learner said (speech-to-text): "{user_text}"
+
+Return a JSON object:
+{{
+  "accuracy": 0-10 (how closely the spoken words match the expected text),
+  "clarity": 0-10 (how intelligible the speech was, judged from the transcription quality),
+  "mistakes": ["each expected word or phrase that was missing, replaced or mispronounced"],
+{feedback_field}  "improved_version": "the expected text with a simple pronunciation guide for the difficult words"
+}}
+
+Rules:
+- Penalise missing, extra or wrong words. 10 only for a perfect match, 0 if unrelated.
+- "mistakes" lists words from the EXPECTED text only; empty list if there are none.
+- Valid JSON only."""
+
+    @staticmethod
+    def pronunciation_scores(expected_text: str, user_text: str, language: str = "fr", with_feedback: bool = True) -> Dict[str, Any]:
+        prompt = GeminiService._pronunciation_prompt(expected_text, user_text, language, with_feedback)
+        response = _gemini_generate(prompt, temperature=0.2, response_mime_type="application/json")
         try:
-            with open(audio_path, "rb") as audio_file:
-                audio_data = audio_file.read()
+            data = _parse_json(getattr(response, "text", "") or "{}")
+        except (json.JSONDecodeError, ValueError) as error:
+            raise RuntimeError(f"Pronunciation evaluation returned invalid JSON: {error}") from error
+        mistakes = data.get("mistakes") or []
+        if isinstance(mistakes, str):
+            mistakes = [m.strip() for m in mistakes.split(",") if m.strip()]
+        return {
+            "accuracy": _clamp_score(data.get("accuracy")),
+            "clarity": _clamp_score(data.get("clarity")),
+            "mistakes": [str(m).strip() for m in mistakes if str(m).strip()],
+            "feedback": str(data.get("feedback", "")).strip(),
+            "improved_version": str(data.get("improved_version", "") or expected_text).strip(),
+            "user_text": user_text,
+            "no_speech": False,
+        }
 
-            client = genai_client.Client(api_key=GEMINI_API_KEY)
+    @staticmethod
+    def stream_pronunciation_feedback(expected_text: str, user_text: str, language: str = "fr") -> Iterator[str]:
+        prompt = f"""You are a friendly but precise {_lang_name(language)} pronunciation coach.
+Expected text: "{expected_text}"
+What the learner said (speech-to-text): "{user_text}"
 
-            prompt = (
-                f"Transcribe the following {language.upper()} speech accurately and completely. "
-                "Return ONLY the transcribed text, no additional commentary."
-            )
-
-            safe_mime = mime_type if mime_type in (
-                "audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav"
-            ) else "audio/webm"
-            response = client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=[
-                    prompt,
-                    types.Part.from_bytes(data=audio_data, mime_type=safe_mime),
-                ]
-            )
-
-            return response.text.strip()
-        except Exception as e:
-            logger.error(f"Transcription failed: {str(e)}")
-            raise
+In 2 to 3 short sentences of plain English (no markdown, no lists), tell the learner what they got right,
+the most important word(s) to fix and exactly how to pronounce them. If it was a perfect match, say so briefly."""
+        for chunk in _gemini_generate(prompt, stream=True, temperature=0.3):
+            token = getattr(chunk, "text", None)
+            if token:
+                yield token
 
     @staticmethod
     def evaluate_pronunciation(
@@ -74,337 +160,98 @@ class GeminiService:
         language: str = "fr",
         mime_type: str = "audio/webm",
     ) -> Dict[str, Any]:
-        """
-        Evaluate pronunciation accuracy using Gemini.
-
-        Args:
-            expected_text: The expected/correct text
-            audio_path: Path to user's audio recording
-            language: Language code (fr, en)
-
-        Returns:
-            {
-                "accuracy": 0-10,
-                "clarity": 0-10,
-                "mistakes": [str],
-                "feedback": str,
-                "improved_version": str
-            }
-        """
-        try:
-            # First transcribe the audio
-            with open(audio_path, "rb") as audio_file:
-                audio_data = audio_file.read()
-
-            client = genai_client.Client(api_key=GEMINI_API_KEY)
-
-            # Transcribe user's speech (use actual mime type from upload)
-            transcribe_prompt = (
-                f"Transcribe the following {language.upper()} speech. Return ONLY the text."
-            )
-            # Normalize mime type to one Gemini accepts
-            safe_mime = mime_type if mime_type in (
-                "audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav"
-            ) else "audio/webm"
-
-            transcribe_response = client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=[
-                    transcribe_prompt,
-                    types.Part.from_bytes(data=audio_data, mime_type=safe_mime),
-                ]
-            )
-
-            user_text = transcribe_response.text.strip()
-
-            # Evaluate pronunciation
-            eval_prompt = f"""You are a strict pronunciation evaluator for {language.upper()}.
-
-Expected text: "{expected_text}"
-User said: "{user_text}"
-
-Compare them carefully and return a JSON object with:
-- accuracy: 0-10 (how close to expected)
-- clarity: 0-10 (how clear is pronunciation)
-- mistakes: list of specific mispronounced words or phrases
-- feedback: brief explanation of issues
-- improved_version: corrected pronunciation guide
-
-Return ONLY valid JSON, no other text.
-
-Rules:
-- Be strict on accuracy
-- Penalize missing words, wrong words, unclear pronunciation
-- Give 0 if completely wrong
-- Give 10 only if perfect match"""
-
-            eval_response = client.models.generate_content(model=GEMINI_MODEL, contents=eval_prompt)
-
-            # Parse JSON response
-            response_text = eval_response.text.strip()
-            # Handle potential markdown code blocks
-            if response_text.startswith("```json"):
-                response_text = response_text[7:]
-            if response_text.startswith("```"):
-                response_text = response_text[3:]
-            if response_text.endswith("```"):
-                response_text = response_text[:-3]
-
-            result = json.loads(response_text)
-            result["user_text"] = user_text
-
-            return result
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse pronunciation evaluation: {str(e)}")
-            return {
-                "accuracy": 5,
-                "clarity": 5,
-                "mistakes": ["Unable to evaluate"],
-                "feedback": "Technical error during evaluation",
-                "improved_version": expected_text,
-                "user_text": ""
-            }
-        except Exception as e:
-            logger.error(f"Pronunciation evaluation failed: {str(e)}")
-            raise
-
-    @staticmethod
-    def evaluate_speaking(
-        transcript: str,
-        conversation_context: List[Dict[str, str]],
-        task_type: str = "basic_interaction"
-    ) -> Dict[str, Any]:
-        """
-        Evaluate speaking response for TCF exam.
-
-        Args:
-            transcript: User's spoken response
-            conversation_context: Full conversation history
-            task_type: Type of speaking task
-
-        Returns:
-            {
-                "fluency": 0-10,
-                "grammar": 0-10,
-                "vocabulary": 0-10,
-                "relevance": 0-10,
-                "overall_score": 0-10,
-                "feedback": [str],
-                "should_improve": bool
-            }
-        """
-        try:
-            # Build conversation summary
-            context_str = ""
-            for msg in conversation_context[-6:]:  # Last 3 exchanges
-                role = "Examiner" if msg.get("role") == "examiner" else "User"
-                context_str += f"{role}: {msg.get('content', '')}\n"
-
-            client = genai_client.Client(api_key=GEMINI_API_KEY)
-
-            eval_prompt = f"""You are a TCF speaking evaluator. Assess this response:
-
-Task type: {task_type}
-Conversation context:
-{context_str}
-
-User's response: "{transcript}"
-
-Evaluate on:
-1. Fluency (0-10): smooth delivery, natural pacing
-2. Grammar (0-10): correct sentence structure, tense usage
-3. Vocabulary (0-10): appropriate and varied word choice
-4. Relevance (0-10): answers question, stays on topic
-
-Return JSON:
-{{
-    "fluency": <0-10>,
-    "grammar": <0-10>,
-    "vocabulary": <0-10>,
-    "relevance": <0-10>,
-    "overall_score": <0-10>,
-    "feedback": ["point1", "point2", "point3"],
-    "should_improve": <bool>
-}}
-
-Rules:
-- Empty response = all scores 0
-- Wrong language = low scores
-- Irrelevant answer = low relevance
-- Return ONLY JSON"""
-
-            response = client.models.generate_content(model=GEMINI_MODEL, contents=eval_prompt)
-            response_text = response.text.strip()
-
-            # Handle markdown code blocks
-            if response_text.startswith("```json"):
-                response_text = response_text[7:]
-            if response_text.startswith("```"):
-                response_text = response_text[3:]
-            if response_text.endswith("```"):
-                response_text = response_text[:-3]
-
-            result = json.loads(response_text)
-            return result
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse speaking evaluation: {str(e)}")
-            return {
-                "fluency": 0,
-                "grammar": 0,
-                "vocabulary": 0,
-                "relevance": 0,
-                "overall_score": 0,
-                "feedback": ["Evaluation error"],
-                "should_improve": True
-            }
-        except Exception as e:
-            logger.error(f"Speaking evaluation failed: {str(e)}")
-            raise
+        user_text = GeminiService.transcribe_speech(audio_path, language, mime_type)
+        if not user_text:
+            return no_speech_pronunciation_result(expected_text)
+        return GeminiService.pronunciation_scores(expected_text, user_text, language, with_feedback=True)
 
     @staticmethod
     def generate_vocabulary(
         level: str = "A2",
         count: int = 5,
         topic: Optional[str] = None,
-        language: str = "fr"
+        language: str = "fr",
+        exclude: Optional[List[str]] = None,
     ) -> List[Dict[str, str]]:
-        """
-        Generate vocabulary words for a given level.
+        """Generate `count` distinct words at a CEFR level, avoiding the `exclude` words."""
+        count = max(1, min(MAX_VOCAB_COUNT, int(count)))
+        lang = _lang_name(language)
+        topic_str = f" on the topic of '{topic}'" if topic else " across varied everyday and professional topics"
+        avoid = ""
+        if exclude:
+            sample = list(dict.fromkeys(w.strip() for w in exclude if w and w.strip()))[-80:]
+            avoid = "\nDo NOT use any of these words (already studied): " + ", ".join(sample)
+        prompt = f"""Generate {count} useful {lang} vocabulary items at CEFR level {level}{topic_str}.
+Variety seed: {random.randint(10000, 99999)}{avoid}
 
-        Args:
-            level: CEFR level (A1, A2, B1, B2, C1, C2)
-            count: Number of words to generate
-            topic: Optional topic (cooking, travel, work, etc.)
-            language: Language code (fr, en)
-
-        Returns:
-            List of vocab items: [{"word": str, "meaning": str, "example": str, "phonetic": str}]
-        """
-        try:
-            client = genai_client.Client(api_key=GEMINI_API_KEY)
-
-            topic_str = f" on the topic of '{topic}'" if topic else ""
-            seed = random.randint(1000, 9999)
-
-            vocab_prompt = f"""Generate {count} useful {language.upper()} vocabulary words at CEFR level {level}{topic_str}.
-Session seed: {seed} — choose a DIFFERENT random selection of words each time.
-
-Return as JSON array:
+Return a JSON array:
 [
   {{
-    "word": "{language.upper()} word or phrase",
-    "meaning": "English meaning (clear and concise)",
-    "example": "{language.upper()} example sentence using the word",
+    "word": "{lang} word or short expression (with article for nouns)",
+    "meaning": "English meaning, clear and concise",
+    "example": "{lang} example sentence that uses the word naturally",
     "example_translation": "English translation of the example",
-    "phonetic": "IPA or simplified pronunciation guide"
+    "phonetic": "IPA transcription"
   }}
 ]
 
 Rules:
-- {count} words total, all different from each other
-- Appropriate for CEFR {level} (not too easy, not too hard)
-- Real words actually used by native speakers
-- Vary your selection — avoid common textbook words like bonjour, merci, etc.
-- Return ONLY the JSON array, no markdown, no extra text"""
-
-            response = client.models.generate_content(model=GEMINI_MODEL, contents=vocab_prompt)
-            response_text = response.text.strip()
-
-            # Handle markdown code blocks
-            if response_text.startswith("```json"):
-                response_text = response_text[7:]
-            if response_text.startswith("```"):
-                response_text = response_text[3:]
-            if response_text.endswith("```"):
-                response_text = response_text[:-3]
-
-            vocab_list = json.loads(response_text)
-            return vocab_list
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse vocabulary generation: {str(e)}")
-            return []
-        except Exception as e:
-            logger.error(f"Vocabulary generation failed: {str(e)}")
-            raise
-
-    @staticmethod
-    def evaluate_ai_response(user_message: str) -> str:
-        """
-        Generate AI assistant response (already improved with direct answers).
-
-        Args:
-            user_message: User's question
-
-        Returns:
-            Assistant response
-        """
+- Exactly {count} items, all different from each other.
+- Genuinely at CEFR {level}: A1/A2 everyday high-frequency words, B1/B2 common abstract and work vocabulary,
+  C1/C2 precise, idiomatic or formal vocabulary that native speakers actually use (no invented or archaic words).
+- Avoid trivial textbook words (bonjour, merci, oui, chat, chien) above A1.
+- JSON only."""
+        response = _gemini_generate(prompt, temperature=0.9, response_mime_type="application/json")
         try:
-            client = genai_client.Client(api_key=GEMINI_API_KEY)
-
-            system_prompt = """You are an expert French language tutor specialized in TCF and TEF exams.
-
-Rules:
-1. ALWAYS answer directly - never ask for clarification first
-2. For vocabulary: give translation + pronunciation + example
-3. For grammar: explain simply with examples
-4. For writing: give corrected version + explanation
-5. Keep answers short by default, expand only if asked
-6. Tone: clear, helpful, teacher-like
-
-Never start with:
-- "That's a great question"
-- "Can you give more context?"
-- "Could you provide more details?"
-
-Always provide direct answers."""
-
-            response = client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=f"{system_prompt}\n\nUser question: {user_message}"
-            )
-
-            return response.text.strip()
-        except Exception as e:
-            logger.error(f"AI response generation failed: {str(e)}")
-            return "I encountered an error processing your question. Please try again."
-
+            data = _parse_json(getattr(response, "text", "") or "[]")
+        except (json.JSONDecodeError, ValueError):
+            logger.error("Vocabulary generation returned invalid JSON")
+            return []
+        if isinstance(data, dict):
+            data = data.get("words") or data.get("items") or []
+        excluded = {w.strip().lower() for w in (exclude or [])}
+        seen: set[str] = set()
+        items: List[Dict[str, str]] = []
+        for raw in data if isinstance(data, list) else []:
+            if not isinstance(raw, dict):
+                continue
+            word = str(raw.get("word", "")).strip()
+            key = word.lower()
+            if not word or key in seen or key in excluded:
+                continue
+            seen.add(key)
+            items.append({
+                "word": word,
+                "meaning": str(raw.get("meaning", "")).strip(),
+                "example": str(raw.get("example", "")).strip(),
+                "example_translation": str(raw.get("example_translation", "") or "").strip() or None,
+                "phonetic": str(raw.get("phonetic", "") or "").strip() or None,
+            })
+        return items[:count]
 
     @staticmethod
     def generate_tts(text: str, language: str = "fr") -> Optional[bytes]:
-        """
-        Generate TTS audio via Gemini 2.5 Flash TTS preview.
-        Returns WAV bytes (PCM wrapped), or None on failure.
-        Used as fallback when ElevenLabs is unavailable.
-        """
+        """Gemini TTS fallback for the pronunciation guide. WAV bytes, or None on failure."""
+        if not GEMINI_API_KEY:
+            return None
         try:
-            lang_label = "French" if language == "fr" else "English"
             url = (
                 "https://generativelanguage.googleapis.com/v1beta/"
-                f"models/gemini-3.8-flash-preview-tts:generateContent"
-                f"?key={GEMINI_API_KEY}"
+                f"models/{GEMINI_TTS_MODEL}:generateContent"
             )
             payload = {
                 "contents": [
-                    {"parts": [{"text": f"Say this {lang_label} text clearly and naturally at normal speed: {text}"}]}
+                    {"parts": [{"text": f"Say this {_lang_name(language)} text clearly and naturally at normal speed: {text}"}]}
                 ],
                 "generationConfig": {
                     "response_modalities": ["AUDIO"],
-                    "speech_config": {
-                        "voice_config": {
-                            "prebuilt_voice_config": {
-                                "voice_name": "Aoede"
-                            }
-                        }
-                    }
-                }
+                    "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": "Aoede"}}},
+                },
             }
-            resp = _requests.post(url, json=payload, timeout=20)
+            resp = _requests.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY}, timeout=20)
             resp.raise_for_status()
-            data = resp.json()
-            inline = data["candidates"][0]["content"]["parts"][0]["inlineData"]
+            inline = resp.json()["candidates"][0]["content"]["parts"][0]["inlineData"]
             pcm_bytes = base64.b64decode(inline["data"])
-
-            # Wrap raw PCM (24 kHz, 16-bit, mono) in a WAV container
             buf = io.BytesIO()
             with wave.open(buf, "wb") as wf:
                 wf.setnchannels(1)
@@ -413,9 +260,8 @@ Always provide direct answers."""
                 wf.writeframes(pcm_bytes)
             return buf.getvalue()
         except Exception as exc:
-            logger.error(f"Gemini TTS failed: {exc}")
+            logger.error("Gemini TTS failed: %s", exc)
             return None
 
 
-# Export service instance for use in routes
 gemini_service = GeminiService()

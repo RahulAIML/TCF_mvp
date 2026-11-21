@@ -17,12 +17,6 @@ import type {
 } from "@/types/listening";
 import type { ExplainTextRequest, ExplainTextResponse } from "@/types/text-helper";
 import type {
-  TcfConversationRequest,
-  TcfConversationResponse,
-  TcfSpeakingEvaluationRequest,
-  TcfSpeakingEvaluationResponse
-} from "@/types/tcf-speaking";
-import type {
   LearnAnalyzeRequest,
   LearnContentResponse,
   LearnEvaluateRequest,
@@ -309,30 +303,6 @@ export async function sendTcfWritingAssistant(
   return parseResponse<TcfWritingAssistantResponse>(res);
 }
 
-export async function sendTcfConversation(
-  payload: TcfConversationRequest
-): Promise<TcfConversationResponse> {
-  const res = await fetch(`${API_BASE_URL}/tcf/conversation`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(payload),
-    cache: "no-store"
-  });
-  return parseResponse<TcfConversationResponse>(res);
-}
-
-export async function evaluateTcfSpeaking(
-  payload: TcfSpeakingEvaluationRequest
-): Promise<TcfSpeakingEvaluationResponse> {
-  const res = await fetch(`${API_BASE_URL}/tcf/evaluate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(payload),
-    cache: "no-store"
-  });
-  return parseResponse<TcfSpeakingEvaluationResponse>(res);
-}
-
 export async function analyzeLearnContent(
   payload: LearnAnalyzeRequest
 ): Promise<LearnContentResponse> {
@@ -391,45 +361,6 @@ export async function saveLearnSession(
     cache: "no-store"
   });
   return parseResponse<LearnSessionSummary>(res);
-}
-
-export async function transcribeAudio(blob: Blob): Promise<{ transcript: string }> {
-  const form = new FormData();
-  form.append("audio", blob, "recording.webm");
-  form.append("language", "fr");
-  const res = await fetch(`${API_BASE_URL}/tcf/transcribe-audio`, {
-    method: "POST",
-    headers: { ...authHeaders() },
-    body: form,
-    cache: "no-store"
-  });
-  return parseResponse<{ transcript: string }>(res);
-}
-
-export interface PronunciationEvalResult {
-  accuracy: number;
-  clarity: number;
-  mistakes: string[];
-  feedback: string;
-  improved_version: string;
-  user_text: string;
-}
-
-export async function evaluatePronunciationAudio(
-  targetText: string,
-  blob: Blob
-): Promise<PronunciationEvalResult> {
-  const form = new FormData();
-  form.append("target_text", targetText);
-  form.append("audio_file", blob, "recording.webm");
-  form.append("language", "fr");
-  const res = await fetch(`${API_BASE_URL}/api/pronunciation/evaluate`, {
-    method: "POST",
-    headers: { ...authHeaders() },
-    body: form,
-    cache: "no-store"
-  });
-  return parseResponse<PronunciationEvalResult>(res);
 }
 
 export async function getTtsLanguages(): Promise<TtsLanguage[]> {
