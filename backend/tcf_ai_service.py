@@ -1007,6 +1007,9 @@ def generate_tcf_listening_question(
     freshness_token = _freshness_token()
     place, context = _scenario_from_seed(freshness_token)
 
+    # Pre-assign the correct answer position uniformly — prevents A/B model bias.
+    target_correct_letter = random.choice(["A", "B", "C", "D"])
+
     is_dialogue = any(kw in chosen_format for kw in [
         "dialogue", "voix", "deux personnes", "journaliste et",
         "intervenants", "collègues", "amis", "témoin", "animateurs",
@@ -1053,7 +1056,7 @@ CONSIGNES GÉNÉRALES :
 - Le script doit sonner NATUREL et AUTHENTIQUE, comme une vraie conversation ou émission.
 - NE PAS utiliser de jargon académique inventé ou incompréhensible.
 - Les 4 options de réponse doivent être PLAUSIBLES (pas d'options évidemment fausses).
-- La bonne réponse doit être placée ALÉATOIREMENT parmi A, B, C ou D.
+- La bonne réponse DOIT être la lettre {target_correct_letter}. Construis les options en conséquence.
 - La bonne réponse doit être {spec['answer_difficulty']}.
 - Écrire des distracteurs crédibles qui testent vraiment la compréhension.
 
@@ -1073,7 +1076,7 @@ FORMAT DE SORTIE — JSON valide uniquement, PAS de Markdown :
         try:
             payload = _generate_json(prompt, temperature=0.85)
             normalized = _normalize_listening_question(payload)
-            normalized["format_type"] = str(payload.get("format_type", "monologue")).strip()
+            normalized["format_type"] = chosen_format
 
             normalized = _shuffle_answer_options(normalized)
 
