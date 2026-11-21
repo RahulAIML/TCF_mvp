@@ -1,4 +1,5 @@
 ﻿import json
+import logging
 from typing import Dict
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,9 +15,10 @@ from schemas import (
   TcfSubmitExamResponse,
   TcfExamResultItem
 )
-from tcf_ai_service import generate_tcf_exam_question
+from reading_service import get_reading_question
 
 router = APIRouter(prefix="/tcf", tags=["tcf", "exam"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/generate-question", response_model=TcfGenerateQuestionResponse)
@@ -25,9 +27,13 @@ def post_generate_question(
   _user: User = Depends(get_optional_user)
 ) -> TcfGenerateQuestionResponse:
   try:
-    question = generate_tcf_exam_question(payload.question_number, payload.session_id)
+    question = get_reading_question(payload.question_number, payload.session_id, payload.target_level)
   except RuntimeError as error:
-    raise HTTPException(status_code=500, detail=str(error)) from error
+    logger.warning("Reading question generation failed: %s", error)
+    raise HTTPException(
+      status_code=503,
+      detail="Impossible de générer la question pour le moment. Veuillez réessayer."
+    ) from error
 
   return TcfGenerateQuestionResponse(
     question_number=payload.question_number,

@@ -6,7 +6,7 @@ import type {
   TcfSubmitExamResponse
 } from "@/types/tcf-exam";
 import type { DashboardSummaryResponse } from "@/types/dashboard";
-import type { PassageQuizResponse, PassageResponse } from "@/types/passage";
+import type { PassageLevel, PassageQuizResponse, PassageResponse } from "@/types/passage";
 import type {
   GenerateListeningQuestionRequest,
   ListeningQuestion,
@@ -183,10 +183,11 @@ export async function generatePassage(): Promise<PassageResponse> {
   return parseResponse<PassageResponse>(res);
 }
 
-export async function generatePassageQuiz(): Promise<PassageQuizResponse> {
+export async function generatePassageQuiz(level?: PassageLevel, sessionId?: string): Promise<PassageQuizResponse> {
   const res = await fetch(`${API_BASE_URL}/generate-passage-quiz`, {
     method: "POST",
-    headers: { ...authHeaders() },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ level, session_id: sessionId }),
     cache: "no-store"
   });
   return parseResponse<PassageQuizResponse>(res);

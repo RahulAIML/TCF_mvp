@@ -15,11 +15,20 @@ ExamQuestionType = Literal[
 ]
 
 TcfExamQuestionType = Literal[
+  "reading_a1",
+  "reading_a2",
+  "reading_b1",
+  "reading_b2",
+  "reading_c1",
+  "reading_c2",
+  # Legacy values, kept so previously stored attempts still validate.
   "part1_c2",
   "part2_b2c1",
   "part3_b1b2",
   "part4_a2"
 ]
+ReadingLevel = Literal["A1", "A2", "B1", "B2", "C1", "C2"]
+PassageLevel = Literal["A2", "B1", "B2", "C1", "C2"]
 
 
 class GenerateQuestionRequest(BaseModel):
@@ -92,6 +101,8 @@ class SubmitExamResponse(BaseModel):
 class TcfGenerateQuestionRequest(BaseModel):
   question_number: int = Field(ge=1, le=39)
   session_id: str | None = None
+  # Practice: generate at exactly this level. Exam: omitted, the level follows question_number.
+  target_level: ReadingLevel | None = None
 
 
 class TcfExamQuestion(BaseModel):
@@ -160,6 +171,11 @@ class TcfSubmitExamResponse(BaseModel):
 class PassageResponse(BaseModel):
   title: str
   passage: str
+
+
+class PassageQuizRequest(BaseModel):
+  level: PassageLevel | None = None
+  session_id: str | None = None
 
 
 class PassageQuizQuestion(BaseModel):
