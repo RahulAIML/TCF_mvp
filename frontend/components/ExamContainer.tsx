@@ -6,6 +6,8 @@ import { Card, CardContent } from "@/components/ui/card";
 interface ExamContainerProps {
   currentQuestion: number;
   totalQuestions: number;
+  /** First question number of the exam range (default 1); header and progress count within the range. */
+  startQuestion?: number;
   timer: ReactNode;
   children: ReactNode;
   title?: string;
@@ -14,11 +16,13 @@ interface ExamContainerProps {
 export default function ExamContainer({
   currentQuestion,
   totalQuestions,
+  startQuestion = 1,
   timer,
   children,
   title
 }: ExamContainerProps) {
-  const progress = Math.round((currentQuestion / totalQuestions) * 100);
+  const position = Math.min(Math.max(currentQuestion - startQuestion + 1, 1), totalQuestions);
+  const progress = Math.round((position / totalQuestions) * 100);
 
   return (
     <Card className="border-slate-200 shadow-sm rounded-2xl overflow-hidden">
@@ -27,7 +31,7 @@ export default function ExamContainer({
         <div>
           <p className="text-xs font-medium text-slate-400">{title ?? "TCF Mock Exam"}</p>
           <h2 className="text-lg font-semibold text-slate-900">
-            Question <span className="text-indigo-600">{currentQuestion}</span>
+            Question <span className="text-indigo-600">{position}</span>
             <span className="text-slate-400 font-normal"> / {totalQuestions}</span>
           </h2>
         </div>

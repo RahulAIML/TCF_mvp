@@ -4,6 +4,8 @@ import type { AnswerOption } from "@/types/exam";
 
 interface QuestionNavigatorProps {
   totalQuestions: number;
+  /** First question number shown (default 1), for exams restricted to a range such as Q20–29. */
+  startQuestion?: number;
   currentQuestion: number;
   answers: Record<number, AnswerOption | "">;
   onSelect: (questionNumber: number) => void;
@@ -11,13 +13,14 @@ interface QuestionNavigatorProps {
 
 export default function QuestionNavigator({
   totalQuestions,
+  startQuestion = 1,
   currentQuestion,
   answers,
   onSelect
 }: QuestionNavigatorProps) {
-  const items = Array.from({ length: totalQuestions }, (_, index) => index + 1);
+  const items = Array.from({ length: totalQuestions }, (_, index) => index + startQuestion);
 
-  const answeredCount = Object.values(answers).filter(Boolean).length;
+  const answeredCount = items.filter((number) => Boolean(answers[number])).length;
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">

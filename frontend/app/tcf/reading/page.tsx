@@ -9,7 +9,7 @@ const modes = [
   {
     title: "Reading Mock Exam",
     description:
-      "Simulate the full TCF Canada reading exam with 39 questions and a 60-minute countdown timer. Difficulty grouped by level.",
+      "Simulate the full TCF Canada reading exam: 39 questions from A1 to C2 and a 60-minute countdown timer. Or focus on a single level.",
     href: "/tcf/mock-exam",
     icon: BookOpenCheck,
     accent: "bg-emerald-600",
@@ -23,13 +23,13 @@ const modes = [
   {
     title: "Practice Mode",
     description:
-      "Practice one question at a time. Choose your exact CEFR level (A2, B1, B2, C1, C2). Translation toggle included.",
+      "Practise sets of 10 questions at your exact CEFR level (A1 to C2), with an end-of-set review. Translation toggle included.",
     href: "/tcf/reading-practice",
     icon: GraduationCap,
     accent: "bg-indigo-600",
     stats: [
-      { icon: Layers, label: "A2 – C2" },
-      { icon: Target, label: "1 question at a time" },
+      { icon: Layers, label: "A1 – C2" },
+      { icon: Target, label: "Sets of 10" },
       { icon: Clock, label: "No time limit" }
     ],
     cta: "Start Practice"
@@ -37,13 +37,13 @@ const modes = [
   {
     title: "Passage Analyzer",
     description:
-      "Generate a French passage, read it at your own pace, look up words, get instant explanations, and take a 10-question quiz.",
+      "Choose a level, read a French passage at your own pace, look up words, get instant explanations, and take a 10-question quiz.",
     href: "/tcf/passage-analyzer",
     icon: FileSearch,
     accent: "bg-teal-500",
     stats: [
       { icon: Target, label: "10 quiz questions" },
-      { icon: Layers, label: "A1-C2 levels" },
+      { icon: Layers, label: "A2 – C2 levels" },
       { icon: Clock, label: "No time limit" }
     ],
     cta: "Open Analyzer"
@@ -61,9 +61,12 @@ export default function ReadingPage() {
         <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
           <div className="flex flex-wrap items-start gap-6">
             {[
-              { label: "A1-A2", range: "Q 1–13",  color: "bg-indigo-100 text-indigo-700" },
-              { label: "B1-B2", range: "Q 14–26", color: "bg-emerald-100 text-emerald-700" },
-              { label: "C1-C2", range: "Q 27–39", color: "bg-rose-100 text-rose-700" },
+              { label: "A1", range: "Q 1–4", color: "bg-slate-100 text-slate-700" },
+              { label: "A2", range: "Q 5–10", color: "bg-indigo-100 text-indigo-700" },
+              { label: "B1", range: "Q 11–19", color: "bg-emerald-100 text-emerald-700" },
+              { label: "B2", range: "Q 20–29", color: "bg-amber-100 text-amber-700" },
+              { label: "C1", range: "Q 30–35", color: "bg-orange-100 text-orange-700" },
+              { label: "C2", range: "Q 36–39", color: "bg-rose-100 text-rose-700" },
             ].map(({ label, range, color }) => (
               <div key={label} className="flex items-center gap-2">
                 <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${color}`}>{label}</span>

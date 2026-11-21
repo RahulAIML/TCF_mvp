@@ -12,7 +12,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { explainText, generateTcfQuestion, submitTcfExam, translatePassage } from "@/services/api";
 import type { AnswerOption } from "@/types/exam";
-import type { TcfExamQuestion, TcfSubmitExamResponse } from "@/types/tcf-exam";
+import {
+  READING_LEVELS,
+  READING_LEVEL_RANGES,
+  readingLevelForQuestion,
+  type TcfExamQuestion,
+  type TcfSubmitExamResponse
+} from "@/types/tcf-exam";
 import type { ExplainTextResponse } from "@/types/text-helper";
 import ExamResumeDialog from "@/components/ExamResumeDialog";
 import {
@@ -24,24 +30,20 @@ import {
 } from "@/lib/exam-progress";
 
 const EXAM_DURATION_SECONDS = 60 * 60;
-const PREFETCH_AHEAD = 5;
+const PREFETCH_AHEAD = 4;
 
-type DifficultyGroup = "all" | "c2" | "c1" | "b2" | "b1" | "a2" | "a1";
+type DifficultyGroup = "all" | "A1" | "A2" | "B1" | "B2" | "C1" | "C2";
 const DIFFICULTY_RANGES: Record<DifficultyGroup, { start: number; end: number; label: string }> = {
-  all: { start: 1,  end: 39, label: "All Levels" },
-  a1:  { start: 1,  end: 13, label: "A1" },
-  a2:  { start: 1,  end: 13, label: "A2" },
-  b1:  { start: 14, end: 26, label: "B1" },
-  b2:  { start: 14, end: 26, label: "B2" },
-  c1:  { start: 27, end: 39, label: "C1" },
-  c2:  { start: 27, end: 39, label: "C2" },
+  all: { start: 1, end: 39, label: "All Levels" },
+  ...(Object.fromEntries(
+    READING_LEVELS.map((level) => [level, { ...READING_LEVEL_RANGES[level], label: level }])
+  ) as Record<Exclude<DifficultyGroup, "all">, { start: number; end: number; label: string }>),
 };
 
-const partLabel = (questionNumber: number) => {
-  if (questionNumber <= 13) return "Part 1 - A1-A2";
-  if (questionNumber <= 26) return "Part 2 - B1-B2";
-  return "Part 3 - C1-C2";
-};
+const isDifficultyGroup = (value: unknown): value is DifficultyGroup =>
+  typeof value === "string" && value in DIFFICULTY_RANGES;
+
+const levelLabel = (questionNumber: number) => `Q${questionNumber} · Level ${readingLevelForQuestion(questionNumber)}`;
 
 export default function MockExamPage() {
   const [isExamStarted, setIsExamStarted] = useState(false);
@@ -68,8 +70,22 @@ export default function MockExamPage() {
 
   const [showResumeDialog, setShowResumeDialog] = useState(false);
   const [resumeSavedAt, setResumeSavedAt] = useState(0);
+  const [timerDuration, setTimerDuration] = useState(EXAM_DURATION_SECONDS);
 
   const questionsRef = useRef<Record<number, TcfExamQuestion>>({});
+  const remainingRef = useRef(EXAM_DURATION_SECONDS);
+
+  const diffRange = DIFFICULTY_RANGES[difficultyGroup];
+  const TOTAL_QUESTIONS = diffRange.end - diffRange.start + 1;
+
+  // Mirror the visible countdown so a saved exam resumes with the time that was actually left.
+  useEffect(() => {
+    if (!timerActive) return;
+    const id = window.setInterval(() => {
+      remainingRef.current = Math.max(remainingRef.current - 1, 0);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [timerActive]);
   const inFlightRef = useRef<Partial<Record<number, Promise<TcfExamQuestion>>>>({});
   const examSessionIdRef = useRef<string | null>(null);
 
@@ -96,11 +112,13 @@ export default function MockExamPage() {
         currentQuestion,
         answers: answers as Record<number, string>,
         sessionId: examSessionIdRef.current,
-        timeRemaining: null,
+        timeRemaining: remainingRef.current,
+        difficultyGroup,
+        startedAt,
       });
     }, 10_000);
     return () => clearInterval(interval);
-  }, [isExamStarted, results, timeUp, currentQuestion, answers]);
+  }, [isExamStarted, results, timeUp, currentQuestion, answers, difficultyGroup, startedAt]);
 
   const ensureQuestion = async (questionNumber: number, showLoader = true) => {
     const existing = questionsRef.current[questionNumber];
@@ -177,17 +195,26 @@ export default function MockExamPage() {
     const record = loadExamProgress<ReadingProgressState>("reading");
     if (!record) { setShowResumeDialog(false); return; }
     const { state } = record;
+    const group = isDifficultyGroup(state.difficultyGroup) ? state.difficultyGroup : "all";
+    const range = DIFFICULTY_RANGES[group];
+    const remaining = typeof state.timeRemaining === "number" && state.timeRemaining > 0
+      ? state.timeRemaining
+      : EXAM_DURATION_SECONDS;
+    setDifficultyGroup(group);
     setCurrentQuestion(state.currentQuestion);
     setAnswers(state.answers as Record<number, AnswerOption | "">);
     examSessionIdRef.current = state.sessionId;
     setIsExamStarted(true);
-    setStartedAt(new Date().toISOString());
+    setStartedAt(state.startedAt ?? new Date().toISOString());
+    remainingRef.current = remaining;
+    setTimerDuration(remaining);
     setTimerKey((p) => p + 1);
     setTimerActive(true);
     setShowResumeDialog(false);
-    void ensureQuestion(state.currentQuestion).then(() => {
-      prefetchQuestions(state.currentQuestion);
-    }).catch(() => {});
+    setError("");
+    void ensureQuestion(state.currentQuestion)
+      .then(() => prefetchQuestions(state.currentQuestion, range.end))
+      .catch(() => setError("Could not load this question. Please try again."));
   };
 
   const handleStartNew = () => {
@@ -209,10 +236,12 @@ export default function MockExamPage() {
     setError("");
     setSubmitNote("");
     try {
-      // Kick off Q2-Q(PREFETCH_AHEAD+1) immediately — in parallel with Q1
+      // Kick off the next questions immediately — in parallel with the first one
       prefetchQuestions(startQ, DIFFICULTY_RANGES[difficultyGroup].end);
       await ensureQuestion(startQ);
       setStartedAt(new Date().toISOString());
+      remainingRef.current = EXAM_DURATION_SECONDS;
+      setTimerDuration(EXAM_DURATION_SECONDS);
       setTimerKey((prev) => prev + 1);
       setTimerActive(true);
     } catch (err) {
@@ -225,16 +254,22 @@ export default function MockExamPage() {
     if (results || timeUp) {
       return;
     }
+    if (questionNumber < diffRange.start || questionNumber > diffRange.end) {
+      return;
+    }
     setCurrentQuestion(questionNumber);
+    setShowTranslation(false);
     if (!questionsRef.current[questionNumber]) {
       try {
         await ensureQuestion(questionNumber);
+        setError("");
         prefetchQuestions(questionNumber);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load question.");
       }
       return;
     }
+    setError("");
     prefetchQuestions(questionNumber);
   };
 
@@ -276,7 +311,8 @@ export default function MockExamPage() {
       return;
     }
     setTimeUp(true);
-    void handleSubmitExam();
+    // Time is over: submit what exists right away (no partial-submission dialog).
+    void submitExamNow();
   };
 
   const submitExamNow = async () => {
@@ -350,9 +386,6 @@ export default function MockExamPage() {
   const currentQuestionData = questions[currentQuestion];
   const currentAnswer = answers[currentQuestion] ?? "";
 
-  const diffRange = DIFFICULTY_RANGES[difficultyGroup];
-  const TOTAL_QUESTIONS = diffRange.end - diffRange.start + 1;
-
   const handleTranslatePassage = async () => {
     if (!currentQuestionData) return;
     const qn = currentQuestion;
@@ -366,7 +399,7 @@ export default function MockExamPage() {
       setTranslations((prev) => ({ ...prev, [qn]: result }));
       setShowTranslation(true);
     } catch {
-      // silent
+      setError("Translation failed. Please try again.");
     } finally {
       setIsTranslating(false);
     }
@@ -410,10 +443,17 @@ export default function MockExamPage() {
                   ))}
                 </div>
                 <p className="mt-2 text-xs text-slate-500">
-                  {DIFFICULTY_RANGES[difficultyGroup].end - DIFFICULTY_RANGES[difficultyGroup].start + 1} questions · 60 minutes
+                  {TOTAL_QUESTIONS} questions (Q{diffRange.start}–Q{diffRange.end}) · 60 minutes
                 </p>
               </div>
-              <Button onClick={handleStartExam}>Start Exam</Button>
+              {error && (
+                <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                  {error}
+                </div>
+              )}
+              <Button onClick={handleStartExam} disabled={isExamStarted}>
+                {isExamStarted ? "Preparing exam…" : "Start Exam"}
+              </Button>
             </CardContent>
           </Card>
         ) : (
@@ -421,10 +461,11 @@ export default function MockExamPage() {
             <ExamContainer
               currentQuestion={currentQuestion}
               totalQuestions={TOTAL_QUESTIONS}
+              startQuestion={diffRange.start}
               title="TCF Reading Mock Exam"
               timer={
                 <TimerClock
-                  durationSeconds={EXAM_DURATION_SECONDS}
+                  durationSeconds={timerDuration}
                   isActive={timerActive}
                   resetKey={timerKey}
                   onExpire={handleTimerExpire}
@@ -432,11 +473,15 @@ export default function MockExamPage() {
               }
             >
               <div className="flex items-center gap-2 text-xs font-medium text-emerald-700">
-                <span className="rounded-full bg-emerald-50 px-2.5 py-1">{partLabel(currentQuestion)}</span>
+                <span className="rounded-full bg-emerald-50 px-2.5 py-1">{levelLabel(currentQuestion)}</span>
               </div>
               {timeUp && (
                 <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                  Time is up. Your exam has been submitted.
+                  {results
+                    ? "Time is up. Your exam has been submitted."
+                    : isSubmitting
+                      ? "Time is up. Submitting your exam…"
+                      : "Time is up. Your exam could not be submitted yet."}
                 </div>
               )}
               {submitNote && (
@@ -445,8 +490,17 @@ export default function MockExamPage() {
                 </div>
               )}
               {error && (
-                <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                  {error}
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                  <span>{error}</span>
+                  {timeUp && !results ? (
+                    <Button size="sm" variant="secondary" onClick={() => void submitExamNow()} disabled={isSubmitting}>
+                      Retry submission
+                    </Button>
+                  ) : !currentQuestionData && !loadingQuestion ? (
+                    <Button size="sm" variant="secondary" onClick={() => void handleSelectQuestion(currentQuestion)}>
+                      Retry
+                    </Button>
+                  ) : null}
                 </div>
               )}
               {loadingQuestion && (
@@ -528,14 +582,14 @@ export default function MockExamPage() {
                 <Button
                   variant="secondary"
                   onClick={() => handleSelectQuestion(Math.max(diffRange.start, currentQuestion - 1))}
-                  disabled={currentQuestion === diffRange.start}
+                  disabled={currentQuestion === diffRange.start || loadingQuestion}
                 >
                   Previous
                 </Button>
                 <Button
                   variant="secondary"
                   onClick={() => handleSelectQuestion(Math.min(diffRange.end, currentQuestion + 1))}
-                  disabled={currentQuestion === diffRange.end}
+                  disabled={currentQuestion === diffRange.end || loadingQuestion}
                 >
                   Next
                 </Button>
@@ -548,6 +602,7 @@ export default function MockExamPage() {
             <div className="space-y-4">
               <QuestionNavigator
                 totalQuestions={TOTAL_QUESTIONS}
+                startQuestion={diffRange.start}
                 currentQuestion={currentQuestion}
                 answers={answers}
                 onSelect={handleSelectQuestion}

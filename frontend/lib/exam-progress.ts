@@ -21,6 +21,9 @@ export interface ReadingProgressState {
   answers: Record<number, string>;  // questionIndex -> answer letter
   sessionId: string | null;
   timeRemaining: number | null;
+  /** Difficulty focus chosen at start (older saves may not have it). */
+  difficultyGroup?: string;
+  startedAt?: string | null;
 }
 
 /** Listening exam saved state */
