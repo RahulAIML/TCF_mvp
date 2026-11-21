@@ -1,4 +1,5 @@
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -49,22 +50,42 @@ def get_current_user(
     raise HTTPException(status_code=401, detail="Invalid authentication token.")
 
   user = db.query(User).filter(User.email == subject).first()
-  if not user:
+  if not user or is_guest_user(user):
     raise HTTPException(status_code=401, detail="User not found.")
 
   return user
 
 
+DEMO_EMAIL = "demo@tcf.local"
+_demo_password_secured = False
+
+
+def is_guest_user(user: User | None) -> bool:
+  """The shared guest account: its data must never be shown back to anyone."""
+  return user is None or (user.email or "").lower() == DEMO_EMAIL
+
+
+def _unusable_password_hash() -> str:
+  # Random secret nobody knows: the shared guest account can never be logged into.
+  return hash_password(secrets.token_urlsafe(48))
+
+
 def _get_or_create_demo_user(db: Session) -> User:
-  demo_email = "demo@tcf.local"
-  user = db.query(User).filter(User.email == demo_email).first()
+  global _demo_password_secured
+  user = db.query(User).filter(User.email == DEMO_EMAIL).first()
   if user:
+    if not _demo_password_secured:
+      # Older deployments created this account with a hardcoded password; replace it once per process.
+      user.password_hash = _unusable_password_hash()
+      db.commit()
+      _demo_password_secured = True
     return user
 
-  user = User(email=demo_email, password_hash=hash_password("demo_pass_123"))
+  user = User(email=DEMO_EMAIL, password_hash=_unusable_password_hash())
   db.add(user)
   db.commit()
   db.refresh(user)
+  _demo_password_secured = True
   return user
 
 

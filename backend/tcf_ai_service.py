@@ -1871,98 +1871,190 @@ def generate_tcf_listening_audio(script: str, question_number: int, session_id: 
     return _generate_tts_audio(script, question_number, session_id)
 
 
-def analyze_learn_content(text: str) -> Dict[str, Any]:
-    clean = text.strip()
-    prompt = f"""Tu es un tuteur TCF Canada. Analyse ce texte francais et genere exactement 5 exercices d'apprentissage.
+_LEARN_EXERCISE_ORDER = ["mcq", "sentence_correction", "writing_task", "speaking_prompt", "writing_task"]
 
-Texte :
-{clean}
+_LEARN_EXERCISES_TEMPLATE = """[
+  {{
+    "type": "mcq",
+    "question": "Question de compréhension {about}",
+    "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+    "correct_answer": "A, B, C ou D",
+    "explanation": "Pourquoi cette réponse est correcte, en français"
+  }},
+  {{
+    "type": "sentence_correction",
+    "question": "Corrigez cette phrase",
+    "incorrect": "Une phrase avec UNE faute de grammaire ou d'orthographe",
+    "correct_answer": "La phrase corrigée",
+    "explanation": "Explication de la correction, en français"
+  }},
+  {{
+    "type": "writing_task",
+    "question": "Consigne d'écriture courte (3-4 phrases) {about}",
+    "correct_answer": "Exemple de réponse modèle",
+    "explanation": "Ce qui est attendu"
+  }},
+  {{
+    "type": "speaking_prompt",
+    "question": "Consigne orale (1-2 minutes) {about}",
+    "correct_answer": "Points clés attendus",
+    "explanation": "Critères d'évaluation"
+  }},
+  {{
+    "type": "writing_task",
+    "question": "Seconde consigne d'écriture (4-5 phrases), différente de la première",
+    "correct_answer": "Exemple de réponse modèle",
+    "explanation": "Ce qui est attendu"
+  }}
+]"""
 
-Retourne un JSON avec :
-{{
-  "topic": "sujet en quelques mots",
-  "level": "A1/A2/B1/B2/C1",
-  "summary": "resume en 2-3 phrases",
-  "key_points": ["point 1", "point 2", "point 3"],
-  "vocabulary": [
-    {{"word": "...", "definition": "...", "example": "..."}}
-  ],
-  "exercises": [
-    {{
-      "type": "mcq",
-      "question": "Question de comprehension de lecture sur le texte",
-      "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
-      "correct_answer": "A",
-      "explanation": "Explication pourquoi A est correct"
-    }},
-    {{
-      "type": "sentence_correction",
-      "question": "Corrigez cette phrase tirée du contexte du texte",
-      "incorrect": "Une phrase avec une faute de grammaire ou d'orthographe liee au texte",
-      "correct_answer": "La phrase correcte",
-      "explanation": "Explication de la correction"
-    }},
-    {{
-      "type": "writing_task",
-      "question": "Redigez un court paragraphe (3-4 phrases) sur un aspect du texte",
-      "correct_answer": "Exemple de reponse modele",
-      "explanation": "Ce qu'on attend"
-    }},
-    {{
-      "type": "speaking_prompt",
-      "question": "Presentez oralement votre opinion sur le sujet du texte en 1-2 minutes",
-      "correct_answer": "Points cles attendus dans la reponse",
-      "explanation": "Criteres d'evaluation"
-    }},
-    {{
-      "type": "writing_task",
-      "question": "Ecrivez un résumé du texte en vos propres mots (4-5 phrases)",
-      "correct_answer": "Exemple de résumé modele",
-      "explanation": "Ce qu'on attend dans le résumé"
-    }}
-  ]
-}}
+_LEARN_RULES = """Règles STRICTES :
+- Exactement 5 exercices dans cet ordre : mcq, sentence_correction, writing_task, speaking_prompt, writing_task.
+- Tout le contenu est en français.
+- Pour le QCM, place la bonne réponse sur la lettre {letter} ; les 3 distracteurs doivent être plausibles.
+- Ne réutilise AUCUNE des questions déjà posées listées ci-dessous, ni une reformulation proche.
+- Sortie : JSON valide uniquement."""
 
-Regles STRICTES :
-- Toujours exactement 5 exercices dans cet ordre : mcq, sentence_correction, writing_task, speaking_prompt, writing_task.
-- Les exercices doivent être basés sur le contenu du texte fourni.
-- 3 a 5 points cles.
-- 3 a 5 mots de vocabulaire avec definition et exemple en francais.
-- Sortie : JSON valide uniquement.
-"""
-    payload = _generate_json(prompt, temperature=0.6)
-    vocab = payload.get("vocabulary", [])
-    if not isinstance(vocab, list):
-        vocab = []
-    exercises = payload.get("exercises", [])
-    if not isinstance(exercises, list):
-        exercises = []
-    # Enforce the 5 required types in order regardless of what AI returns
-    required_types = ["mcq", "sentence_correction", "writing_task", "speaking_prompt", "writing_task"]
-    exercises_by_type: Dict[str, list] = {}
-    for ex in exercises:
-        t = ex.get("type", "")
-        exercises_by_type.setdefault(t, []).append(ex)
+
+def learn_question_fingerprint(question: str) -> str:
+    return re.sub(r"[^a-z0-9À-ɏ]", "", (question or "").lower())
+
+
+def _order_learn_exercises(raw_list: list) -> list[Dict[str, Any]]:
+    """Return the 5 exercises in the required type order; [] if the model output is unusable."""
+    by_type: Dict[str, list] = {}
+    for ex in raw_list:
+        if isinstance(ex, dict) and str(ex.get("question", "")).strip():
+            by_type.setdefault(str(ex.get("type", "")), []).append(ex)
     ordered: list = []
     used: Dict[str, int] = {}
-    for rtype in required_types:
-        pool = exercises_by_type.get(rtype, [])
+    for rtype in _LEARN_EXERCISE_ORDER:
+        bucket = by_type.get(rtype, [])
         idx = used.get(rtype, 0)
-        if idx < len(pool):
-            ordered.append(pool[idx])
+        if idx < len(bucket):
+            ordered.append(bucket[idx])
             used[rtype] = idx + 1
-        else:
-            # AI didn't return this type — keep slot as None (filtered below)
-            pass
-    # Fall back to AI list if ordering failed
-    final_exercises = ordered if len(ordered) == 5 else exercises[:5]
+    return ordered if len(ordered) == 5 else [ex for ex in raw_list if isinstance(ex, dict)][:5]
+
+
+def _extract_exercise_list(payload: Any) -> list:
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for key in ("exercises", "items", "data"):
+            if isinstance(payload.get(key), list):
+                return payload[key]
+    return []
+
+
+def _exclusion_block(exclude_questions: "list[str] | tuple[str, ...]") -> str:
+    recent = [q.strip() for q in exclude_questions if q and q.strip()][-40:]
+    if not recent:
+        return "Questions déjà posées : aucune."
+    return "Questions déjà posées (à ne pas répéter) :\n" + "\n".join(f"- {q[:160]}" for q in recent)
+
+
+def _drop_repeated(exercises: list[Dict[str, Any]], exclude_questions) -> list[Dict[str, Any]]:
+    seen = {learn_question_fingerprint(q) for q in exclude_questions if q}
+    unique: list[Dict[str, Any]] = []
+    for ex in exercises:
+        fp = learn_question_fingerprint(str(ex.get("question", "")) + str(ex.get("incorrect", "")))
+        if fp and fp not in seen:
+            seen.add(fp)
+            unique.append(ex)
+    return unique
+
+
+def generate_learn_overview(text: str) -> Dict[str, Any]:
+    """Fast first phase of the analysis: topic, level, summary, key points, vocabulary."""
+    prompt = f"""Tu es un tuteur TCF Canada. Analyse ce texte français.
+
+Texte :
+{text.strip()}
+
+Retourne un JSON :
+{{
+  "topic": "sujet en quelques mots",
+  "level": "A1, A2, B1, B2, C1 ou C2",
+  "summary": "résumé en 2-3 phrases",
+  "key_points": ["point 1", "point 2", "point 3"],
+  "vocabulary": [{{"word": "...", "definition": "...", "example": "..."}}]
+}}
+
+Règles : tout en français ; 3 à 5 points clés ; 3 à 5 mots de vocabulaire avec définition et exemple. JSON valide uniquement."""
+    payload = _generate_json(prompt, temperature=0.5)
+    vocab = payload.get("vocabulary", [])
+    vocab = [
+        {"word": str(v.get("word", "")).strip(), "definition": str(v.get("definition", "")).strip(), "example": str(v.get("example", "")).strip()}
+        for v in vocab if isinstance(v, dict) and str(v.get("word", "")).strip()
+    ] if isinstance(vocab, list) else []
     return {
         "topic": str(payload.get("topic", "")).strip(),
-        "level": str(payload.get("level", "B1")).strip(),
+        "level": str(payload.get("level", "B1")).strip() or "B1",
         "summary": str(payload.get("summary", "")).strip(),
         "key_points": [str(p).strip() for p in payload.get("key_points", []) if str(p).strip()],
         "vocabulary": vocab,
-        "exercises": final_exercises,
+    }
+
+
+def generate_learn_exercises(text: str, exclude_questions=()) -> list[Dict[str, Any]]:
+    """Second phase of the analysis: 5 exercises grounded in the source text."""
+    prompt = f"""Tu es un tuteur TCF Canada. Génère exactement 5 exercices d'apprentissage basés sur ce texte.
+
+Texte :
+{text.strip()}
+
+Retourne un JSON : tableau de 5 exercices au format :
+{_LEARN_EXERCISES_TEMPLATE.format(about="sur le texte")}
+
+{_LEARN_RULES.format(letter=random.choice("ABCD"))}
+{_exclusion_block(exclude_questions)}"""
+    exercises = _order_learn_exercises(_extract_exercise_list(_generate_json(prompt, temperature=0.7)))
+    return _drop_repeated(exercises, exclude_questions)
+
+
+def analyze_learn_content(text: str) -> Dict[str, Any]:
+    """Overview and exercises are generated in parallel."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        overview_f = pool.submit(generate_learn_overview, text)
+        exercises_f = pool.submit(generate_learn_exercises, text)
+        result = overview_f.result()
+        result["exercises"] = exercises_f.result()
+    return result
+
+
+def generate_more_exercises(topic: str, level: str, summary: str, exclude_questions=()) -> list[Dict[str, Any]]:
+    prompt = f"""Tu es tuteur TCF Canada. Génère exactement 5 NOUVEAUX exercices en français.
+
+Sujet : {topic}
+Niveau : {level}
+Résumé : {summary}
+
+Retourne un JSON : tableau de 5 exercices au format :
+{_LEARN_EXERCISES_TEMPLATE.format(about=f"sur {topic}")}
+
+{_LEARN_RULES.format(letter=random.choice("ABCD"))}
+- Adapter la difficulté au niveau {level}.
+{_exclusion_block(exclude_questions)}"""
+    exercises = _order_learn_exercises(_extract_exercise_list(_generate_json(prompt, temperature=0.8)))
+    return _drop_repeated(exercises, exclude_questions)
+
+
+def _letter_of(answer: str) -> str:
+    match = re.match(r"\s*([A-Da-d])(?:[).:\-\s]|$)", answer or "")
+    return match.group(1).upper() if match else ""
+
+
+def _normalize_sentence(s: str) -> str:
+    return re.sub(r"[^a-z0-9À-ɏ]", "", (s or "").lower())
+
+
+def _uniform_result(score: int, is_correct: bool, feedback: list[str], improved: str, explanation: str) -> Dict[str, Any]:
+    return {
+        "score": score, "grammar": score, "vocabulary": score, "structure": score, "fluency": score,
+        "is_correct": is_correct, "feedback": feedback, "improved_answer": improved, "explanation": explanation,
     }
 
 
@@ -1971,15 +2063,36 @@ def evaluate_learn_answer(
     question: str,
     correct_answer: str,
     user_answer: str,
-    context: str = ""
+    context: str = "",
+    explanation: str | None = None,
 ) -> Dict[str, Any]:
     """
-    Strict rule-based evaluation.
-    - Correctness is NEVER decided by AI.
-    - AI is only used to explain WHY correct/wrong.
-    - Score is always 0 (wrong/blank) or 10 (correct).
-    - Empty answers never reach AI.
+    Objective exercises (mcq, fill_blank, sentence_correction) are scored locally and instantly.
+    Open-ended tasks (writing_task, speaking_prompt) are evaluated by the model. All feedback is in French.
     """
+    expected = (correct_answer or "").strip()
+    given_explanation = (explanation or "").strip()
+
+    if not user_answer or not user_answer.strip():
+        return _uniform_result(
+            0, False, ["Aucune réponse fournie."], expected,
+            f"Vous n'avez pas répondu. Réponse attendue : {expected}" if expected else "Vous n'avez pas répondu.",
+        )
+
+    if exercise_type == "mcq":
+        expected_letter = _letter_of(expected)
+        is_correct = bool(expected_letter) and _letter_of(user_answer) == expected_letter
+        feedback = ["Bonne réponse."] if is_correct else [f"Réponse incorrecte. La bonne réponse est {expected_letter or expected}."]
+        return _uniform_result(10 if is_correct else 0, is_correct, feedback, expected, given_explanation)
+
+    if exercise_type in ("fill_blank", "sentence_correction"):
+        is_correct = _normalize_sentence(user_answer) == _normalize_sentence(expected)
+        feedback = ["Bonne réponse."] if is_correct else [
+            "Réponse incorrecte.",
+            f"Votre réponse : {user_answer.strip()}",
+            f"Réponse attendue : {expected}",
+        ]
+        return _uniform_result(10 if is_correct else 0, is_correct, feedback, expected, given_explanation)
 
     def _clamp(v: object) -> int:
         try:
@@ -1987,236 +2100,41 @@ def evaluate_learn_answer(
         except (TypeError, ValueError):
             return 0
 
-    # ── 1. Empty answer short-circuit ────────────────────────────────────────
-    if not user_answer or not user_answer.strip():
-        return {
-            "score": 0,
-            "grammar": 0,
-            "vocabulary": 0,
-            "structure": 0,
-            "fluency": 0,
-            "is_correct": False,
-            "feedback": ["No answer provided."],
-            "improved_answer": correct_answer.strip(),
-            "explanation": "You did not attempt this question. The correct answer was: " + correct_answer.strip(),
-        }
+    task_label = "production orale (transcription)" if exercise_type == "speaking_prompt" else "production écrite"
+    prompt = f"""Tu es un correcteur strict du TCF Canada. Évalue cette {task_label} d'un apprenant.
 
-    # ── 2. Rule-based correctness determination ───────────────────────────────
-    def _normalize(s: str) -> str:
-        """Lower-case, strip punctuation/spaces for comparison."""
-        import re
-        return re.sub(r"[^a-z0-9\u00c0-\u024f]", "", s.lower()).strip()
+Consigne : {question}
+Contexte : {context}
+Réponse de l'apprenant : {user_answer}
 
-    def _first_letter(s: str) -> str:
-        s = s.strip().upper()
-        if s and s[0].isalpha():
-            return s[0]
-        return ""
+Règles :
+- Réponds UNIQUEMENT en français.
+- Sois exigeant : pas d'éloge générique ; une réponse hors sujet ou très courte reçoit une note basse.
+- grammar, vocabulary, structure, fluency : 0 à 10 chacun selon la qualité réelle.
+- overall_score : 0 à 10.
+- feedback : 2 à 4 points d'amélioration concrets, chacun une phrase complète.
+- improved_answer : une version modèle de la réponse.
+- explanation : ce qui est réussi et ce qui manque.
 
-    is_open_ended = exercise_type in ("writing_task", "speaking_prompt")
-
-    if exercise_type == "mcq":
-        # Compare by letter only (user sends "A", correct is "A" or "A. some text")
-        is_correct = _first_letter(user_answer) == _first_letter(correct_answer)
-    elif is_open_ended:
-        # Open-ended: AI will score 0-10; correctness = score >= 6
-        is_correct = None  # resolved after AI call
-    else:
-        # fill_blank / sentence_correction: normalize and compare
-        is_correct = _normalize(user_answer) == _normalize(correct_answer)
-
-    # ── 3. AI call — EXPLANATION ONLY ────────────────────────────────────────
-    if is_open_ended:
-        # For open-ended tasks AI assigns sub-scores and overall quality score
-        prompt = f"""You are a strict French language exam evaluator.
-
-Exercise type: {exercise_type}
-Question: {question}
-Student's answer: {user_answer}
-Context: {context}
-
-Evaluate the quality of the student's response IN FRENCH.
-
-Rules:
-- Be strict and clear.
-- Do NOT give generic praise.
-- Score grammar, vocabulary, structure, fluency each 0-10 based on actual quality.
-- overall_score: 0-10 reflecting combined quality.
-- feedback: 2-4 concrete improvement points.
-- improved_answer: a model answer for this question.
-- explanation: why the answer is good or what is wrong.
-
-Return valid JSON only:
-{{
-  "overall_score": 0-10,
-  "grammar": 0-10,
-  "vocabulary": 0-10,
-  "structure": 0-10,
-  "fluency": 0-10,
-  "feedback": ["...", "..."],
-  "improved_answer": "...",
-  "explanation": "..."
-}}"""
-    else:
-        # For MCQ / fill_blank / sentence_correction — explanation only, no scoring
-        correctness_label = "CORRECT" if is_correct else "INCORRECT"
-        prompt = f"""You are a strict French language exam evaluator.
-
-Exercise type: {exercise_type}
-Question: {question}
-Correct answer: {correct_answer}
-Student's answer: {user_answer}
-Verdict: The student's answer is {correctness_label}.
-
-Your job:
-1. Explain in 1-2 sentences why the correct answer is correct.
-2. If the student answered incorrectly, explain clearly why their answer is wrong.
-3. Estimate grammar and vocabulary quality of the student's answer (0-10 each).
-
-Rules:
-- Be strict and factual.
-- Do NOT praise a wrong answer.
-- Do NOT assign an overall score — that is determined separately.
-- Do NOT say the student is correct if they are not.
-
-Return valid JSON only:
-{{
-  "grammar": 0-10,
-  "vocabulary": 0-10,
-  "structure": 0-10,
-  "fluency": 0-10,
-  "feedback": ["...", "..."],
-  "improved_answer": "{correct_answer}",
-  "explanation": "..."
-}}"""
-
+JSON valide uniquement :
+{{"overall_score": 0, "grammar": 0, "vocabulary": 0, "structure": 0, "fluency": 0, "feedback": ["..."], "improved_answer": "...", "explanation": "..."}}"""
     ai = _generate_json(prompt, temperature=0.2)
-
-    # ── 4. Parse AI feedback/explanation ─────────────────────────────────────
     feedback_raw = ai.get("feedback", [])
     if isinstance(feedback_raw, str):
-        feedback_raw = [f.strip() for f in feedback_raw.split("-") if f.strip()]
-    feedback_list = [str(f).strip() for f in feedback_raw if str(f).strip()]
-    if not feedback_list:
-        feedback_list = ["No feedback available."]
-
-    explanation = str(ai.get("explanation", "")).strip()
-    improved = str(ai.get("improved_answer", correct_answer)).strip() or correct_answer.strip()
-
-    # ── 5. ENFORCE scores — AI never overrides correctness ───────────────────
-    if is_open_ended:
-        ai_score = _clamp(ai.get("overall_score", ai.get("score", 0)))
-        is_correct = ai_score >= 6
-        final_score = ai_score
-        # If AI gave inflated score but feedback is poor, trust the score as-is
-        # (open-ended is the only place AI scoring is allowed)
-    else:
-        # Binary: correct=10, wrong=0 — AI cannot change this
-        final_score = 10 if is_correct else 0
-
-    # Sub-scores: use AI values but zero them all if answer is wrong for MCQ
-    if exercise_type == "mcq" and not is_correct:
-        grammar = vocabulary = structure = fluency = 0
-    else:
-        grammar    = _clamp(ai.get("grammar",    final_score))
-        vocabulary = _clamp(ai.get("vocabulary", final_score))
-        structure  = _clamp(ai.get("structure",  final_score))
-        fluency    = _clamp(ai.get("fluency",    final_score))
-
-    # ── 6. Safety override — never let score be positive when wrong ───────────
-    if not is_correct and not is_open_ended:
-        final_score = 0
-        grammar = vocabulary = structure = fluency = 0
-        # Prepend a clear wrong-answer notice to feedback
-        if not any("incorrect" in f.lower() or "wrong" in f.lower() or "mauvais" in f.lower() for f in feedback_list):
-            feedback_list.insert(0, f"Incorrect. The correct answer is: {correct_answer.strip()}")
-
+        feedback_raw = [line.strip(" -•\t") for line in feedback_raw.splitlines()]
+    feedback = [str(f).strip() for f in feedback_raw if str(f).strip()] or ["Aucun commentaire disponible."]
+    score = _clamp(ai.get("overall_score", ai.get("score", 0)))
     return {
-        "score": final_score,
-        "grammar": grammar,
-        "vocabulary": vocabulary,
-        "structure": structure,
-        "fluency": fluency,
-        "is_correct": bool(is_correct),
-        "feedback": feedback_list,
-        "improved_answer": improved,
-        "explanation": explanation,
+        "score": score,
+        "grammar": _clamp(ai.get("grammar", score)),
+        "vocabulary": _clamp(ai.get("vocabulary", score)),
+        "structure": _clamp(ai.get("structure", score)),
+        "fluency": _clamp(ai.get("fluency", score)),
+        "is_correct": score >= 6,
+        "feedback": feedback,
+        "improved_answer": str(ai.get("improved_answer", "")).strip() or expected,
+        "explanation": str(ai.get("explanation", "")).strip(),
     }
-
-
-def generate_more_exercises(topic: str, level: str, summary: str) -> list[Dict[str, Any]]:
-    prompt = f"""Tu es tuteur TCF Canada. Genere exactement 5 exercices supplementaires en francais.
-
-Sujet : {topic}
-Niveau : {level}
-Resume : {summary}
-
-Retourne un JSON : tableau de exactement 5 exercices dans cet ordre STRICT :
-
-[
-  {{
-    "type": "mcq",
-    "question": "Question de comprehension de lecture sur le sujet",
-    "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
-    "correct_answer": "A",
-    "explanation": "Pourquoi A est correct"
-  }},
-  {{
-    "type": "sentence_correction",
-    "question": "Corrigez cette phrase",
-    "incorrect": "Une phrase avec une faute de grammaire ou d'orthographe",
-    "correct_answer": "La phrase correcte",
-    "explanation": "Explication de la correction"
-  }},
-  {{
-    "type": "writing_task",
-    "question": "Redigez un court paragraphe (3-4 phrases) sur {topic}",
-    "correct_answer": "Exemple de reponse modele",
-    "explanation": "Ce qu'on attend"
-  }},
-  {{
-    "type": "speaking_prompt",
-    "question": "Presentez oralement votre opinion sur {topic} en 1-2 minutes",
-    "correct_answer": "Points cles attendus",
-    "explanation": "Criteres d'evaluation"
-  }},
-  {{
-    "type": "writing_task",
-    "question": "Ecrivez un résumé de {topic} en vos propres mots (4-5 phrases)",
-    "correct_answer": "Exemple de résumé modele",
-    "explanation": "Ce qu'on attend"
-  }}
-]
-
-Regles STRICTES :
-- Exactement 5 exercices dans cet ordre : mcq, sentence_correction, writing_task, speaking_prompt, writing_task.
-- Adapter la difficulte au niveau {level}.
-- Sortie : JSON valide uniquement (tableau, pas d'objet enveloppe).
-"""
-    payload_raw = _generate_json(prompt, temperature=0.7)
-    if isinstance(payload_raw, list):
-        raw_list = payload_raw
-    else:
-        raw_list = []
-        for key in ("exercises", "items", "data"):
-            if key in payload_raw and isinstance(payload_raw[key], list):
-                raw_list = payload_raw[key]
-                break
-    # Enforce order: mcq, sentence_correction, writing_task, speaking_prompt, writing_task
-    required_types = ["mcq", "sentence_correction", "writing_task", "speaking_prompt", "writing_task"]
-    by_type: Dict[str, list] = {}
-    for ex in raw_list:
-        t = ex.get("type", "")
-        by_type.setdefault(t, []).append(ex)
-    ordered: list = []
-    used: Dict[str, int] = {}
-    for rtype in required_types:
-        pool = by_type.get(rtype, [])
-        idx = used.get(rtype, 0)
-        if idx < len(pool):
-            ordered.append(pool[idx])
-            used[rtype] = idx + 1
-    return ordered if len(ordered) == 5 else raw_list[:5]
 
 
 def extract_text_from_image_bytes(raw: bytes, content_type: str) -> str:

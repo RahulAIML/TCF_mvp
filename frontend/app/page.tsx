@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { BookOpen, Headphones, Mic, PenLine, Volume2, BookMarked, ArrowRight, CheckCircle } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
+import { nextPathFromLocation } from "@/lib/safe-next";
 
 const FEATURES = [
   { icon: BookOpen, label: "Reading", desc: "39-question mock exam with CEFR progression", color: "bg-blue-500" },
@@ -28,7 +29,7 @@ export default function LandingPage() {
 
   useEffect(() => {
     if (!isLoading && isAuthenticated) {
-      router.replace("/tcf");
+      router.replace(nextPathFromLocation());
     }
   }, [isAuthenticated, isLoading, router]);
 
@@ -88,6 +89,12 @@ export default function LandingPage() {
               Create free account <ArrowRight className="h-4 w-4" />
             </Link>
             <Link
+              href="/tcf"
+              className="flex items-center gap-2 border-2 border-emerald-600 text-emerald-700 text-sm font-semibold px-6 py-3 rounded-xl hover:bg-emerald-50 transition"
+            >
+              Try without an account
+            </Link>
+            <Link
               href="/login"
               className="flex items-center gap-2 border border-slate-200 text-slate-700 text-sm font-semibold px-6 py-3 rounded-xl hover:bg-slate-50 transition"
             >
@@ -95,10 +102,7 @@ export default function LandingPage() {
             </Link>
           </div>
           <p className="text-xs text-slate-400 mt-4">
-            No credit card required &middot;{" "}
-            <Link href="/tcf" className="underline hover:text-slate-600">
-              Continue without account
-            </Link>
+            No credit card required &middot; Every module works as a guest
           </p>
         </section>
 

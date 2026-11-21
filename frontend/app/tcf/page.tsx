@@ -10,6 +10,8 @@ import {
   LayoutDashboard,
   Volume2,
   BookMarked,
+  AudioLines,
+  Plug,
   ArrowRight,
 } from "lucide-react";
 import TcfAppShell from "@/components/TcfAppShell";
@@ -79,6 +81,20 @@ const modules = [
         icon: BookMarked,
         accent: "bg-cyan-600",
         badge: "New",
+      },
+      {
+        title: "Text-to-Speech",
+        description: "Turn any French text into natural audio with male and female voices.",
+        href: "/tcf/tts",
+        icon: AudioLines,
+        accent: "bg-indigo-500",
+      },
+      {
+        title: "Connect Grok",
+        description: "Use your TCF tools from Grok: create a secure connection token.",
+        href: "/tcf/grok",
+        icon: Plug,
+        accent: "bg-orange-500",
       },
     ],
   },

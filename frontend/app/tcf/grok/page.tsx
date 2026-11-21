@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useAuth } from "@/lib/auth-context";
 import { AlertCircle, Check, Copy, KeyRound, Loader2, Plug, Trash2 } from "lucide-react";
 import TcfAppShell from "@/components/TcfAppShell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -40,7 +42,48 @@ function CopyButton({ value, label }: { value: string; label: string }) {
   );
 }
 
+function GuestGrokCard() {
+  return (
+    <TcfAppShell title="Connect Grok" subtitle="Let Grok turn text into MP3 audio for you" backHref="/tcf">
+      <Card className="max-w-2xl border-slate-200 shadow-sm">
+        <CardContent className="flex flex-col items-start gap-4 p-6">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-50 text-orange-500">
+            <Plug className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Sign in to create a Grok connection</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              A Grok connection uses a private access token tied to your account, so it needs a free account.
+              Every other module works without signing in.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <Link
+              href="/login?next=/tcf/grok"
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+            >
+              Sign in
+            </Link>
+            <Link
+              href="/register"
+              className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Create account
+            </Link>
+          </div>
+        </CardContent>
+      </Card>
+    </TcfAppShell>
+  );
+}
+
 export default function ConnectGrokPage() {
+  const { isAuthenticated, isLoading } = useAuth();
+  if (!isLoading && !isAuthenticated) return <GuestGrokCard />;
+  return <ConnectGrokForUser />;
+}
+
+function ConnectGrokForUser() {
   const [info, setInfo] = useState<McpInfo | null>(null);
   const [tokens, setTokens] = useState<McpTokenRecord[]>([]);
   const [loadError, setLoadError] = useState("");

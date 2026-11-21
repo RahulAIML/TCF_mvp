@@ -605,6 +605,7 @@ class LearnContentResponse(BaseModel):
   key_points: List[str]
   vocabulary: List[LearnVocabItem]
   exercises: List[LearnExercise]
+  content_id: str | None = None
 
 
 class LearnEvaluateRequest(BaseModel):
@@ -613,6 +614,15 @@ class LearnEvaluateRequest(BaseModel):
   correct_answer: str
   user_answer: str
   context: str = ""
+  explanation: str | None = None
+
+
+class LearnEvaluateBatchItem(LearnEvaluateRequest):
+  index: int = Field(ge=0, le=200)
+
+
+class LearnEvaluateBatchRequest(BaseModel):
+  items: List[LearnEvaluateBatchItem] = Field(min_length=1, max_length=50)
 
 
 class LearnEvaluationResponse(BaseModel):
@@ -633,6 +643,8 @@ class LearnMoreExercisesRequest(BaseModel):
   topic: str
   level: str
   summary: str
+  content_id: str | None = Field(default=None, max_length=64)
+  exclude_questions: List[str] = Field(default_factory=list, max_length=200)
 
 
 class LearnSaveSessionRequest(BaseModel):
