@@ -6,14 +6,15 @@ import Link from "next/link";
 import { Eye, EyeOff, Loader } from "lucide-react";
 import { loginUser } from "@/services/api";
 import { useAuth } from "@/lib/auth-context";
+import { nextPathFromLocation } from "@/lib/safe-next";
 
 export default function LoginPage() {
   const router = useRouter();
   const { login, isAuthenticated, isLoading } = useAuth();
 
-  // Already authenticated — go straight to the app.
+  // Already authenticated: go straight to where the user was heading.
   useEffect(() => {
-    if (!isLoading && isAuthenticated) router.replace("/tcf");
+    if (!isLoading && isAuthenticated) router.replace(nextPathFromLocation());
   }, [isAuthenticated, isLoading, router]);
 
   const [email, setEmail] = useState("");
@@ -31,7 +32,7 @@ export default function LoginPage() {
       try {
         const data = await loginUser({ email: email.trim(), password });
         login(data.access_token, { ...data.user, name: data.user.name ?? undefined });
-        router.push("/tcf");
+        router.push(nextPathFromLocation());
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Login failed";
         setError(msg.includes("401") || msg.toLowerCase().includes("invalid")
@@ -130,11 +131,12 @@ export default function LoginPage() {
           </Link>
         </p>
 
-        <p className="text-center text-xs text-slate-400 mt-4">
-          <Link href="/tcf" className="hover:text-slate-600 underline">
-            Continue without signing in
-          </Link>
-        </p>
+        <Link
+          href="/tcf"
+          className="mt-4 block w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-center text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
+        >
+          Try without an account
+        </Link>
       </div>
     </div>
   );

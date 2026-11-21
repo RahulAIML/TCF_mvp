@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { getDashboardSummary } from "@/services/api";
+import { getAuthToken, isTokenExpired } from "@/lib/auth";
 import type { DashboardSummaryResponse } from "@/types/dashboard";
 
 /* ─── Helpers ──────────────────────────────────────────────────── */
@@ -153,10 +154,48 @@ function RecommendationItem({
 
 /* ─── Main Page ─────────────────────────────────────────────────── */
 
+function GuestDashboard() {
+  return (
+    <Card className="border-slate-200 shadow-sm rounded-2xl">
+      <CardContent className="flex flex-col items-center gap-4 p-10 text-center">
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600">
+          <BarChart2 className="h-6 w-6" />
+        </div>
+        <div>
+          <h2 className="text-xl font-bold text-slate-900">Sign in to track your progress</h2>
+          <p className="mt-1 max-w-md text-sm text-slate-500">
+            You are practising as a guest. Create a free account to keep your scores, see your strongest and weakest
+            modules, and follow your progress over time.
+          </p>
+        </div>
+        <div className="flex flex-wrap justify-center gap-3">
+          <Link
+            href="/login?next=/tcf/dashboard"
+            className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+          >
+            Sign in
+          </Link>
+          <Link
+            href="/register"
+            className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Create account
+          </Link>
+          <Link href="/tcf" className="rounded-xl px-5 py-2.5 text-sm font-medium text-slate-500 hover:text-slate-700">
+            Keep practising
+          </Link>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function DashboardPage() {
   const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  // null until checked on the client (localStorage is not available during server rendering).
+  const [isGuest, setIsGuest] = useState<boolean | null>(null);
 
   const fetchSummary = async () => {
     setLoading(true);
@@ -164,13 +203,23 @@ export default function DashboardPage() {
     try {
       setSummary(await getDashboardSummary());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load dashboard.");
+      const token = getAuthToken();
+      if (!token || isTokenExpired(token)) {
+        setIsGuest(true);
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to load dashboard.");
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { void fetchSummary(); }, []);
+  useEffect(() => {
+    const token = getAuthToken();
+    const guest = !token || isTokenExpired(token);
+    setIsGuest(guest);
+    if (!guest) void fetchSummary();
+  }, []);
 
   const overview = summary
     ? (() => {
@@ -200,8 +249,10 @@ export default function DashboardPage() {
     <TcfAppShell title="TCF Dashboard" subtitle="Track your progress across all modules">
       <div className="max-w-6xl space-y-6">
 
+        {isGuest && <GuestDashboard />}
+
         {/* Error banner */}
-        {error && (
+        {!isGuest && error && (
           <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 flex-shrink-0" />
             {error}
@@ -209,7 +260,7 @@ export default function DashboardPage() {
         )}
 
         {/* Loading skeleton */}
-        {loading && !summary && (
+        {(isGuest === null || (loading && !summary)) && !error && (
           <div className="space-y-6">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {[1, 2, 3, 4].map((i) => <SkeletonCard key={i} />)}

@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from auth import get_optional_user
+from auth import get_current_user
 from database import get_db
-from models import ExamAttempt, LearnSession, ListeningAttempt, User, WritingSession
+from models import ExamAttempt, LearnSession, ListeningAttempt, TcfWritingSession, User
 from schemas import (
   DashboardSummaryResponse,
   LearnSessionSummary,
@@ -61,10 +61,38 @@ def _parse_eval_score(payload: str | None) -> float | None:
   return sum(values) / len(values)
 
 
+def summarize_writing_sessions(
+  sessions: list[TcfWritingSession],
+) -> tuple[float, list[WritingSubmissionSummary]]:
+  """Average of the per-task evaluation scores across submitted sessions (most recent first)."""
+  summaries: list[WritingSubmissionSummary] = []
+  session_scores: list[float] = []
+  for session in sessions:
+    task_scores = [
+      score
+      for score in (
+        _parse_eval_score(session.task1_evaluation),
+        _parse_eval_score(session.task2_evaluation),
+        _parse_eval_score(session.task3_evaluation),
+      )
+      if score is not None
+    ]
+    if not task_scores:
+      continue
+    average_score = sum(task_scores) / len(task_scores)
+    session_scores.append(average_score)
+    if len(summaries) < 3:
+      summaries.append(
+        WritingSubmissionSummary(id=session.id, average_score=round(average_score, 2), created_at=session.updated_at)
+      )
+  overall = round(sum(session_scores) / len(session_scores), 2) if session_scores else 0.0
+  return overall, summaries
+
+
 @router.get("/dashboard/summary", response_model=DashboardSummaryResponse)
-async def get_dashboard_summary(
+def get_dashboard_summary(
   db: Session = Depends(get_db),
-  user: User = Depends(get_optional_user)
+  user: User = Depends(get_current_user)
 ) -> DashboardSummaryResponse:
   reading_avg = db.query(func.coalesce(func.avg(ExamAttempt.accuracy), 0)).filter(
     ExamAttempt.user_id == user.id
@@ -117,32 +145,12 @@ async def get_dashboard_summary(
   )
 
   writing_sessions = (
-    db.query(WritingSession)
-    .filter(WritingSession.user_id == user.id, WritingSession.is_submitted.is_(True))
-    .order_by(WritingSession.updated_at.desc())
+    db.query(TcfWritingSession)
+    .filter(TcfWritingSession.user_id == user.id, TcfWritingSession.is_submitted.is_(True))
+    .order_by(TcfWritingSession.updated_at.desc())
     .all()
   )
-
-  submission_summaries: list[WritingSubmissionSummary] = []
-  submission_scores: list[float] = []
-  for session in writing_sessions:
-    task1_score = _parse_eval_score(session.task1_evaluation)
-    task2_score = _parse_eval_score(session.task2_evaluation)
-    scores = [score for score in (task1_score, task2_score) if score is not None]
-    if not scores:
-      continue
-    average_score = sum(scores) / len(scores)
-    submission_scores.append(average_score)
-    if len(submission_summaries) < 3:
-      submission_summaries.append(
-        WritingSubmissionSummary(
-          id=session.id,
-          average_score=round(average_score, 2),
-          created_at=session.updated_at
-        )
-      )
-
-  writing_average = round(sum(submission_scores) / len(submission_scores), 2) if submission_scores else 0.0
+  writing_average, submission_summaries = summarize_writing_sessions(writing_sessions)
   writing_summary = WritingSummary(
     average_score=writing_average,
     recent_submissions=submission_summaries

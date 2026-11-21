@@ -7,15 +7,16 @@ import LearnAssistantPanel from "@/components/LearnAssistantPanel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  analyzeLearnContent,
   evaluateLearnAnswer,
   generateMoreExercises,
   saveLearnSession,
   translatePassage,
   uploadLearnFile
 } from "@/services/api";
+import { analyzeLearnContentStream, evaluateLearnBatchStream } from "@/services/learnApi";
 import type {
   LearnContentResponse,
+  LearnEvaluateBatchItem,
   LearnEvaluationResponse,
   LearnExercise,
   LearnSourceType
@@ -29,6 +30,31 @@ interface ExerciseState {
   answer: string;
   evaluation: LearnEvaluationResponse | null;
   isEvaluating: boolean;
+  error?: string;
+  skipped?: boolean;
+}
+
+const newExerciseState = (exercise: LearnExercise): ExerciseState => ({
+  exercise,
+  answer: "",
+  evaluation: null,
+  isEvaluating: false
+});
+
+function evaluationRequest(state: ExerciseState, context: string) {
+  const ex = state.exercise;
+  return {
+    exercise_type: ex.type,
+    question: ex.prompt ?? ex.question,
+    correct_answer: ex.correct_answer ?? ex.correct ?? ex.hints?.join(", ") ?? "",
+    user_answer: state.answer.trim(),
+    context,
+    explanation: ex.explanation
+  };
+}
+
+function average(values: number[]): number | undefined {
+  return values.length ? values.reduce((a, b) => a + b, 0) / values.length : undefined;
 }
 
 export default function LearnPage() {
@@ -48,7 +74,14 @@ export default function LearnPage() {
   const [translation, setTranslation] = useState("");
   const [showTranslation, setShowTranslation] = useState(false);
   const [isTranslating, setIsTranslating] = useState(false);
+  const [exercisesPending, setExercisesPending] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const contentIdRef = useRef<string>("");
+  const askedQuestionsRef = useRef<string[]>([]);
+
+  const rememberQuestions = (list: LearnExercise[]) => {
+    askedQuestionsRef.current = [...askedQuestionsRef.current, ...list.map((ex) => ex.question)];
+  };
 
   const handleAnalyze = async () => {
     const text = inputText.trim();
@@ -58,23 +91,46 @@ export default function LearnPage() {
     }
     setError("");
     setIsLoading(true);
+    setExercisesPending(true);
+    contentIdRef.current = "";
+    askedQuestionsRef.current = [];
+    setRound(1);
+    setSessionSaved(false);
+    let gotOverview = false;
     try {
-      const result = await analyzeLearnContent({ text, source_type: sourceType });
-      setContent(result);
-      setExercises(result.exercises.map((ex) => ({
-        exercise: ex,
-        answer: "",
-        evaluation: null,
-        isEvaluating: false
-      })));
-      setTranslation("");
-      setShowTranslation(false);
-      setPassageOpen(true);
-      setPageState("content");
+      await analyzeLearnContentStream(
+        { text, source_type: sourceType },
+        {
+          onOverview: (overview) => {
+            gotOverview = true;
+            setContent((prev) => ({ ...overview, exercises: prev?.exercises ?? [] }));
+            setTranslation("");
+            setShowTranslation(false);
+            setPassageOpen(true);
+            setPageState("content");
+            setIsLoading(false);
+          },
+          onExercises: (list) => {
+            rememberQuestions(list);
+            setExercises(list.map(newExerciseState));
+            setContent((prev) => (prev ? { ...prev, exercises: list } : prev));
+            setExercisesPending(false);
+          },
+          onDone: (contentId) => {
+            contentIdRef.current = contentId;
+          }
+        }
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Analysis failed. Please try again.");
+      if (!gotOverview) {
+        setContent(null);
+        setExercises([]);
+        setPageState("input");
+      }
     } finally {
       setIsLoading(false);
+      setExercisesPending(false);
     }
   };
 
@@ -101,64 +157,89 @@ export default function LearnPage() {
 
   const handleEvaluateAll = async () => {
     if (!content) return;
+    const snapshot = exercises;
+    const items: LearnEvaluateBatchItem[] = snapshot
+      .map((state, index) => ({ state, index }))
+      .filter(({ state }) => state.answer.trim() !== "")
+      .map(({ state, index }) => ({ ...evaluationRequest(state, content.summary), index }));
+    if (!items.length) return;
 
     setIsEvaluatingAll(true);
-    setExercises((prev) => prev.map((e) => ({ ...e, isEvaluating: true })));
-
-    const results = await Promise.allSettled(
-      exercises.map(async (state, index) => {
-        const ex = state.exercise;
-        const userAnswer = state.answer.trim();
-        const correctAnswer = ex.correct_answer ?? ex.correct ?? ex.hints?.join(", ") ?? "";
-        const result = await evaluateLearnAnswer({
-          exercise_type: ex.type,
-          question: ex.prompt ?? ex.question,
-          correct_answer: correctAnswer,
-          user_answer: userAnswer,
-          context: content.summary
-        });
-        return { index, result };
-      })
-    );
-
+    setError("");
+    // Blank answers are never sent: they are marked "not answered" right away.
     setExercises((prev) =>
-      prev.map((e, i) => {
-        const settled = results[i];
-        if (settled.status === "fulfilled") {
-          return { ...e, evaluation: settled.value.result, isEvaluating: false };
-        }
-        return { ...e, isEvaluating: false };
-      })
+      prev.map((e) =>
+        e.answer.trim()
+          ? { ...e, isEvaluating: true, error: undefined, skipped: false }
+          : { ...e, isEvaluating: false, evaluation: null, error: undefined, skipped: true }
+      )
     );
 
+    const collected: Record<number, LearnEvaluationResponse> = {};
+    const failed = new Set<number>(items.map((item) => item.index));
+    try {
+      await evaluateLearnBatchStream(items, (result) => {
+        if (result.evaluation) {
+          collected[result.index] = result.evaluation;
+          failed.delete(result.index);
+          setExercises((prev) =>
+            prev.map((e, i) => (i === result.index ? { ...e, evaluation: result.evaluation, isEvaluating: false, error: undefined } : e))
+          );
+        } else {
+          setExercises((prev) =>
+            prev.map((e, i) => (i === result.index ? { ...e, isEvaluating: false, error: result.error } : e))
+          );
+        }
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Evaluation failed. Please try again.");
+    }
+
+    // Anything the stream never answered (dropped connection) gets a retry button.
+    setExercises((prev) =>
+      prev.map((e, i) =>
+        failed.has(i) && !collected[i]
+          ? { ...e, isEvaluating: false, error: e.error ?? "L'évaluation a échoué. Réessayez." }
+          : e
+      )
+    );
     setIsEvaluatingAll(false);
     setPageState("complete");
-    void saveSession();
+    void saveSession(Object.values(collected), snapshot.length);
   };
 
-  const saveSession = async () => {
+  const handleRetryEvaluation = async (index: number) => {
+    if (!content) return;
+    const state = exercises[index];
+    if (!state || !state.answer.trim()) return;
+    setExercises((prev) => prev.map((e, i) => (i === index ? { ...e, isEvaluating: true, error: undefined } : e)));
+    try {
+      const evaluation = await evaluateLearnAnswer(evaluationRequest(state, content.summary));
+      setExercises((prev) => prev.map((e, i) => (i === index ? { ...e, evaluation, isEvaluating: false } : e)));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "L'évaluation a échoué. Réessayez.";
+      setExercises((prev) => prev.map((e, i) => (i === index ? { ...e, isEvaluating: false, error: message } : e)));
+    }
+  };
+
+  // Receives the evaluations directly: reading `exercises` here would see the pre-evaluation state.
+  const saveSession = async (evals: LearnEvaluationResponse[], total: number) => {
     if (!content || sessionSaved) return;
     setSessionSaved(true);
-    // Only count attempted exercises (non-empty answer) in accuracy
-    const attempted = exercises.filter((e) => e.answer.trim() !== "");
-    const evals = attempted.map((e) => e.evaluation).filter(Boolean) as LearnEvaluationResponse[];
-    const avg = (arr: number[]) =>
-      arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : undefined;
-
     try {
       await saveLearnSession({
         source_type: sourceType,
         topic: content.topic,
         level: content.level,
-        score: avg(evals.map((e) => e.score)),
-        grammar: avg(evals.map((e) => e.grammar)),
-        vocabulary: avg(evals.map((e) => e.vocabulary)),
-        structure: avg(evals.map((e) => e.structure)),
-        exercises_total: exercises.length,
+        score: average(evals.map((e) => e.score)),
+        grammar: average(evals.map((e) => e.grammar)),
+        vocabulary: average(evals.map((e) => e.vocabulary)),
+        structure: average(evals.map((e) => e.structure)),
+        exercises_total: total,
         exercises_completed: evals.length
       });
     } catch {
-      // non-critical
+      // Saving progress is best-effort; the results stay on screen.
     }
   };
 
@@ -170,9 +251,12 @@ export default function LearnPage() {
       const newExercises = await generateMoreExercises({
         topic: content.topic,
         level: content.level,
-        summary: content.summary
+        summary: content.summary,
+        content_id: contentIdRef.current || undefined,
+        exclude_questions: askedQuestionsRef.current.slice(-100)
       });
-      setExercises(newExercises.map((ex) => ({ exercise: ex, answer: "", evaluation: null, isEvaluating: false })));
+      rememberQuestions(newExercises);
+      setExercises(newExercises.map(newExerciseState));
       setSessionSaved(false);
       setRound((r) => r + 1);
       setPageState("exercises");
@@ -202,6 +286,9 @@ export default function LearnPage() {
   };
 
   const handleReset = () => {
+    contentIdRef.current = "";
+    askedQuestionsRef.current = [];
+    setRound(1);
     setPageState("input");
     setContent(null);
     setExercises([]);
@@ -365,12 +452,21 @@ export default function LearnPage() {
               <Card className="border-slate-200 shadow-sm">
                 <CardContent className="flex items-center justify-between gap-4 p-6">
                   <div>
-                    <p className="font-semibold text-slate-900">{exercises.length} exercises ready</p>
+                    {exercisesPending ? (
+                      <p className="flex items-center gap-2 font-semibold text-slate-900">
+                        <span className="h-3.5 w-3.5 rounded-full border-2 border-slate-400 border-t-transparent animate-spin" />
+                        Building your exercises…
+                      </p>
+                    ) : (
+                      <p className="font-semibold text-slate-900">{exercises.length} exercises ready</p>
+                    )}
                     <p className="text-sm text-slate-500">
                       Answer all of them, then click <strong>Evaluate All</strong> to get instant feedback.
                     </p>
                   </div>
-                  <Button onClick={() => setPageState("exercises")}>Start Exercises</Button>
+                  <Button onClick={() => setPageState("exercises")} disabled={exercisesPending || exercises.length === 0}>
+                    Start Exercises
+                  </Button>
                 </CardContent>
               </Card>
             )}
@@ -443,15 +539,29 @@ export default function LearnPage() {
                 </div>
 
                 {exercises.map((state, i) => (
-                  <ExerciseCard
-                    key={i}
-                    exercise={state.exercise}
-                    index={i}
-                    answer={state.answer}
-                    onAnswerChange={(ans) => handleAnswerChange(i, ans)}
-                    evaluation={state.evaluation}
-                    isEvaluating={state.isEvaluating}
-                  />
+                  <div key={`${round}-${i}`} className="space-y-2">
+                    <ExerciseCard
+                      exercise={state.exercise}
+                      index={i}
+                      answer={state.answer}
+                      onAnswerChange={(ans) => handleAnswerChange(i, ans)}
+                      evaluation={state.evaluation}
+                      isEvaluating={state.isEvaluating}
+                    />
+                    {state.skipped && !state.evaluation && pageState === "complete" && (
+                      <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-500">
+                        Not answered: this exercise was not evaluated.
+                      </p>
+                    )}
+                    {state.error && (
+                      <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2">
+                        <p className="text-sm text-rose-700">{state.error}</p>
+                        <Button size="sm" variant="outline" onClick={() => void handleRetryEvaluation(i)} disabled={state.isEvaluating}>
+                          Retry
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                 ))}
 
                 {pageState === "exercises" && (

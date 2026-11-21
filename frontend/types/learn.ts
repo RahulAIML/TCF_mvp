@@ -37,7 +37,24 @@ export interface LearnContentResponse {
   key_points: string[];
   vocabulary: LearnVocabItem[];
   exercises: LearnExercise[];
+  content_id?: string | null;
 }
+
+export type LearnOverview = Omit<LearnContentResponse, "exercises" | "content_id">;
+
+export interface LearnAnalyzeStreamHandlers {
+  onOverview: (overview: LearnOverview) => void;
+  onExercises: (exercises: LearnExercise[]) => void;
+  onDone: (contentId: string) => void;
+}
+
+export interface LearnEvaluateBatchItem extends LearnEvaluateRequest {
+  index: number;
+}
+
+export type LearnBatchResult =
+  | { index: number; evaluation: LearnEvaluationResponse; error?: undefined }
+  | { index: number; error: string; evaluation?: undefined };
 
 export interface LearnAnalyzeRequest {
   text: string;
@@ -50,6 +67,7 @@ export interface LearnEvaluateRequest {
   correct_answer: string;
   user_answer: string;
   context?: string;
+  explanation?: string;
 }
 
 export interface LearnEvaluationResponse {
@@ -70,6 +88,8 @@ export interface LearnMoreExercisesRequest {
   topic: string;
   level: string;
   summary: string;
+  content_id?: string;
+  exclude_questions?: string[];
 }
 
 export interface LearnSaveSessionRequest {

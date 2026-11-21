@@ -9,7 +9,7 @@ import TopNav from "@/components/TopNav";
 import FloatingAIAssistant from "@/components/FloatingAIAssistant";
 import { useAuth } from "@/lib/auth-context";
 import {
-  LayoutDashboard, BookOpen, Headphones, Mic, PenSquare, Sparkles, Volume2, BookMarked, X
+  LayoutDashboard, BookOpen, Headphones, Mic, PenSquare, Sparkles, Volume2, BookMarked, AudioLines, Plug, X
 } from "lucide-react";
 
 const mobileNavItems = [
@@ -20,6 +20,8 @@ const mobileNavItems = [
   { href: "/tcf/writing",        label: "Writing",       icon: PenSquare,       color: "text-lime-500"    },
   { href: "/tcf/pronunciation",  label: "Pronunciation", icon: Volume2,         color: "text-pink-500"    },
   { href: "/tcf/vocabulary",     label: "Vocabulary",    icon: BookMarked,      color: "text-cyan-500"    },
+  { href: "/tcf/tts",            label: "Text-to-Speech", icon: AudioLines,     color: "text-indigo-500"  },
+  { href: "/tcf/grok",           label: "Connect Grok",  icon: Plug,            color: "text-orange-500"  },
   { href: "/tcf/dashboard",      label: "Dashboard",     icon: LayoutDashboard, color: "text-violet-500"  },
 ];
 

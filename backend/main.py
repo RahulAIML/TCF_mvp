@@ -1,4 +1,6 @@
 import os
+import threading
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -88,26 +90,40 @@ async def root() -> dict[str, str]:
   return {"status": "ok", "service": "tcf-backend"}
 
 
-@app.get("/api/health")
-async def health() -> dict:
-    """Check environment config and Gemini key validity."""
-    import os
-    result: dict = {
-        "GEMINI_API_KEY": "set" if os.getenv("GEMINI_API_KEY") else "MISSING",
-        "GEMINI_MODEL": os.getenv("GEMINI_MODEL", "gemini-2.0-flash (default)"),
-        "GEMINI_TTS_MODEL": os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-preview-tts (default)"),
-        "ELEVENLABS_API_KEY": "set" if os.getenv("ELEVENLABS_API_KEY") else "MISSING",
-        "gemini_chat_test": "untested",
-    }
-    if os.getenv("GEMINI_API_KEY"):
-        try:
-            from google import genai as genai_client
-            _client = genai_client.Client(api_key=os.getenv("GEMINI_API_KEY"))
-            resp = _client.models.generate_content(
-                model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
-                contents="Reply with just the word: ok"
-            )
-            result["gemini_chat_test"] = "ok" if resp.text else "empty response"
-        except Exception as exc:
-            result["gemini_chat_test"] = f"FAILED: {exc}"
+_HEALTH_PROBE_TTL_SECONDS = 60
+_health_probe_lock = threading.Lock()
+_health_probe: dict = {"checked_at": 0.0, "result": "untested"}
+
+
+def _gemini_probe() -> str:
+  """Live Gemini call, cached for 60 s so the public health endpoint cannot be used to burn quota."""
+  if not os.getenv("GEMINI_API_KEY"):
+    return "untested"
+  with _health_probe_lock:
+    if time.time() - _health_probe["checked_at"] < _HEALTH_PROBE_TTL_SECONDS:
+      return _health_probe["result"]
+    try:
+      from google import genai as genai_client
+      client = genai_client.Client(api_key=os.getenv("GEMINI_API_KEY"))
+      resp = client.models.generate_content(
+        model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+        contents="Reply with just the word: ok"
+      )
+      result = "ok" if resp.text else "empty response"
+    except Exception as exc:
+      result = f"FAILED: {type(exc).__name__}"
+    _health_probe.update(checked_at=time.time(), result=result)
     return result
+
+
+@app.get("/api/health")
+def health() -> dict:
+  """Check environment config and Gemini key validity (probe cached for 60 s)."""
+  return {
+    "GEMINI_API_KEY": "set" if os.getenv("GEMINI_API_KEY") else "MISSING",
+    "GEMINI_MODEL": os.getenv("GEMINI_MODEL", "gemini-2.0-flash (default)"),
+    "GEMINI_TTS_MODEL": os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-preview-tts (default)"),
+    "ELEVENLABS_API_KEY": "set" if os.getenv("ELEVENLABS_API_KEY") else "MISSING",
+    "gemini_chat_test": _gemini_probe(),
+    "pregen": pregen_pool.all_stats(),
+  }
