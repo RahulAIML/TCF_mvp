@@ -5,6 +5,7 @@ from collections import Counter
 
 import pytest
 
+import answer_quality
 import listening_service as ls
 import tcf_ai_service
 
@@ -14,6 +15,8 @@ import tcf_ai_service
 @pytest.fixture(autouse=True)
 def fresh_history(monkeypatch):
     monkeypatch.setattr(ls, "HISTORY", ls._History())
+    # Fake questions repeat their opening words; stem variety has its own tests in test_answer_quality.py.
+    monkeypatch.setattr(ls, "STEMS", answer_quality.StemHistory(window=0))
 
 
 _counter = itertools.count()

@@ -6,6 +6,7 @@ from collections import Counter
 
 import pytest
 
+import answer_quality
 import reading_service as rs
 
 
@@ -24,6 +25,8 @@ class FakeLLM:
         self.prompts = []
 
     def __call__(self, prompt, temperature):
+        if prompt.startswith("Tu passes un QCM"):
+            return {}  # blind-guess check: no opinion, never blocks generation
         self.prompts.append(prompt)
         target = re.search(r'"correct_answer": "([A-D])"', prompt)
         letter = self.answer or (target.group(1) if target else "A")
@@ -60,6 +63,8 @@ def fresh_state(monkeypatch):
     # Keep tests deterministic and offline: never use the background pool.
     monkeypatch.setattr(rs._READING_POOL, "take", lambda key: None)
     monkeypatch.setattr(rs._QUIZ_POOL, "take", lambda key: None)
+    # The fake always asks the same question; stem variety has its own tests in test_answer_quality.py.
+    monkeypatch.setattr(rs, "STEMS", answer_quality.StemHistory(window=0))
     fake = FakeLLM()
     monkeypatch.setattr(rs, "_llm_json", fake)
     return fake
@@ -196,7 +201,7 @@ def test_invalid_choice_blocks_are_rejected(bad):
         rs._validate_choice_block(payload, "A")
 
 
-def test_generation_gives_up_after_three_attempts(monkeypatch):
+def test_generation_gives_up_after_max_attempts(monkeypatch):
     calls = []
 
     def broken(prompt, temperature):
@@ -206,7 +211,7 @@ def test_generation_gives_up_after_three_attempts(monkeypatch):
     monkeypatch.setattr(rs, "_llm_json", broken)
     with pytest.raises(RuntimeError):
         rs.produce_reading_question("C1")
-    assert len(calls) == rs.MAX_ATTEMPTS == 3
+    assert len(calls) == rs.MAX_ATTEMPTS == 5
 
 
 def test_text_far_outside_level_length_is_rejected(monkeypatch):

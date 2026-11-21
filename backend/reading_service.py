@@ -19,6 +19,7 @@ from collections import OrderedDict, deque
 from typing import Any, Deque, Dict, List, Optional, Set, Tuple
 
 import answer_balance
+import answer_quality
 import pregen_pool
 import tcf_ai_service as ai
 from schemas import PassageQuizResponse, PassageResponse, TcfExamQuestion
@@ -39,7 +40,9 @@ READING_LEVEL_RANGES: Dict[str, Tuple[int, int]] = {
     "C2": (36, 39),
 }
 
-MAX_ATTEMPTS = 3
+MAX_ATTEMPTS = 5  # quality checks (blind guess, stems) reject more drafts
+STEMS = answer_quality.StemHistory(window=30)
+QUIZ_MAX_FLAGGED = 2  # a 10-question quiz is redone if more items than this are guessable or lopsided
 
 _NO_JARGON = (
     "Style recherché mais NATUREL, comme un vrai texte publié : n'invente aucun jargon et n'accumule pas "
@@ -131,7 +134,7 @@ READING_SPECS: Dict[str, Dict[str, Any]] = {
         "words": (200, 250),
         "language": "Langue littéraire ou journalistique authentique : ironie, sous-entendus, images, style "
                     "personnel. " + _NO_JARGON,
-        "focus": "percevoir le ton (ironie, scepticisme, nostalgie), l'implicite ou la position réelle de l'auteur",
+        "focus": "percevoir le ton (ironie, scepticisme, nostalgie), l'implicite ou l'intention de l'auteur",
         "question_style": "options subtilement différentes ; une seule est exacte",
     },
 }
@@ -146,7 +149,7 @@ PASSAGE_SPECS: Dict[str, Dict[str, Any]] = {
     "C1": {"words": (240, 290), "language": READING_SPECS["C1"]["language"],
            "focus": "implicite, nuances, intention et raisonnement de l'auteur"},
     "C2": {"words": (260, 310), "language": READING_SPECS["C2"]["language"],
-           "focus": "ton, ironie, implicite et position réelle de l'auteur"},
+           "focus": "ton, ironie, implicite et intention de l'auteur"},
 }
 
 
@@ -353,7 +356,9 @@ def _llm_json(prompt: str, temperature: float) -> Dict[str, Any]:
 
 # ── Single reading question ──────────────────────────────────────────────────
 
-def build_reading_prompt(level: str, question_number: int, target_letter: str, avoid_topics: List[str]) -> str:
+def build_reading_prompt(level: str, question_number: int, target_letter: str, avoid_topics: List[str],
+                         focus: Optional[str] = None, recent_stems: Optional[List[str]] = None,
+                         names: Optional[Tuple[str, str]] = None) -> str:
     spec = READING_SPECS[level]
     low, high = spec["words"]
     token = ai._freshness_token()
@@ -361,6 +366,10 @@ def build_reading_prompt(level: str, question_number: int, target_letter: str, a
     domain = random.choice(ai.DOMAINS)
     document = random.choice(spec["documents"])
     avoid = "; ".join(avoid_topics) if avoid_topics else "aucun"
+    quality = answer_quality.prompt_block(
+        level, focus or random.choice(answer_quality.QUESTION_FOCUS[level]), recent_stems or []
+    )
+    first, second = names or answer_quality.NAMES.pair()
     return f"""Tu es concepteur d'épreuves officielles du TCF Canada (compréhension écrite).
 Rédige UNE question de niveau {level} du CECR, STRICTEMENT à ce niveau (ni plus facile, ni plus difficile).
 
@@ -382,6 +391,8 @@ Règles :
   mais le déforme (mauvais détail, mauvaise personne, mauvais moment, généralisation abusive, contresens).
   Aucun distracteur absurde, hors sujet ou évidemment faux.
 - Les quatre options ont une longueur et une forme comparables ; ne commence pas les options par une lettre.
+{quality}
+- Si le document mentionne des personnes, utilise uniquement les prénoms {first} et {second}.
 - L'explication (en français, 1 à 3 phrases) justifie la bonne réponse à partir du texte et ne mentionne
   JAMAIS de lettre (A, B, C ou D).
 - "topic" : le sujet du document en 3 à 6 mots.
@@ -410,8 +421,12 @@ def produce_reading_question(level: str, question_number: Optional[int] = None) 
     low, high = spec["words"]
     last_error: Exception | None = None
     target_letter = answer_balance.next_letter(f"reading:{level}")
+    focus = answer_quality.next_focus(f"reading:{level}", level)
+    names = answer_quality.NAMES.pair()
+    stem_bucket = f"reading:{level}"
     for _ in range(MAX_ATTEMPTS):
-        prompt = build_reading_prompt(level, qnum, target_letter, _registry.recent_topics(f"q:{level}"))
+        prompt = build_reading_prompt(level, qnum, target_letter, _registry.recent_topics(f"q:{level}"),
+                                      focus, STEMS.recent(stem_bucket), names)
         try:
             payload = _llm_json(prompt, 0.8)
             text = str(payload.get("text", "")).strip()
@@ -419,6 +434,12 @@ def produce_reading_question(level: str, question_number: Optional[int] = None) 
             if words < max(5, int(low * 0.5)) or words > int(high * 1.8):
                 raise ValueError(f"text length {words} words is outside the {level} range")
             block = _validate_choice_block(payload, target_letter)
+            reason = STEMS.problem(stem_bucket, block["question"]) or answer_quality.option_problem(
+                level, block["question"], [_strip_prefix(o) for o in block["options"]],
+                LETTERS.index(block["correct_answer"]), _llm_json,
+            )
+            if reason:
+                raise ValueError(reason)
             question = TcfExamQuestion.model_validate({
                 "text": text,
                 **block,
@@ -426,6 +447,7 @@ def produce_reading_question(level: str, question_number: Optional[int] = None) 
             })
             if not _registry.check_and_register(f"q:{level}", text, str(payload.get("topic", ""))):
                 raise ValueError("duplicate or near-duplicate text")
+            STEMS.record(stem_bucket, block["question"])
             return question
         except Exception as error:  # noqa: BLE001 - every failure triggers a fresh attempt
             last_error = error
@@ -506,6 +528,9 @@ Règles :
 - Chaque question a une seule bonne réponse justifiable par le texte.
 - Les distracteurs reprennent des éléments réellement présents dans le texte mais les déforment ; aucun
   distracteur absurde. Options de longueur comparable, sans lettre au début.
+- {answer_quality.OPTION_RULES[level]}
+- Varie la forme des questions (pas deux questions qui commencent de la même façon) ; n'utilise jamais
+  l'expression « position réelle ».
 - Chaque explication (1 à 2 phrases, en français) cite l'idée du texte et ne mentionne JAMAIS de lettre.
 - Le texte commence par une phrase complète. "topic" : le sujet en 3 à 6 mots.
 
@@ -519,6 +544,23 @@ Sortie : JSON valide uniquement :
   ]
 }}
 """
+
+
+def _quiz_flagged(level: str, questions: List[Dict[str, Any]]) -> int:
+    """Count questions whose answer stands out by length, uses a banned stem, or is guessable without the text."""
+    items = [
+        (q["question"], [_strip_prefix(o) for o in q["options"]], LETTERS.index(q["correct_answer"]))
+        for q in questions
+    ]
+    flags = [
+        bool(answer_quality.StemHistory(window=0).problem("quiz", question))
+        or (level in answer_quality.CHECKED_LEVELS and bool(answer_quality.length_problem(options, idx)))
+        for question, options, idx in items
+    ]
+    if level in answer_quality.CHECKED_LEVELS:
+        blind = answer_quality.batch_blind_flags(_llm_json, items)
+        flags = [a or b for a, b in zip(flags, blind)]
+    return sum(flags)
 
 
 def produce_passage_quiz(level: str) -> PassageQuizResponse:
@@ -539,6 +581,9 @@ def produce_passage_quiz(level: str) -> PassageQuizResponse:
             if len(raw_questions) < 10:
                 raise ValueError("fewer than 10 questions")
             questions = [_validate_choice_block(q, letters[i]) for i, q in enumerate(raw_questions[:10])]
+            flagged = _quiz_flagged(level, questions)
+            if flagged > QUIZ_MAX_FLAGGED:
+                raise ValueError(f"{flagged} quiz questions are guessable, lopsided or use a banned stem")
             quiz = PassageQuizResponse.model_validate({"title": title, "passage": passage, "questions": questions})
             if not _registry.check_and_register(f"quiz:{level}", passage, str(payload.get("topic", ""))):
                 raise ValueError("duplicate or near-duplicate passage")

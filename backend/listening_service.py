@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Deque, Dict, List, Optional, Set, Tuple
 
 import answer_balance
+import answer_quality
 import pregen_pool
 import tts_service
 from schemas import ListeningQuestionResponse
@@ -99,7 +100,7 @@ LISTENING_SPECS: Dict[str, Dict[str, str]] = {
             "philosophie. INTERDIT : jargon académique ou inventé (ex. « herméneutique », « épistémologique », "
             "« aporie », « paradigme », « dialectique », « ontologique », « praxis », « en rupture de ban »)."
         ),
-        "answer_difficulty": "ton, ironie, implication ou position réelle de l'auteur",
+        "answer_difficulty": "ton, ironie, sous-entendu ou intention de l'auteur",
         "distractors": "les distracteurs sont des paraphrases subtilement inexactes (nuance, degré de certitude ou intention mal rendus)",
     },
 }
@@ -155,15 +156,9 @@ PLACES = [
     "Vancouver", "Trois-Rivières", "Lyon", "Bordeaux", "Lille", "Bruxelles", "Genève",
 ]
 
-MALE_NAMES = [
-    "Marc", "Thomas", "Pierre", "Julien", "Antoine", "Nicolas", "Luc", "Paul", "Simon", "David",
-    "Éric", "François", "Gabriel", "Mathieu", "Étienne", "Jean-François", "Sébastien", "Olivier", "Maxime", "Samuel",
-]
-FEMALE_NAMES = [
-    "Sophie", "Isabelle", "Marie", "Claire", "Léa", "Camille", "Emma", "Nathalie", "Julie", "Laura",
-    "Sandrine", "Céline", "Geneviève", "Marie-Ève", "Chloé", "Mélanie", "Audrey", "Amélie", "Valérie", "Noémie",
-]
-_NAME_GENDER = {**{n: "male" for n in MALE_NAMES}, **{n: "female" for n in FEMALE_NAMES}}
+MALE_NAMES = answer_quality.MALE_NAMES
+FEMALE_NAMES = answer_quality.FEMALE_NAMES
+_NAME_GENDER = answer_quality.NAME_GENDER
 
 VOICES = {
     "male": ["fr-FR-male-1", "fr-FR-male-2"],
@@ -176,7 +171,8 @@ BANNED_WORDS = (
 )
 
 POOL_TARGET = int(os.getenv("LISTENING_POOL_TARGET", "5"))
-MAX_ATTEMPTS = 4
+MAX_ATTEMPTS = 6  # quality checks (blind guess, stems) reject more drafts
+STEMS = answer_quality.StemHistory(window=30)
 
 # ── Speaker labels ──────────────────────────────────────────────────────────────
 
@@ -469,12 +465,8 @@ def level_for_question(question_number: int) -> str:
 
 
 def _pick_names() -> Tuple[str, str]:
-    if random.random() < 0.7:
-        a, b = random.choice(MALE_NAMES), random.choice(FEMALE_NAMES)
-        return (a, b) if random.random() < 0.5 else (b, a)
-    pool = MALE_NAMES if random.random() < 0.5 else FEMALE_NAMES
-    a, b = random.sample(pool, 2)
-    return a, b
+    """Two names not used in the last ~40 picks (rotation shared with reading)."""
+    return answer_quality.NAMES.pair()
 
 
 def _clean_option(text: str) -> str:
@@ -498,7 +490,8 @@ def strip_letter_references(explanation: str) -> str:
 
 
 def _build_prompt(level: str, question_number: int, fmt: str, is_dialogue: bool, names: Tuple[str, str],
-                  target_letter: str, avoid_themes: List[str]) -> str:
+                  target_letter: str, avoid_themes: List[str], focus: Optional[str] = None,
+                  recent_stems: Optional[List[str]] = None) -> str:
     spec = LISTENING_SPECS[level]
     domain = random.choice(DOMAINS)
     place = random.choice(PLACES)
@@ -514,9 +507,13 @@ def _build_prompt(level: str, question_number: int, fmt: str, is_dialogue: bool,
     else:
         script_rules = (
             "Le script est un MONOLOGUE d'une seule voix, sans étiquette de locuteur (pas de « Nom : »), "
-            "sans dialogue et sans interpeller une personne qui ne parle pas."
+            "sans dialogue et sans interpeller une personne qui ne parle pas. "
+            f"Si une personne est nommée, utilise uniquement le prénom {names[0]} ou {names[1]}."
         )
     avoid = "; ".join(avoid_themes[-12:]) or "aucun"
+    quality = answer_quality.prompt_block(
+        level, focus or random.choice(answer_quality.QUESTION_FOCUS[level]), recent_stems or []
+    )
     return f"""Tu es concepteur d'épreuves officielles du TCF Canada (compréhension orale). Génère UNE question.
 
 Niveau CECRL visé : {level} (question {question_number} sur 39 ; l'épreuve va du plus facile au plus difficile)
@@ -533,6 +530,7 @@ DOCUMENT SONORE (script) :
 QUESTION ET OPTIONS :
 - Ce que la question évalue : {spec['answer_difficulty']}.
 - 4 options courtes, toutes plausibles et grammaticalement parallèles ; {spec['distractors']}.
+{quality}
 - Une seule réponse est juste, et elle se déduit uniquement de l'écoute du document.
 - La bonne réponse DOIT être placée en position {target_letter}.
 - La question et la bonne réponse portent sur le contenu du document. Ne pas faire parler ni interpeller une
@@ -641,11 +639,24 @@ def build_question(level: str, question_number: Optional[int] = None, with_audio
     names = _pick_names()
     last_error: Exception | None = None
     target_letter = answer_balance.next_letter(f"listening:{level}")
+    focus = answer_quality.next_focus(f"listening:{level}", level)
+    stem_bucket = f"listening:{level}"
+
+    def blind_llm(prompt: str, temperature: float) -> Dict[str, Any]:
+        return _generate_json(prompt, temperature=temperature)
+
     for _attempt in range(MAX_ATTEMPTS):
-        prompt = _build_prompt(level, number, fmt, is_dialogue, names, target_letter, HISTORY.themes(level))
+        prompt = _build_prompt(level, number, fmt, is_dialogue, names, target_letter, HISTORY.themes(level),
+                               focus, STEMS.recent(stem_bucket))
         try:
             payload = _generate_json(prompt, temperature=0.9)
             item = _validate(payload, level, is_dialogue, names, target_letter)
+            reason = STEMS.problem(stem_bucket, item["question"]) or answer_quality.option_problem(
+                level, item["question"], [_clean_option(o) for o in item["options"]],
+                LETTERS.index(target_letter), blind_llm,
+            )
+            if reason:
+                raise InvalidQuestion(reason)
         except Exception as error:
             last_error = error
             logger.info("Listening %s attempt rejected: %s", level, error)
@@ -657,6 +668,7 @@ def build_question(level: str, question_number: Optional[int] = None, with_audio
             logger.info("Listening %s attempt rejected: %s", level, reason)
             continue
         HISTORY.record(fp, item["script"], level, item["theme"])
+        STEMS.record(stem_bucket, item["question"])
         audio_url = None
         if with_audio:
             try:
