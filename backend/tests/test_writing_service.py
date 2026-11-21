@@ -13,8 +13,10 @@ from pregen_pool import PregenPool
 def _fresh_writing_history():
     svc._writing_prompt_history.clear()
     svc._writing_recent_themes.clear()
+    svc._writing_eval_cache.clear()
     yield
     svc._writing_prompt_history.clear()
+    svc._writing_eval_cache.clear()
 
 
 def _chunks(text: str, size: int = 7):
