@@ -98,6 +98,7 @@ export default function ListeningExamPage() {
   const examSessionIdRef = useRef<string | null>(null);
   const practiceSessionIdRef = useRef<string | null>(null);
   const nextPracticeRef = useRef<Promise<ListeningQuestion> | null>(null);
+  const audioCacheRef = useRef<Record<string, Promise<string | undefined>>>({});
 
   useEffect(() => {
     questionsRef.current = questions;
@@ -405,14 +406,33 @@ export default function ListeningExamPage() {
     setPracticePlayCount((prev) => (prev >= MAX_PLAYS ? prev : prev + 1));
   };
 
-  const handleRequestAudio = async (question: ListeningQuestion): Promise<string | undefined> => {
-    try {
-      const res = await generateTcfListeningAudio({ script: question.script, question_number: 1, session_id: undefined });
-      return res.audio_url;
-    } catch {
-      return undefined;
+  const fetchAudio = (script: string): Promise<string | undefined> => {
+    const cache = audioCacheRef.current;
+    if (!cache[script]) {
+      cache[script] = generateTcfListeningAudio({ script, question_number: 1, session_id: undefined })
+        .then((res) => res.audio_url ?? undefined)
+        .catch(() => {
+          delete cache[script];
+          return undefined;
+        });
     }
+    return cache[script];
   };
+
+  const handleRequestAudio = (question: ListeningQuestion): Promise<string | undefined> =>
+    question.script ? fetchAudio(question.script) : Promise.resolve(undefined);
+
+  // Start audio synthesis as soon as a question is shown so Play is near-instant.
+  useEffect(() => {
+    if (practiceQuestion?.script && !practiceQuestion.audio_url) void fetchAudio(practiceQuestion.script);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [practiceQuestion]);
+
+  useEffect(() => {
+    const q = questions[currentQuestion];
+    if (q?.script && !q.audio_url) void fetchAudio(q.script);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questions, currentQuestion]);
 
   const handlePracticeAnswer = (value: AnswerOption) => {
     if (practiceAnswer) return;

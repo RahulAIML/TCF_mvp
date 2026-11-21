@@ -453,14 +453,13 @@ def _generate_dialogue_audio_segmented(script: str, speakers: list[str], questio
 
     logger.info("Dialogue TTS (segmented): %d segments, speaker→voice=%s", len(segments), speaker_voice)
 
-    audio_parts: list[bytes] = []
-    ext = "mp3"
-    for speaker, text in segments:
-        if not text.strip():
-            continue
-        result = _tts_synthesize(text, speaker_voice[speaker])
-        audio_parts.append(result["data"])
-        ext = result["extension"]
+    from concurrent.futures import ThreadPoolExecutor
+
+    jobs = [(text, speaker_voice[speaker]) for speaker, text in segments if text.strip()]
+    with ThreadPoolExecutor(max_workers=min(5, max(1, len(jobs)))) as pool:
+        results = list(pool.map(lambda job: _tts_synthesize(job[0], job[1]), jobs))
+    audio_parts: list[bytes] = [r["data"] for r in results]
+    ext = results[-1]["extension"] if results else "mp3"
 
     if not audio_parts:
         raise RuntimeError("No audio segments generated.")

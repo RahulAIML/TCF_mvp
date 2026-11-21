@@ -20,7 +20,7 @@ router = APIRouter(prefix="/tcf", tags=["tcf", "exam"])
 
 
 @router.post("/generate-question", response_model=TcfGenerateQuestionResponse)
-async def post_generate_question(
+def post_generate_question(
   payload: TcfGenerateQuestionRequest,
   _user: User = Depends(get_optional_user)
 ) -> TcfGenerateQuestionResponse:

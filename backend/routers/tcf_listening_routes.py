@@ -19,7 +19,7 @@ router = APIRouter(prefix="/tcf", tags=["tcf", "listening"])
 
 
 @router.post("/generate-listening-question", response_model=ListeningQuestionResponse)
-async def post_generate_listening_question(
+def post_generate_listening_question(
   payload: TcfGenerateListeningQuestionRequest,
   _user: User = Depends(get_optional_user)
 ) -> ListeningQuestionResponse:
@@ -27,7 +27,7 @@ async def post_generate_listening_question(
 
 
 @router.post("/generate-listening-audio", response_model=GenerateListeningAudioResponse)
-async def post_generate_listening_audio(
+def post_generate_listening_audio(
   payload: TcfGenerateListeningAudioRequest,
   _user: User = Depends(get_optional_user)
 ) -> GenerateListeningAudioResponse:

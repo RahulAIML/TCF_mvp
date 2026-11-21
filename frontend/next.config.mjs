@@ -1,5 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Rewrite proxy defaults to a 30s timeout, which drops slow AI generations with ECONNRESET.
+  experimental: {
+    proxyTimeout: 120000,
+  },
   typescript: {
     ignoreBuildErrors: false,
   },

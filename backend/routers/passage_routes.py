@@ -9,7 +9,7 @@ router = APIRouter(tags=["passage"])
 
 
 @router.post("/generate-passage", response_model=PassageResponse)
-async def post_generate_passage(_user: User = Depends(get_optional_user)) -> PassageResponse:
+def post_generate_passage(_user: User = Depends(get_optional_user)) -> PassageResponse:
   try:
     return generate_passage()
   except RuntimeError as error:
@@ -17,7 +17,7 @@ async def post_generate_passage(_user: User = Depends(get_optional_user)) -> Pas
 
 
 @router.post("/generate-passage-quiz", response_model=PassageQuizResponse)
-async def post_generate_passage_quiz(
+def post_generate_passage_quiz(
   _user: User = Depends(get_optional_user)
 ) -> PassageQuizResponse:
   try:
