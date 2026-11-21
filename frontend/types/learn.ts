@@ -45,6 +45,8 @@ export type LearnOverview = Omit<LearnContentResponse, "exercises" | "content_id
 export interface LearnAnalyzeStreamHandlers {
   onOverview: (overview: LearnOverview) => void;
   onExercises: (exercises: LearnExercise[]) => void;
+  /** Exercises are written in parallel: how many are ready so far. */
+  onProgress?: (ready: number, total: number) => void;
   onDone: (contentId: string) => void;
 }
 

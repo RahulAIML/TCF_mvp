@@ -46,8 +46,7 @@ export function parsePartialEvaluation(text: string): PartialWritingEvaluation {
       const name = header[1].trim();
       const rest = header[2].trim();
       if (name === "NIVEAU") {
-        const level = /\b(A1|A2|B1|B2|C1|C2)\b/.exec(rest);
-        if (level && !isLast) result.level = level[1];
+        // The level shown is only the server's final one (computed from the scores), never a streamed guess.
         section = "";
         return;
       }

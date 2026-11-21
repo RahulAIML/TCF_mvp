@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createCountdown, remainingSeconds, setRunning, takeExpiry, type Countdown } from "@/lib/countdown";
 
 interface TimerClockProps {
   durationSeconds: number;
   isActive: boolean;
   resetKey: number;
   onExpire?: () => void;
+  /** Called with the seconds left whenever the display updates (e.g. to save progress). */
+  onTick?: (remainingSeconds: number) => void;
 }
 
 function formatTime(totalSeconds: number) {
@@ -15,42 +18,57 @@ function formatTime(totalSeconds: number) {
   return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
 }
 
-export default function TimerClock({
-  durationSeconds,
-  isActive,
-  resetKey,
-  onExpire
-}: TimerClockProps) {
+export default function TimerClock({ durationSeconds, isActive, resetKey, onExpire, onTick }: TimerClockProps) {
   const [remaining, setRemaining] = useState(durationSeconds);
+  const countdownRef = useRef<Countdown>(createCountdown(durationSeconds));
+  const resetRef = useRef(`${resetKey}:${durationSeconds}`);
+  // Latest callbacks without restarting the clock when the parent re-renders with new function identities.
+  const onExpireRef = useRef(onExpire);
+  const onTickRef = useRef(onTick);
+  onExpireRef.current = onExpire;
+  onTickRef.current = onTick;
 
   useEffect(() => {
-    setRemaining(durationSeconds);
-  }, [durationSeconds, resetKey]);
+    const now = Date.now();
+    const reset = `${resetKey}:${durationSeconds}`;
+    if (resetRef.current !== reset) {
+      resetRef.current = reset;
+      countdownRef.current = createCountdown(durationSeconds);
+    }
+    countdownRef.current = setRunning(countdownRef.current, isActive, now);
+    const left = remainingSeconds(countdownRef.current, now);
+    setRemaining(left);
+    onTickRef.current?.(left);
+  }, [durationSeconds, resetKey, isActive]);
 
   useEffect(() => {
-    if (!isActive) {
-      return;
-    }
-
-    if (remaining <= 0) {
-      onExpire?.();
-      return;
-    }
-
-    const id = window.setInterval(() => {
-      setRemaining((prev) => Math.max(prev - 1, 0));
-    }, 1000);
-
-    return () => window.clearInterval(id);
-  }, [isActive, remaining, onExpire]);
-
-  const label = useMemo(() => formatTime(remaining), [remaining]);
+    if (!isActive) return;
+    const update = () => {
+      const now = Date.now();
+      const left = remainingSeconds(countdownRef.current, now);
+      setRemaining(left);
+      onTickRef.current?.(left);
+      const { state, fire } = takeExpiry(countdownRef.current, now);
+      countdownRef.current = state;
+      if (fire) onExpireRef.current?.();
+    };
+    update();
+    const id = window.setInterval(update, 250);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") update();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [isActive, resetKey, durationSeconds]);
 
   return (
     <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm">
       <p className="text-xs font-medium uppercase text-slate-400">Time Remaining</p>
-      <p className={`text-base font-semibold ${remaining <= 60 ? "text-rose-600" : "text-slate-900"}`}>
-        {label}
+      <p className={`text-base font-semibold tabular-nums ${remaining <= 60 ? "text-rose-600" : "text-slate-900"}`}>
+        {formatTime(remaining)}
       </p>
     </div>
   );

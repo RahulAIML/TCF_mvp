@@ -10,19 +10,22 @@ Standalone AI service for the TCF Canada exam platform.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import random
 import re
 import threading
 import uuid
-from collections import deque
+from collections import OrderedDict, deque
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Tuple
 
 from dotenv import load_dotenv
 from google import genai as genai_client
 from google.genai import types
 
+import answer_balance
 from pregen_pool import PregenPool
 from schemas import TcfExamQuestion, ListeningQuestionResponse
 
@@ -649,7 +652,6 @@ def stream_assist_tcf_writing(
 
 
 # Evaluation is streamed in a line format so scores appear first and feedback fills in progressively.
-_LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"]
 _EVAL_SCORE_KEYS = {
     "structure": "STRUCTURE",
     "grammar": "GRAMMAIRE",
@@ -708,6 +710,9 @@ VERSION AMELIOREE:
 """
 
 
+# Overall CEFR level is computed only from the four criterion scores (average out of 10), never taken from
+# the model's own label, so the same scores always give the same level:
+#   < 3 → A1 · 3–4.99 → A2 · 5–6.99 → B1 · 7–8.49 → B2 · 8.5–9.49 → C1 · ≥ 9.5 → C2
 def _level_from_average(average: float) -> str:
     if average < 3:
         return "A1"
@@ -765,7 +770,8 @@ def parse_writing_evaluation_text(text: str) -> dict[str, Any]:
         "scores": scores,
         "feedback": _split_feedback("\n".join(feedback_lines)),
         "improved_version": "\n".join(improved_lines).strip(),
-        "complete": level is not None and all(v is not None for v in scores.values()),
+        # The level is computed from the scores, so only the four scores are required.
+        "complete": all(v is not None for v in scores.values()),
     }
 
 
@@ -786,12 +792,7 @@ def _apply_writing_guards(result: dict[str, Any], task_type: str, response_text:
         scores = {key: min(value, 4) for key, value in scores.items()}
     elif words < spec["min_words"]:
         scores["structure"] = min(scores["structure"], 5)
-    average = sum(scores.values()) / len(scores)
-    computed = _level_from_average(average)
-    level = result.get("level")
-    # Never above what the scores justify; a slightly stricter model judgement (one band lower) is kept.
-    if level not in _LEVELS or not (0 <= _LEVELS.index(computed) - _LEVELS.index(level) <= 1):
-        level = computed
+    level = _level_from_average(sum(scores.values()) / len(scores))
     feedback = [str(item) for item in result.get("feedback") or []]
     if words < spec["min_words"]:
         feedback.insert(0, f"Longueur insuffisante : {words} mots pour {spec['min_words']} à {spec['max_words']} attendus.")
@@ -805,16 +806,71 @@ def _apply_writing_guards(result: dict[str, Any], task_type: str, response_text:
     }
 
 
+_EVAL_SEED = 1729
+_WRITING_EVAL_CACHE_MAX = 1000
+_writing_eval_cache: "OrderedDict[str, tuple[str, dict[str, object]]]" = OrderedDict()
+_writing_eval_cache_lock = threading.Lock()
+
+
+def _normalize_for_key(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip())
+
+
+def writing_eval_cache_key(task_type: str, prompt_text: str, response_text: str) -> str:
+    raw = "\x1f".join((task_type, _normalize_for_key(prompt_text), _normalize_for_key(response_text)))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _cached_writing_evaluation(key: str) -> "tuple[str, dict[str, object]] | None":
+    with _writing_eval_cache_lock:
+        hit = _writing_eval_cache.get(key)
+        if hit is not None:
+            _writing_eval_cache.move_to_end(key)
+        return hit
+
+
+def _store_writing_evaluation(key: str, streamed_text: str, evaluation: dict[str, object]) -> None:
+    with _writing_eval_cache_lock:
+        _writing_eval_cache[key] = (streamed_text, evaluation)
+        _writing_eval_cache.move_to_end(key)
+        while len(_writing_eval_cache) > _WRITING_EVAL_CACHE_MAX:
+            _writing_eval_cache.popitem(last=False)
+
+
 def stream_writing_evaluation_tokens(task_type: str, prompt_text: str, response_text: str):
+    """
+    Streams the evaluation text. The same submission always gets the same evaluation: an identical
+    (task, prompt, text) replays the cached result; otherwise sampling is deterministic (temperature 0, fixed seed).
+    """
     if not response_text.strip():
         return
+    cached = _cached_writing_evaluation(writing_eval_cache_key(task_type, prompt_text, response_text))
+    if cached is not None:
+        for line in cached[0].splitlines(keepends=True):
+            yield line
+        return
     _ensure_api_key()
-    for chunk in _gemini_generate(
-        _writing_eval_prompt(task_type, prompt_text, response_text), stream=True, temperature=0.2
-    ):
-        token = getattr(chunk, "text", None)
-        if token:
-            yield token
+    chunks = _gemini_generate(
+        _writing_eval_prompt(task_type, prompt_text, response_text), stream=True, temperature=0.0, seed=_EVAL_SEED
+    )
+    yield from _without_model_level(getattr(chunk, "text", None) or "" for chunk in chunks)
+
+
+_MODEL_LEVEL_LINE = re.compile(r"^\s*NIVEAU\s*:", re.IGNORECASE)
+
+
+def _without_model_level(tokens):
+    """Line-buffered pass-through that drops the model's own NIVEAU line: the level shown is always the one
+    computed from the scores, so the student never sees one level while streaming and another at the end."""
+    pending = ""
+    for token in tokens:
+        pending += token
+        while "\n" in pending:
+            line, pending = pending.split("\n", 1)
+            if not _MODEL_LEVEL_LINE.match(line):
+                yield line + "\n"
+    if pending and not _MODEL_LEVEL_LINE.match(pending):
+        yield pending
 
 
 def finalize_writing_evaluation(
@@ -823,14 +879,28 @@ def finalize_writing_evaluation(
     """Normalize the streamed evaluation; one non-streamed retry if the stream was malformed."""
     if not response_text.strip():
         return _empty_writing_evaluation()
+    key = writing_eval_cache_key(task_type, prompt_text, response_text)
+    cached = _cached_writing_evaluation(key)
+    if cached is not None:
+        return dict(cached[1])
     parsed = parse_writing_evaluation_text(streamed_text)
     if not parsed["complete"]:
-        retry_text = _generate_text(_writing_eval_prompt(task_type, prompt_text, response_text), temperature=0.1)
-        retry = parse_writing_evaluation_text(retry_text)
-        if not retry["complete"]:
+        streamed_text = _gemini_text_deterministic(_writing_eval_prompt(task_type, prompt_text, response_text))
+        parsed = parse_writing_evaluation_text(streamed_text)
+        if not parsed["complete"]:
             raise RuntimeError("Writing evaluation could not be parsed.")
-        parsed = retry
-    return _apply_writing_guards(parsed, task_type, response_text)
+    evaluation = _apply_writing_guards(parsed, task_type, response_text)
+    _store_writing_evaluation(key, streamed_text, evaluation)
+    return dict(evaluation)
+
+
+def _gemini_text_deterministic(prompt: str) -> str:
+    _ensure_api_key()
+    response = _gemini_generate(prompt, temperature=0.0, seed=_EVAL_SEED)
+    text = getattr(response, "text", None)
+    if not text:
+        raise RuntimeError("Gemini returned an empty response.")
+    return str(text).strip()
 
 
 def evaluate_tcf_writing_task(
@@ -1372,70 +1442,8 @@ def generate_tcf_listening_audio(script: str, question_number: int, session_id: 
     return synthesize_listening_audio(script)
 
 
-_LEARN_EXERCISE_ORDER = ["mcq", "sentence_correction", "writing_task", "speaking_prompt", "writing_task"]
-
-_LEARN_EXERCISES_TEMPLATE = """[
-  {{
-    "type": "mcq",
-    "question": "Question de compréhension {about}",
-    "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
-    "correct_answer": "A, B, C ou D",
-    "explanation": "Pourquoi cette réponse est correcte, en français"
-  }},
-  {{
-    "type": "sentence_correction",
-    "question": "Corrigez cette phrase",
-    "incorrect": "Une phrase avec UNE faute de grammaire ou d'orthographe",
-    "correct_answer": "La phrase corrigée",
-    "explanation": "Explication de la correction, en français"
-  }},
-  {{
-    "type": "writing_task",
-    "question": "Consigne d'écriture courte (3-4 phrases) {about}",
-    "correct_answer": "Exemple de réponse modèle",
-    "explanation": "Ce qui est attendu"
-  }},
-  {{
-    "type": "speaking_prompt",
-    "question": "Consigne orale (1-2 minutes) {about}",
-    "correct_answer": "Points clés attendus",
-    "explanation": "Critères d'évaluation"
-  }},
-  {{
-    "type": "writing_task",
-    "question": "Seconde consigne d'écriture (4-5 phrases), différente de la première",
-    "correct_answer": "Exemple de réponse modèle",
-    "explanation": "Ce qui est attendu"
-  }}
-]"""
-
-_LEARN_RULES = """Règles STRICTES :
-- Exactement 5 exercices dans cet ordre : mcq, sentence_correction, writing_task, speaking_prompt, writing_task.
-- Tout le contenu est en français.
-- Pour le QCM, place la bonne réponse sur la lettre {letter} ; les 3 distracteurs doivent être plausibles.
-- Ne réutilise AUCUNE des questions déjà posées listées ci-dessous, ni une reformulation proche.
-- Sortie : JSON valide uniquement."""
-
-
 def learn_question_fingerprint(question: str) -> str:
     return re.sub(r"[^a-z0-9À-ɏ]", "", (question or "").lower())
-
-
-def _order_learn_exercises(raw_list: list) -> list[Dict[str, Any]]:
-    """Return the 5 exercises in the required type order; [] if the model output is unusable."""
-    by_type: Dict[str, list] = {}
-    for ex in raw_list:
-        if isinstance(ex, dict) and str(ex.get("question", "")).strip():
-            by_type.setdefault(str(ex.get("type", "")), []).append(ex)
-    ordered: list = []
-    used: Dict[str, int] = {}
-    for rtype in _LEARN_EXERCISE_ORDER:
-        bucket = by_type.get(rtype, [])
-        idx = used.get(rtype, 0)
-        if idx < len(bucket):
-            ordered.append(bucket[idx])
-            used[rtype] = idx + 1
-    return ordered if len(ordered) == 5 else [ex for ex in raw_list if isinstance(ex, dict)][:5]
 
 
 def _extract_exercise_list(payload: Any) -> list:
@@ -1498,26 +1506,105 @@ Règles : tout en français ; 3 à 5 points clés ; 3 à 5 mots de vocabulaire a
     }
 
 
-def generate_learn_exercises(text: str, exclude_questions=()) -> list[Dict[str, Any]]:
-    """Second phase of the analysis: 5 exercises grounded in the source text."""
-    prompt = f"""Tu es un tuteur TCF Canada. Génère exactement 5 exercices d'apprentissage basés sur ce texte.
+# ── Exercise generation: one small model call per exercise, all five in parallel ──
+# A single call writing all five exercises took ~20 s; five small calls finish in about the time of one.
 
-Texte :
-{text.strip()}
+_LEARN_SLOT_EXECUTOR = ThreadPoolExecutor(max_workers=12, thread_name_prefix="learn-slot")
 
-Retourne un JSON : tableau de 5 exercices au format :
-{_LEARN_EXERCISES_TEMPLATE.format(about="sur le texte")}
+_LEARN_SLOTS: list[tuple[str, str]] = [
+    ("mcq", "Un QCM de compréhension avec 4 options ; la bonne réponse est sur la lettre {letter} ; "
+            "les 3 distracteurs sont plausibles et s'appuient sur des détails réels."),
+    ("sentence_correction", "Une phrase liée au thème contenant UNE seule faute de grammaire ou d'orthographe "
+                            "(accord, conjugaison, préposition…)."),
+    ("writing_task", "Une consigne d'écriture courte (3 à 4 phrases) qui fait réutiliser les idées du thème."),
+    ("speaking_prompt", "Une consigne orale (1 à 2 minutes) qui demande un avis personnel argumenté."),
+    ("writing_task", "Une consigne d'écriture DIFFÉRENTE de la précédente : un courriel ou un message de 4 à 5 "
+                     "phrases adressé à une personne précise."),
+]
 
-{_LEARN_RULES.format(letter=random.choice("ABCD"))}
-{_exclusion_block(exclude_questions)}"""
-    exercises = _order_learn_exercises(_extract_exercise_list(_generate_json(prompt, temperature=0.7)))
-    return _drop_repeated(exercises, exclude_questions)
+
+def _learn_slot_example(exercise_type: str, letter: str) -> str:
+    examples = {
+        "mcq": {"type": "mcq", "question": "...", "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+                "correct_answer": letter, "explanation": "..."},
+        "sentence_correction": {"type": "sentence_correction", "question": "Corrigez cette phrase",
+                                "incorrect": "...", "correct_answer": "...", "explanation": "..."},
+        "writing_task": {"type": "writing_task", "question": "...", "correct_answer": "réponse modèle",
+                         "explanation": "ce qui est attendu"},
+        "speaking_prompt": {"type": "speaking_prompt", "question": "...", "correct_answer": "points clés attendus",
+                            "explanation": "critères d'évaluation"},
+    }
+    return json.dumps(examples[exercise_type], ensure_ascii=False)
+
+
+def _valid_slot(exercise_type: str, payload: Any) -> Dict[str, Any] | None:
+    item = payload
+    if isinstance(payload, list):
+        item = next((x for x in payload if isinstance(x, dict)), None)
+    elif isinstance(payload, dict) and not str(payload.get("question", "")).strip():
+        item = next((x for x in _extract_exercise_list(payload) if isinstance(x, dict)), None)
+    if not isinstance(item, dict) or not str(item.get("question", "")).strip():
+        return None
+    item = dict(item)
+    item["type"] = exercise_type
+    if exercise_type == "mcq":
+        options = item.get("options")
+        if not isinstance(options, list) or len(options) != 4 or not _letter_of(str(item.get("correct_answer", ""))):
+            return None
+    if exercise_type == "sentence_correction" and not str(item.get("incorrect", "")).strip():
+        return None
+    return item
+
+
+def _generate_learn_slot(index: int, source: str, level_rule: str, exclude_questions, temperature: float) -> Dict[str, Any] | None:
+    exercise_type, instruction = _LEARN_SLOTS[index]
+    letter = answer_balance.next_letter("learn") if exercise_type == "mcq" else ""
+    prompt = f"""Tu es un tuteur TCF Canada. Rédige UN SEUL exercice en français.
+
+{source}
+
+Exercice demandé : {instruction.format(letter=letter)}
+{level_rule}
+{_exclusion_block(exclude_questions)}
+
+Réponds avec UN objet JSON exactement de cette forme, en français, sans rien d'autre :
+{_learn_slot_example(exercise_type, letter)}"""
+    for _attempt in range(2):
+        try:
+            item = _valid_slot(exercise_type, _generate_json(prompt, temperature=temperature))
+        except Exception as error:
+            logging.getLogger(__name__).info("learn exercise slot %s failed: %s", index, error)
+            continue
+        if item:
+            return item
+    return None
+
+
+def _generate_learn_set(source: str, level_rule: str, exclude_questions, temperature: float, on_ready=None) -> list[Dict[str, Any]]:
+    from concurrent.futures import as_completed
+
+    exclude = list(exclude_questions or ())
+    futures = {
+        _LEARN_SLOT_EXECUTOR.submit(_generate_learn_slot, i, source, level_rule, exclude, temperature): i
+        for i in range(len(_LEARN_SLOTS))
+    }
+    results: list[Dict[str, Any] | None] = [None] * len(_LEARN_SLOTS)
+    for future in as_completed(futures):
+        index = futures[future]
+        results[index] = future.result()
+        if results[index] is not None and on_ready is not None:
+            on_ready(index, results[index])
+    return _drop_repeated([ex for ex in results if ex], exclude)
+
+
+def generate_learn_exercises(text: str, exclude_questions=(), on_ready=None) -> list[Dict[str, Any]]:
+    """Five exercises grounded in the source text; `on_ready(index, exercise)` fires as each one is ready."""
+    source = f"Texte source (l'exercice porte sur ce texte) :\n{text.strip()}"
+    return _generate_learn_set(source, "", exclude_questions, 0.7, on_ready)
 
 
 def analyze_learn_content(text: str) -> Dict[str, Any]:
     """Overview and exercises are generated in parallel."""
-    from concurrent.futures import ThreadPoolExecutor
-
     with ThreadPoolExecutor(max_workers=2) as pool:
         overview_f = pool.submit(generate_learn_overview, text)
         exercises_f = pool.submit(generate_learn_exercises, text)
@@ -1527,20 +1614,8 @@ def analyze_learn_content(text: str) -> Dict[str, Any]:
 
 
 def generate_more_exercises(topic: str, level: str, summary: str, exclude_questions=()) -> list[Dict[str, Any]]:
-    prompt = f"""Tu es tuteur TCF Canada. Génère exactement 5 NOUVEAUX exercices en français.
-
-Sujet : {topic}
-Niveau : {level}
-Résumé : {summary}
-
-Retourne un JSON : tableau de 5 exercices au format :
-{_LEARN_EXERCISES_TEMPLATE.format(about=f"sur {topic}")}
-
-{_LEARN_RULES.format(letter=random.choice("ABCD"))}
-- Adapter la difficulté au niveau {level}.
-{_exclusion_block(exclude_questions)}"""
-    exercises = _order_learn_exercises(_extract_exercise_list(_generate_json(prompt, temperature=0.8)))
-    return _drop_repeated(exercises, exclude_questions)
+    source = f"Sujet : {topic}\nRésumé du texte étudié : {summary}"
+    return _generate_learn_set(source, f"Adapte la difficulté au niveau {level}. Exercice NOUVEAU.", exclude_questions, 0.8)
 
 
 def _letter_of(answer: str) -> str:

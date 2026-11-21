@@ -56,6 +56,8 @@ export default function MockExamPage() {
   const [startedAt, setStartedAt] = useState<string | null>(null);
   const [timerKey, setTimerKey] = useState(0);
   const [timerActive, setTimerActive] = useState(false);
+  // Questions currently loading with a visible loader: the clock pauses only while this is > 0.
+  const [loadingPauses, setLoadingPauses] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [results, setResults] = useState<TcfSubmitExamResponse | null>(null);
   const [timeUp, setTimeUp] = useState(false);
@@ -78,14 +80,6 @@ export default function MockExamPage() {
   const diffRange = DIFFICULTY_RANGES[difficultyGroup];
   const TOTAL_QUESTIONS = diffRange.end - diffRange.start + 1;
 
-  // Mirror the visible countdown so a saved exam resumes with the time that was actually left.
-  useEffect(() => {
-    if (!timerActive) return;
-    const id = window.setInterval(() => {
-      remainingRef.current = Math.max(remainingRef.current - 1, 0);
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, [timerActive]);
   const inFlightRef = useRef<Partial<Record<number, Promise<TcfExamQuestion>>>>({});
   const examSessionIdRef = useRef<string | null>(null);
 
@@ -129,29 +123,21 @@ export default function MockExamPage() {
     if (inFlight) {
       if (showLoader) {
         setLoadingQuestion(true);
-      }
-      const shouldResumeTimer = showLoader && timerActive;
-      if (shouldResumeTimer) {
-        setTimerActive(false);
+        setLoadingPauses((count) => count + 1);
       }
       try {
         return await inFlight;
       } finally {
         if (showLoader) {
           setLoadingQuestion(false);
-        }
-        if (shouldResumeTimer && !timeUp && !results) {
-          setTimerActive(true);
+          setLoadingPauses((count) => Math.max(0, count - 1));
         }
       }
     }
 
     if (showLoader) {
       setLoadingQuestion(true);
-    }
-    const shouldResumeTimer = showLoader && timerActive;
-    if (shouldResumeTimer) {
-      setTimerActive(false);
+      setLoadingPauses((count) => count + 1);
     }
     try {
       const request = generateTcfQuestion({
@@ -169,9 +155,7 @@ export default function MockExamPage() {
       delete inFlightRef.current[questionNumber];
       if (showLoader) {
         setLoadingQuestion(false);
-      }
-      if (shouldResumeTimer && !timeUp && !results) {
-        setTimerActive(true);
+        setLoadingPauses((count) => Math.max(0, count - 1));
       }
     }
   };
@@ -466,9 +450,12 @@ export default function MockExamPage() {
               timer={
                 <TimerClock
                   durationSeconds={timerDuration}
-                  isActive={timerActive}
+                  isActive={timerActive && loadingPauses === 0}
                   resetKey={timerKey}
                   onExpire={handleTimerExpire}
+                  onTick={(seconds) => {
+                    remainingRef.current = seconds;
+                  }}
                 />
               }
             >

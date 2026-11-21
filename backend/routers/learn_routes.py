@@ -4,6 +4,7 @@ from starlette.concurrency import run_in_threadpool
 import hashlib
 import json
 import logging
+import queue
 import threading
 from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
@@ -131,6 +132,9 @@ def _sse(event: dict[str, Any]) -> str:
   return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
+EXERCISES_PER_ROUND = 5
+
+
 def _start_analysis(text: str) -> tuple[Future, Future]:
   return _EXECUTOR.submit(generate_learn_overview, text), _EXECUTOR.submit(generate_learn_exercises, text)
 
@@ -165,21 +169,40 @@ def analyze_content_stream(
   payload: LearnAnalyzeRequest,
   _user: User = Depends(get_optional_user)
 ) -> StreamingResponse:
-  """SSE: an `overview` event and an `exercises` event (whichever is ready first), then `done`."""
+  """
+  SSE: `overview` as soon as it is ready, `progress` ({ready, total}) as each exercise is written,
+  then `exercises` (the full list) and `done`. The five exercises are generated in parallel.
+  """
   text = payload.text
 
   def _generate() -> Iterator[str]:
-    overview_f, exercises_f = _start_analysis(text)
-    labels = {overview_f: "overview", exercises_f: "exercises"}
+    events: "queue.Queue[tuple[str, Any]]" = queue.Queue()
+    ready = {"count": 0}
+
+    def _on_ready(_index: int, _exercise: dict[str, Any]) -> None:
+      ready["count"] += 1
+      events.put(("progress", ready["count"]))
+
+    overview_f = _EXECUTOR.submit(generate_learn_overview, text)
+    exercises_f = _EXECUTOR.submit(generate_learn_exercises, text, on_ready=_on_ready)
+    overview_f.add_done_callback(lambda f: events.put(("overview", f)))
+    exercises_f.add_done_callback(lambda f: events.put(("exercises", f)))
+
     overview: dict[str, Any] | None = None
     exercises: list[dict[str, Any]] = []
+    finished = 0
     try:
-      for future in as_completed(labels):
-        if labels[future] == "overview":
-          overview = future.result()
+      while finished < 2:
+        kind, data = events.get()
+        if kind == "progress":
+          yield _sse({"type": "progress", "ready": data, "total": EXERCISES_PER_ROUND})
+        elif kind == "overview":
+          finished += 1
+          overview = data.result()
           yield _sse({"type": "overview", **overview})
         else:
-          exercises = _valid_exercises(future.result())
+          finished += 1
+          exercises = _valid_exercises(data.result())
           if not exercises:
             raise RuntimeError("no valid exercises")
           yield _sse({"type": "exercises", "exercises": exercises})

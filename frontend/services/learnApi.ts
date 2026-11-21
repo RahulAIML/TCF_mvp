@@ -13,6 +13,7 @@ import { API_BASE_URL, authHeaders, friendlyErrorMessage, friendlyNetworkError }
 type LearnSseEvent =
   | ({ type: "overview" } & LearnOverview)
   | { type: "exercises"; exercises: LearnExercise[] }
+  | { type: "progress"; ready: number; total: number }
   | { type: "done"; content_id?: string }
   | { type: "error"; message: string }
   | { type: "result"; index: number; evaluation?: LearnEvaluationResponse; error?: string };
@@ -73,6 +74,8 @@ export async function analyzeLearnContentStream(
     if (event.type === "overview") {
       const { type: _type, ...overview } = event;
       handlers.onOverview(overview);
+    } else if (event.type === "progress") {
+      handlers.onProgress?.(event.ready, event.total);
     } else if (event.type === "exercises") {
       handlers.onExercises(event.exercises);
     } else if (event.type === "done") {

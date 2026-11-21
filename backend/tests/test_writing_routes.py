@@ -99,7 +99,9 @@ def test_evaluate_stream_emits_tokens_then_evaluation(client, monkeypatch):
     r = client.post("/tcf/evaluate-writing/stream",
                     json={"task_type": "task2", "prompt": "c", "response_text": LONG})
     events = _events(r)
-    assert events[0]["token"] == EVAL[:20]
+    tokens = "".join(e["token"] for e in events if isinstance(e, dict) and "token" in e)
+    # Streamed line by line, without the model's own level (the level shown is computed from the scores).
+    assert events[0]["token"].startswith("STRUCTURE") and "NIVEAU" not in tokens
     final = [e for e in events if isinstance(e, dict) and "evaluation" in e][0]["evaluation"]
     assert final["scores"]["grammar"] == 5 and events[-1] == "[DONE]"
 

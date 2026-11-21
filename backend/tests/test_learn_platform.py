@@ -149,7 +149,7 @@ def test_analyze_stream_emits_overview_exercises_done(client, monkeypatch):
   monkeypatch.setattr(learn_routes, "generate_learn_overview", lambda text: {
     "topic": "Vélo", "level": "B1", "summary": "Résumé.", "key_points": ["a"], "vocabulary": [],
   })
-  monkeypatch.setattr(learn_routes, "generate_learn_exercises", lambda text: _batch("x"))
+  monkeypatch.setattr(learn_routes, "generate_learn_exercises", lambda text, **kwargs: _batch("x"))
   monkeypatch.setattr(learn_routes, "_batches", ExerciseBatchCache(lambda *a: _batch("next")))
   r = client.post("/learn/analyze/stream", json={"text": "Un texte en français assez long."})
   events = _events(r)
@@ -163,7 +163,7 @@ def test_analyze_stream_reports_friendly_error(client, monkeypatch):
     raise RuntimeError("Gemini generate_content failed: quota")
 
   monkeypatch.setattr(learn_routes, "generate_learn_overview", boom)
-  monkeypatch.setattr(learn_routes, "generate_learn_exercises", lambda text: _batch("x"))
+  monkeypatch.setattr(learn_routes, "generate_learn_exercises", lambda text, **kwargs: _batch("x"))
   events = _events(client.post("/learn/analyze/stream", json={"text": "Un texte en français assez long."}))
   assert events[-1] == {"type": "error", "message": "L'analyse a échoué. Veuillez réessayer."}
 

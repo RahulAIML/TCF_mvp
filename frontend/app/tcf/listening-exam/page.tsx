@@ -95,6 +95,8 @@ export default function ListeningExamPage() {
   const [startedAt, setStartedAt] = useState<string | null>(null);
   const [timerKey, setTimerKey] = useState(0);
   const [timerActive, setTimerActive] = useState(false);
+  // Questions currently loading with a visible loader: the clock pauses only while this is > 0.
+  const [loadingPauses, setLoadingPauses] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [results, setResults] = useState<ListeningSubmitResult | null>(null);
   const [timeUp, setTimeUp] = useState(false);
@@ -233,9 +235,10 @@ export default function ListeningExamPage() {
     const existing = questionsRef.current[position];
     if (existing) return existing;
 
-    const resumeTimer = showLoader && timerActive;
-    if (showLoader) setLoadingQuestion(true);
-    if (resumeTimer) setTimerActive(false);
+    if (showLoader) {
+      setLoadingQuestion(true);
+      setLoadingPauses((count) => count + 1);
+    }
     try {
       let request = inFlightRef.current[position];
       if (!request) {
@@ -264,8 +267,10 @@ export default function ListeningExamPage() {
       }
       return await request;
     } finally {
-      if (showLoader) setLoadingQuestion(false);
-      if (resumeTimer && !timeUp && !results) setTimerActive(true);
+      if (showLoader) {
+        setLoadingQuestion(false);
+        setLoadingPauses((count) => Math.max(0, count - 1));
+      }
     }
   };
 
@@ -777,7 +782,7 @@ export default function ListeningExamPage() {
               timer={
                 <TimerClock
                   durationSeconds={examDurationSeconds(examFocus)}
-                  isActive={timerActive}
+                  isActive={timerActive && loadingPauses === 0}
                   resetKey={timerKey}
                   onExpire={handleTimerExpire}
                 />

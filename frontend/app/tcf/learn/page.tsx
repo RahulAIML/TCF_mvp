@@ -75,6 +75,7 @@ export default function LearnPage() {
   const [showTranslation, setShowTranslation] = useState(false);
   const [isTranslating, setIsTranslating] = useState(false);
   const [exercisesPending, setExercisesPending] = useState(false);
+  const [exerciseProgress, setExerciseProgress] = useState<{ ready: number; total: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const contentIdRef = useRef<string>("");
   const askedQuestionsRef = useRef<string[]>([]);
@@ -92,6 +93,7 @@ export default function LearnPage() {
     setError("");
     setIsLoading(true);
     setExercisesPending(true);
+    setExerciseProgress(null);
     contentIdRef.current = "";
     askedQuestionsRef.current = [];
     setRound(1);
@@ -110,6 +112,7 @@ export default function LearnPage() {
             setPageState("content");
             setIsLoading(false);
           },
+          onProgress: (ready, total) => setExerciseProgress({ ready, total }),
           onExercises: (list) => {
             rememberQuestions(list);
             setExercises(list.map(newExerciseState));
@@ -455,7 +458,9 @@ export default function LearnPage() {
                     {exercisesPending ? (
                       <p className="flex items-center gap-2 font-semibold text-slate-900">
                         <span className="h-3.5 w-3.5 rounded-full border-2 border-slate-400 border-t-transparent animate-spin" />
-                        Building your exercises…
+                        {exerciseProgress
+                          ? `Building your exercises… ${exerciseProgress.ready}/${exerciseProgress.total} ready`
+                          : "Building your exercises…"}
                       </p>
                     ) : (
                       <p className="font-semibold text-slate-900">{exercises.length} exercises ready</p>
