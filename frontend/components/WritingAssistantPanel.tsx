@@ -7,8 +7,8 @@ import type {
   TcfWritingAssistantAction,
   TcfWritingTranslationDirection
 } from "@/types/tcf-writing";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+import { MarkdownText } from "@/lib/markdown";
+import { streamSSE } from "@/lib/sse";
 
 interface WritingAssistantPanelProps {
   contextLabel?: string;
@@ -60,69 +60,38 @@ export default function WritingAssistantPanel({
     setInput("");
     setIsLoading(true);
 
-    try {
-      const res = await fetch(`${API_BASE_URL}/tcf/writing/assistant/stream`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: text,
-          action,
-          direction: action === "translate" ? direction : undefined,
-          context: assistantContext,
-        }),
-        cache: "no-store",
-      });
-
-      if (!res.ok || !res.body) throw new Error(`Status ${res.status}`);
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const raw = line.slice(6).trim();
-          if (raw === "[DONE]") break;
-          try {
-            const parsed = JSON.parse(raw) as { token?: string; error?: string };
-            if (parsed.token) {
-              setMessages((prev) => {
-                const updated = [...prev];
-                const last = updated[updated.length - 1];
-                if (last?.role === "assistant") {
-                  updated[updated.length - 1] = { ...last, content: last.content + parsed.token };
-                }
-                return updated;
-              });
-            } else if (parsed.error) {
-              setMessages((prev) => {
-                const updated = [...prev];
-                const last = updated[updated.length - 1];
-                if (last?.role === "assistant") {
-                  updated[updated.length - 1] = { ...last, content: `⚠ ${parsed.error}` };
-                }
-                return updated;
-              });
-            }
-          } catch { /* malformed chunk — skip */ }
-        }
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Assistant failed to respond.";
+    const setLast = (fn: (content: string) => string) =>
       setMessages((prev) => {
         const updated = [...prev];
         const last = updated[updated.length - 1];
         if (last?.role === "assistant") {
-          updated[updated.length - 1] = { ...last, content: `⚠ ${msg}` };
+          updated[updated.length - 1] = { ...last, content: fn(last.content) };
         }
         return updated;
       });
+
+    try {
+      await streamSSE(
+        "/tcf/writing/assistant/stream",
+        {
+          message: text,
+          action,
+          direction: action === "translate" ? direction : undefined,
+          context: assistantContext,
+        },
+        (event) => {
+          if (typeof event.token === "string") {
+            const token = event.token;
+            setLast((content) => content + token);
+          } else if (typeof event.error === "string") {
+            const error = event.error;
+            setLast((content) => content || `⚠ ${error}`);
+          }
+        }
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "The assistant could not respond. Please try again.";
+      setLast(() => `⚠ ${msg}`);
     } finally {
       setIsLoading(false);
     }
@@ -223,6 +192,8 @@ export default function WritingAssistantPanel({
                   <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:150ms]" />
                   <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:300ms]" />
                 </div>
+              ) : msg.role === "assistant" ? (
+                <MarkdownText text={msg.content} />
               ) : (
                 <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
               )}

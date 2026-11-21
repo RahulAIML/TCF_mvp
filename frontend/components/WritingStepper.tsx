@@ -81,8 +81,15 @@ export default function WritingStepper({
           </Button>
         )}
 
-        {stepFeedback && (
-          <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 text-sm text-slate-700">
+        {isFeedbackLoading && !stepFeedback?.feedback.length && (
+          <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 text-sm text-slate-500 flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping" aria-hidden />
+            Reviewing this step…
+          </div>
+        )}
+
+        {stepFeedback && stepFeedback.feedback.length > 0 && (
+          <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 text-sm text-slate-700" aria-live="polite">
             <p className="font-semibold text-indigo-700">Feedback</p>
             <ul className="mt-2 list-disc space-y-1 pl-4">
               {stepFeedback.feedback.map((item, index) => (
