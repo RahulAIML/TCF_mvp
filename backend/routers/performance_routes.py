@@ -23,7 +23,13 @@ QUESTION_TYPE_LABELS = {
   "part1_a1a2": "Part 1 (A1-A2)",
   "part2_a2b1": "Part 2 (A2-B1)",
   "part3_b1b2": "Part 3 (B1-B2)",
-  "part4_b2c2": "Part 4 (B2-C2)"
+  "part4_b2c2": "Part 4 (B2-C2)",
+  "reading_a1": "Reading A1",
+  "reading_a2": "Reading A2",
+  "reading_b1": "Reading B1",
+  "reading_b2": "Reading B2",
+  "reading_c1": "Reading C1",
+  "reading_c2": "Reading C2",
 }
 
 

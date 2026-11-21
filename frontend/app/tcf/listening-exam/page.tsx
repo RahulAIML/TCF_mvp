@@ -593,9 +593,16 @@ export default function ListeningExamPage() {
         {/* Mode toggle */}
         <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 gap-0.5 w-fit">
           {(["practice", "exam"] as const).map((m) => (
-            <button
+            // Real links: a click before hydration still lands on the right mode (no lost first click).
+            <a
               key={m}
-              onClick={() => setMode(m)}
+              href={`?mode=${m}`}
+              role="tab"
+              aria-selected={mode === m}
+              onClick={(e) => {
+                e.preventDefault();
+                setMode(m);
+              }}
               className={`rounded-md px-4 py-1.5 text-sm font-medium capitalize transition-all duration-150 ${
                 mode === m
                   ? "bg-white text-slate-900 shadow-sm"
@@ -603,7 +610,7 @@ export default function ListeningExamPage() {
               }`}
             >
               {m === "practice" ? "Practice" : "Mock Exam"}
-            </button>
+            </a>
           ))}
         </div>
 

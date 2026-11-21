@@ -297,6 +297,11 @@ export default function ListeningQuestionCard({
           <div>
             <CardTitle className="text-slate-900">Question {questionNumber}</CardTitle>
             <CardDescription>Play the audio and answer the question.</CardDescription>
+            {question.format_type && (
+              <p className="mt-1 text-xs font-medium text-indigo-600">
+                Format : {question.format_type.replace(/^(un|une)\s+/i, "")}
+              </p>
+            )}
           </div>
           {onToggleTranscript && (
             <Button variant="outline" onClick={onToggleTranscript}>
