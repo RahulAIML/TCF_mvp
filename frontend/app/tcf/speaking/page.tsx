@@ -8,7 +8,7 @@ import AudioSpeakingRecorder, { AudioSpeakingRecorderHandle } from "@/components
 import TimerClock from "@/components/TimerClock";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { sendTcfConversation, evaluateTcfSpeaking } from "@/services/api";
+import { fetchSpeakingOpening, streamConversation, streamSpeakingEvaluation } from "@/services/speakingApi";
 import ExamResumeDialog from "@/components/ExamResumeDialog";
 import {
   saveExamProgress,
@@ -19,12 +19,18 @@ import {
 } from "@/lib/exam-progress";
 import type {
   TcfConversationMessage,
+  TcfConversationResponse,
   TcfSpeakingEvaluationResponse,
   TcfSpeakingMode,
   TcfSpeakingTaskType
 } from "@/types/tcf-speaking";
 
-const EXAM_DURATION_SECONDS = 12 * 60;
+// Official TCF Canada expression orale timings per task.
+const EXAM_DURATION_SECONDS: Record<TcfSpeakingTaskType, number> = {
+  basic_interaction: 2 * 60,
+  role_play: 5 * 60 + 30,
+  opinion: 4 * 60 + 30,
+};
 const MAX_EXCHANGES = 5;
 
 type ConvState = "idle" | "listening" | "processing" | "speaking";
@@ -82,6 +88,8 @@ export default function SpeakingPage() {
     return () => clearInterval(interval);
   }, [isExamStarted, evaluation, history, taskType, userTurnCount]);
   const sessionTopicRef = useRef<string | null>(null);
+  const examinerNameRef = useRef<string | null>(null);
+  const openingRef = useRef<Partial<Record<TcfSpeakingTaskType, Promise<TcfConversationResponse>>>>({});
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recorderRef = useRef<AudioSpeakingRecorderHandle | null>(null);
   const pendingEvaluateRef = useRef(false);
@@ -93,6 +101,40 @@ export default function SpeakingPage() {
   useEffect(() => { convStateRef.current = convState; }, [convState]);
 
   const isSessionActive = history.length > 0 || convState !== "idle";
+
+  const buildAudioUrl = (audioUrl?: string | null) => {
+    if (!audioUrl) return null;
+    // Serve audio through the Next.js /audio rewrite so the browser never needs CORS for media.
+    if (audioUrl.startsWith("/audio/")) return audioUrl;
+    try {
+      return new URL(audioUrl).pathname;
+    } catch {
+      return audioUrl;
+    }
+  };
+
+  /** Keep one ready session opening per task: Start is instant and the audio is already cached. */
+  const prefetchOpening = useCallback((task: TcfSpeakingTaskType) => {
+    if (openingRef.current[task]) return;
+    const pending = fetchSpeakingOpening({ task_type: task, mode, hints: mode === "practice" && hintsEnabled });
+    openingRef.current[task] = pending;
+    pending
+      .then((opening) => {
+        const url = buildAudioUrl(opening.audio_url);
+        if (url) {
+          const warm = new Audio();
+          warm.preload = "auto";
+          warm.src = url;
+        }
+      })
+      .catch(() => {
+        if (openingRef.current[task] === pending) delete openingRef.current[task];
+      });
+  }, [mode, hintsEnabled]);
+
+  useEffect(() => {
+    if (taskType) prefetchOpening(taskType);
+  }, [taskType, prefetchOpening]);
 
   const stopAudio = useCallback(() => {
     if (audioRef.current) {
@@ -161,6 +203,7 @@ export default function SpeakingPage() {
     setUserTurnCount(0);
     sessionIdRef.current = null;
     sessionTopicRef.current = null;
+    examinerNameRef.current = null;
   }, [stopAudio]);
 
   const resetAfterEvaluation = useCallback(() => {
@@ -176,23 +219,9 @@ export default function SpeakingPage() {
     setUserTurnCount(0);
     sessionIdRef.current = null;
     sessionTopicRef.current = null;
+    examinerNameRef.current = null;
     setTaskType(null);
   }, [stopAudio]);
-
-  const buildAudioUrl = (audioUrl?: string | null) => {
-    if (!audioUrl) return null;
-    // Audio URLs from the backend are relative paths like /audio/...
-    // Always use the Next.js proxy (/audio/...) so the browser never
-    // makes a cross-origin request directly to the backend (CORS fix).
-    if (audioUrl.startsWith("/audio/")) return audioUrl;
-    // Strip the backend origin prefix and let the Next.js rewrite handle it.
-    try {
-      const parsed = new URL(audioUrl);
-      return parsed.pathname; // e.g. "/audio/file.mp3"
-    } catch {
-      return audioUrl; // already relative, return as-is
-    }
-  };
 
   const handleEvaluate = useCallback(async () => {
     if (historyRef.current.length === 0) {
@@ -216,14 +245,24 @@ export default function SpeakingPage() {
     setConvState("processing");
     // Snapshot history now before resetAfterEvaluation wipes it.
     const historySnapshot = [...historyRef.current];
+    setTimerActive(false);
+    let modelAnswer = "";
+    let gotScores = false;
     try {
-      const result = await evaluateTcfSpeaking({
-        history: historySnapshot,
-        task_type: taskType,
-        mode
-      });
-      setEvaluation(result);
-      setTimerActive(false);
+      await streamSpeakingEvaluation(
+        { history: historySnapshot, task_type: taskType, mode },
+        {
+          onScores: (scores) => {
+            gotScores = true;
+            setEvaluation({ ...scores, improved_response: scores.improved_response || modelAnswer });
+          },
+          onModelAnswerToken: (token) => {
+            modelAnswer += token;
+            setEvaluation((prev) => (prev ? { ...prev, improved_response: modelAnswer } : prev));
+          },
+        },
+      );
+      if (!gotScores) throw new Error("The evaluation could not be completed. Please try again.");
       resetAfterEvaluation();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to evaluate speaking.");
@@ -264,17 +303,30 @@ export default function SpeakingPage() {
     setTranscript("");
     setConvState("processing");
     try {
-      const response = await sendTcfConversation({
-        message: "__START__",
-        history: [],
-        task_type: taskType,
-        mode,
-        hints: mode === "practice" && hintsEnabled,
-        session_id: sessionIdRef.current ?? undefined
-      });
-      if (response.session_topic) {
-        sessionTopicRef.current = response.session_topic;
+      const prefetched = openingRef.current[taskType];
+      delete openingRef.current[taskType];
+      let response: TcfConversationResponse;
+      try {
+        response = prefetched
+          ? await prefetched
+          : await fetchSpeakingOpening({
+              task_type: taskType,
+              mode,
+              hints: mode === "practice" && hintsEnabled,
+              session_id: sessionIdRef.current ?? undefined,
+            });
+      } catch {
+        response = await fetchSpeakingOpening({
+          task_type: taskType,
+          mode,
+          hints: mode === "practice" && hintsEnabled,
+          session_id: sessionIdRef.current ?? undefined,
+        });
       }
+      // Ready the opening for this learner's next session on the same task.
+      prefetchOpening(taskType);
+      sessionTopicRef.current = response.session_topic ?? null;
+      examinerNameRef.current = response.examiner_name ?? null;
       const assistantMessage: TcfConversationMessage = { role: "assistant", content: response.reply };
       setHistory([assistantMessage]);
 
@@ -295,7 +347,7 @@ export default function SpeakingPage() {
       setError(err instanceof Error ? err.message : "Failed to start conversation.");
       setConvState("idle");
     }
-  }, [taskType, mode, hintsEnabled, handsFreeEnabled, playAudio, startListening]);
+  }, [taskType, mode, hintsEnabled, handsFreeEnabled, playAudio, startListening, prefetchOpening]);
 
   const startSession = () => {
     if (!taskType) {
@@ -346,20 +398,46 @@ export default function SpeakingPage() {
     await new Promise((resolve) => window.setTimeout(resolve, 500));
 
     try {
-      const response = await sendTcfConversation({
-        message: text,
-        history: previousHistory,
-        task_type: taskType,
-        mode,
-        hints: mode === "practice" && hintsEnabled,
-        session_id: sessionIdRef.current ?? undefined,
-        session_topic: sessionTopicRef.current ?? undefined
-      });
+      let streamed = "";
+      let started = false;
+      let replyText = "";
+      let replyAudio: string | null = null;
+      const showText = (content: string) => {
+        if (!started) {
+          started = true;
+          setHistory((prev) => [...prev, { role: "assistant", content }]);
+        } else {
+          setHistory((prev) => {
+            const next = [...prev];
+            next[next.length - 1] = { role: "assistant", content };
+            return next;
+          });
+        }
+      };
+      await streamConversation(
+        {
+          message: text,
+          history: previousHistory,
+          task_type: taskType,
+          mode,
+          hints: mode === "practice" && hintsEnabled,
+          session_id: sessionIdRef.current ?? undefined,
+          session_topic: sessionTopicRef.current ?? undefined,
+          examiner_name: examinerNameRef.current ?? undefined,
+        },
+        {
+          onMeta: (meta) => {
+            if (meta.session_topic) sessionTopicRef.current = meta.session_topic;
+            if (meta.examiner_name) examinerNameRef.current = meta.examiner_name;
+          },
+          onToken: (token) => { streamed += token; showText(streamed); },
+          onReply: (reply) => { replyText = reply; showText(reply); },
+          onAudio: (url) => { replyAudio = url; },
+        },
+      );
+      if (!replyText) throw new Error("The examiner could not reply. Please try again.");
 
-      const assistantMessage: TcfConversationMessage = { role: "assistant", content: response.reply };
-      setHistory((prev) => [...prev, assistantMessage]);
-
-      const audioUrl = buildAudioUrl(response.audio_url);
+      const audioUrl = buildAudioUrl(replyAudio);
       if (audioUrl) {
         // Mark last-turn BEFORE playing so stopAudio() can pick it up if needed.
         if (isLastTurn) pendingEvaluateRef.current = true;
@@ -407,9 +485,9 @@ export default function SpeakingPage() {
 
   const taskLabel = useMemo(() => {
     if (!taskType) return "Select a task";
-    if (taskType === "basic_interaction") return "Task 1: Basic interaction";
-    if (taskType === "role_play") return "Task 2: Role-play";
-    return "Task 3: Opinion";
+    if (taskType === "basic_interaction") return "Task 1: Guided interview (entretien dirigé)";
+    if (taskType === "role_play") return "Task 2: Interaction — you ask the questions";
+    return "Task 3: Point of view";
   }, [taskType]);
 
   const stateIndicatorColor: Record<ConvState, string> = {
@@ -462,8 +540,8 @@ export default function SpeakingPage() {
           {/* Task selector */}
           {(
             [
-              { key: "basic_interaction", label: "Task 1 — Basic" },
-              { key: "role_play",         label: "Task 2 — Role-play" },
+              { key: "basic_interaction", label: "Task 1 — Interview" },
+              { key: "role_play",         label: "Task 2 — Interaction" },
               { key: "opinion",           label: "Task 3 — Opinion" },
             ] as { key: TcfSpeakingTaskType; label: string }[]
           ).map(({ key, label }) => (
@@ -504,7 +582,7 @@ export default function SpeakingPage() {
             </button>
 
             {mode === "exam" && (
-              <TimerClock durationSeconds={EXAM_DURATION_SECONDS} isActive={timerActive}
+              <TimerClock durationSeconds={taskType ? EXAM_DURATION_SECONDS[taskType] : EXAM_DURATION_SECONDS.opinion} isActive={timerActive}
                 resetKey={timerKey} onExpire={handleTimerExpire} />
             )}
           </div>
@@ -517,7 +595,7 @@ export default function SpeakingPage() {
               <div>
                 <p className="font-semibold text-slate-900">Ready to start the exam?</p>
                 <p className="mt-0.5 text-sm text-slate-500">
-                  You have 12 minutes. Select a task above, then start — the examiner speaks first.
+                  Task 1: 2 min · Task 2: 5 min 30 · Task 3: 4 min 30 (official TCF Canada timings). Select a task, then start — the examiner speaks first.
                 </p>
               </div>
               <Button onClick={startSession} disabled={!taskType}>Start Exam</Button>
@@ -678,7 +756,14 @@ export default function SpeakingPage() {
             {evaluation && (
               <Card className="border-emerald-200 bg-emerald-50 shadow-sm">
                 <CardContent className="p-5 space-y-4 text-sm">
-                  <p className="font-semibold text-emerald-800">✓ Evaluation Complete</p>
+                  <div className="flex items-center justify-between">
+                    <p className="font-semibold text-emerald-800">✓ Evaluation Complete</p>
+                    {evaluation.cefr_level && (
+                      <span className="rounded-full bg-white/80 px-2.5 py-0.5 text-xs font-bold text-emerald-700">
+                        Estimated level: {evaluation.cefr_level}
+                      </span>
+                    )}
+                  </div>
 
                   <div className="grid grid-cols-2 gap-2">
                     {[
@@ -707,12 +792,14 @@ export default function SpeakingPage() {
                     </ul>
                   </div>
 
-                  {evaluation.improved_response && (
+                  {evaluation.improved_response ? (
                     <div className="rounded-xl bg-white/70 p-3 space-y-1">
                       <p className="text-xs font-semibold uppercase text-slate-400">Model Response</p>
                       <p className="whitespace-pre-line text-slate-700">{evaluation.improved_response}</p>
                     </div>
-                  )}
+                  ) : convState === "processing" ? (
+                    <p className="text-xs text-slate-500">Writing a model response…</p>
+                  ) : null}
                 </CardContent>
               </Card>
             )}

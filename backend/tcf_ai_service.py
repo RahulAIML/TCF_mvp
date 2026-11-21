@@ -351,26 +351,62 @@ def _pick_examiner(session_id: str | None) -> tuple[str, str]:
     return random.choice(TCF_EXAMINER_NAMES)
 
 
+# TCF Canada expression orale, 3 tasks:
+#   Tâche 1 — entretien dirigé (2 min, no preparation): the examiner asks the candidate about themselves.
+#   Tâche 2 — exercice en interaction (2 min prep + 3 min 30): the examiner plays a role, the CANDIDATE asks
+#             questions to obtain information.
+#   Tâche 3 — expression d'un point de vue (4 min 30, no preparation): the candidate defends an opinion.
 TCF_BASIC_INTERACTIONS = [
-    "Vous rencontrez un voisin dans l'escalier. Presentez-vous et engagez une conversation polie.",
-    "Vous appelez un cabinet medical pour prendre rendez-vous. L'assistant repond.",
-    "Vous etes a la caisse d'un supermarche et il manque un article dans votre sac.",
-    "Vous demandez des informations a un agent d'accueil dans une mairie.",
+    "Présentation personnelle : parcours, famille et situation actuelle du candidat.",
+    "Vie professionnelle ou études : métier, tâches quotidiennes, projets de carrière.",
+    "Lieu de vie : ville ou quartier du candidat, ce qu'il apprécie et ce qu'il changerait.",
+    "Loisirs et temps libre : activités préférées, sport, lectures, sorties.",
+    "Projet d'installation au Canada : motivations, attentes et préparatifs.",
+    "Habitudes du quotidien : journée type, alimentation, déplacements.",
+    "Voyages et vacances : un voyage marquant et les destinations rêvées.",
+    "Apprentissage du français : raisons, difficultés et méthodes du candidat.",
 ]
 
 TCF_ROLE_PLAYS = [
-    "Vous etes agent immobilier et parlez a un locataire qui souhaite louer un appartement.",
-    "Vous etes recruteur et menez un entretien pour un poste a temps partiel.",
-    "Vous etes responsable d'un centre culturel et expliquez une inscription.",
-    "Vous etes receptionniste d'hotel et repondez aux questions d'un client.",
+    "Vous voulez vous inscrire à un cours de natation pour adultes. L'examinateur joue l'employé du centre sportif : posez-lui des questions (horaires, tarifs, niveau, matériel).",
+    "Vous cherchez un appartement à louer. L'examinateur joue le propriétaire : renseignez-vous sur le logement, le loyer, les charges et la date de disponibilité.",
+    "Vous souhaitez adopter un chien dans un refuge. L'examinateur joue le bénévole : informez-vous sur les conditions, les frais et le suivi.",
+    "Vous voulez organiser une fête dans une salle municipale. L'examinateur joue l'agent de la mairie : demandez la capacité, le prix, les règles et la réservation.",
+    "Un collègue organise un voyage d'équipe. L'examinateur joue ce collègue : posez des questions sur la destination, le programme, le budget et l'hébergement.",
+    "Vous voulez suivre une formation en informatique le soir. L'examinateur joue le conseiller du centre : renseignez-vous sur le contenu, la durée, le prix et le certificat.",
+    "Vous venez d'arriver dans un nouveau quartier. L'examinateur joue votre voisin : posez des questions sur les commerces, les transports et les activités du quartier.",
+    "Vous voulez louer une voiture pour un week-end. L'examinateur joue l'agent de location : informez-vous sur les modèles, l'assurance, le kilométrage et le dépôt.",
 ]
 
 TCF_OPINION_TOPICS = [
-    "Le teletravail est-il benefique pour tous les travailleurs ?",
-    "Faut-il interdire les voitures en centre-ville pour reduire la pollution ?",
-    "Les reseaux sociaux ont-ils un impact globalement positif sur la societe ?",
-    "Devrait-on rendre les transports en commun entierement gratuits ?",
+    "Le télétravail devrait-il devenir la norme pour tous les emplois de bureau ?",
+    "Faut-il interdire les voitures dans le centre des grandes villes ?",
+    "Les réseaux sociaux rapprochent-ils vraiment les gens ?",
+    "Les transports en commun devraient-ils être entièrement gratuits ?",
+    "Faut-il apprendre une deuxième langue dès l'école maternelle ?",
+    "Les enfants devraient-ils avoir un téléphone portable avant 13 ans ?",
+    "Vaut-il mieux vivre en ville ou à la campagne ?",
+    "Faut-il limiter le tourisme dans les sites naturels les plus visités ?",
 ]
+
+_SPEAKING_TASK_BRIEFS = {
+    "basic_interaction": (
+        "Tâche 1 du TCF Canada — entretien dirigé (2 minutes, sans préparation). "
+        "Tu poses des questions simples et directes sur la vie du candidat (lui-même, sa famille, son travail, "
+        "ses loisirs, sa ville, ses projets). Le candidat parle de lui ; toi tu poses une question à la fois."
+    ),
+    "role_play": (
+        "Tâche 2 du TCF Canada — exercice en interaction (3 minutes 30). "
+        "Tu JOUES le rôle indiqué dans la situation. C'est le CANDIDAT qui pose les questions pour obtenir des "
+        "informations ; toi tu réponds de façon réaliste et précise (prix, horaires, conditions), puis tu l'invites "
+        "brièvement à poursuivre (« Vous avez d'autres questions ? »). Ne pose pas de questions personnelles."
+    ),
+    "opinion": (
+        "Tâche 3 du TCF Canada — expression d'un point de vue (4 minutes 30, sans préparation). "
+        "Le candidat doit présenter et défendre son opinion avec des arguments et des exemples. Tu relances "
+        "avec un contre-argument ou une demande de justification ou d'exemple."
+    ),
+}
 
 _SPEAKING_STOPWORDS = {
     "je", "tu", "il", "elle", "on", "nous", "vous", "ils", "elles",
@@ -1467,96 +1503,94 @@ def _is_speaking_low_response(text: str) -> tuple[bool, str]:
     return False, ""
 
 
-def generate_tcf_speaking_reply(
+_SPEAKING_TOPIC_LISTS = {
+    "basic_interaction": TCF_BASIC_INTERACTIONS,
+    "role_play": TCF_ROLE_PLAYS,
+    "opinion": TCF_OPINION_TOPICS,
+}
+
+
+def _resolve_examiner(examiner_name: str | None, session_id: str | None) -> tuple[str, str]:
+    if examiner_name:
+        for name, title in TCF_EXAMINER_NAMES:
+            if name == examiner_name:
+                return name, title
+    return _pick_examiner(session_id)
+
+
+def _build_speaking_prompt(
     message: str,
     history: list[dict[str, str]],
     task_type: str,
-    mode: str = "practice",
-    hints: bool = False,
-    session_id: str | None = None,
-    session_topic: str | None = None
-) -> dict[str, object]:
-    """
-    Generate an AI examiner reply for TCF Canada speaking.
-    task_type: 'basic_interaction' | 'role_play' | 'opinion'
-    session_topic: locked topic for the session (passed back from first reply)
-    """
-    chosen_topic: str
-    if task_type == "basic_interaction":
-        chosen_topic = session_topic if session_topic else random.choice(TCF_BASIC_INTERACTIONS)
-        system_context = (
-            f"Tu es examinateur TCF Canada. Scénario : {chosen_topic} "
-            "Engage une interaction basique et naturelle, réponses courtes."
-        )
-    elif task_type == "role_play":
-        chosen_topic = session_topic if session_topic else random.choice(TCF_ROLE_PLAYS)
-        system_context = (
-            f"Tu es examinateur TCF Canada. Jeu de rôle : {chosen_topic} "
-            "Joue le rôle indiqué, pose des questions pertinentes."
-        )
-    else:  # opinion
-        chosen_topic = session_topic if session_topic else random.choice(TCF_OPINION_TOPICS)
-        system_context = (
-            f"Tu es examinateur TCF Canada. Sujet d'opinion : {chosen_topic} "
-            "Stimule la discussion, demande des justifications."
-        )
-
-    # Real examiner identity — never use placeholder names
-    examiner_name, examiner_title = _pick_examiner(session_id)
+    mode: str,
+    hints: bool,
+    session_id: str | None,
+    session_topic: str | None,
+    examiner_name: str | None = None,
+) -> tuple[str, str, str]:
+    """Return (prompt, chosen_topic, examiner_name) for the examiner's next turn."""
+    topics = _SPEAKING_TOPIC_LISTS.get(task_type, TCF_OPINION_TOPICS)
+    chosen_topic = session_topic if session_topic else random.choice(topics)
+    task_brief = _SPEAKING_TASK_BRIEFS.get(task_type, _SPEAKING_TASK_BRIEFS["opinion"])
+    name, title = _resolve_examiner(examiner_name, session_id)
 
     is_start = message == "__START__"
     message_text = "" if is_start else message
 
     history_text = "\n".join(
-        f"{'Candidat' if m['role'] == 'user' else examiner_name}: {m['content']}"
+        f"{'Candidat' if m['role'] == 'user' else name}: {m['content']}"
         for m in history
     )
-
-    # Build all previously asked questions to prevent repetition
-    asked_questions = [
-        m["content"] for m in history if m.get("role") == "assistant"
-    ]
+    asked_questions = [m["content"] for m in history if m.get("role") == "assistant"]
     asked_block = (
-        "\n\nQuestions déjà posées (NE PAS RÉPÉTER) :\n" +
+        "\n\nRépliques déjà prononcées (NE PAS RÉPÉTER) :\n" +
         "\n".join(f"- {q[:120]}" for q in asked_questions[-6:])
         if asked_questions else ""
     )
-
     hint_instruction = (
-        "\nSi le candidat semble bloqué, donne un indice court et discret."
+        "\nSi le candidat semble bloqué, glisse une piste courte et discrète."
         if hints else ""
     )
     exam_instruction = (
-        "\nMode examen : reste neutre et formel, n'aide pas le candidat."
+        "\nMode examen : reste neutre et formel, n'aide pas le candidat et ne le corrige pas."
         if mode == "exam" else ""
     )
 
     if is_start:
+        if task_type == "role_play":
+            task_opening = (
+                f"Ouvre l'échange : salue le candidat en te présentant (« Bonjour, je m'appelle {name}. »), "
+                f"rappelle la situation en une phrase ({chosen_topic}) puis indique que tu joues ton rôle et "
+                "invite-le à te poser ses questions."
+            )
+        else:
+            task_opening = (
+                f"Ouvre l'échange : « Bonjour, je m'appelle {name}, je suis votre {title} aujourd'hui. » "
+                f"Puis pose UNE seule question claire pour lancer le sujet : {chosen_topic}"
+            )
+    elif task_type == "role_play":
         task_opening = (
-            f"Ouvre l'échange en te présentant : "
-            f"\"Bonjour, je m'appelle {examiner_name}, je suis votre {examiner_title} aujourd'hui.\" "
-            f"Puis pose UNE seule question claire pour lancer le sujet : {chosen_topic}"
+            "Continue la conversation dans ton rôle. Réponds précisément à la DERNIÈRE question du candidat "
+            "avec des informations réalistes et cohérentes avec ce que tu as déjà dit."
         )
     else:
         task_opening = (
-            "Continue la conversation. "
-            "Pose UNE question de suivi précise basée sur la DERNIÈRE réponse du candidat. "
-            "Si la réponse est courte ou vague, demande une clarification ou un exemple. "
-            "Si la réponse est bonne, approfondis avec un aspect plus précis du sujet."
+            "Continue la conversation. Pose UNE question de suivi précise basée sur la DERNIÈRE réponse du candidat. "
+            "Si la réponse est courte ou vague, demande une précision ou un exemple. "
+            "Si la réponse est bonne, approfondis un aspect du sujet."
         )
 
-    prompt = f"""Tu es {examiner_name}, {examiner_title} TCF Canada.
+    prompt = f"""Tu es {name}, {title} TCF Canada.
+{task_brief}
 Sujet de la session : {chosen_topic}
 {exam_instruction}
 {hint_instruction}
 
 RÈGLES ABSOLUES :
-- TOUJOURS utiliser ton vrai nom : {examiner_name}
-- JAMAIS de crochets ou de placeholders comme [nom], [prénom], etc.
-- JAMAIS répéter une question déjà posée
-- Rester STRICTEMENT sur le sujet de la session
-- Répondre en 1 à 2 phrases maximum
-- Ton naturel et humain, pas de formules répétitives
+- Utilise toujours ton vrai nom : {name}. Jamais de crochets ni de placeholders comme [nom].
+- Ne répète jamais une réplique déjà prononcée.
+- Reste strictement sur le sujet de la session.
+- 1 à 2 phrases maximum, ton naturel et humain, français standard.
 {asked_block}
 
 {task_opening}
@@ -1566,127 +1600,196 @@ Historique :
 
 Candidat : {message_text}
 
-Réponds uniquement en tant que {examiner_name} (1-2 phrases). Texte brut uniquement, pas de guillemets autour de ta réponse.
+Réponds uniquement en tant que {name} (1-2 phrases). Texte brut uniquement, sans guillemets autour de ta réponse.
 """
+    return prompt, chosen_topic, name
 
-    reply_text = _generate_text(prompt, temperature=0.75)
 
-    # Trim to safe length
+def _trim_speaking_reply(reply_text: str) -> str:
+    reply_text = reply_text.strip().strip('"«» ').strip()
     max_chars = int(os.getenv("SPEAKING_MAX_CHARS", "600"))
     if len(reply_text) > max_chars:
         reply_text = reply_text[:max_chars].rsplit(".", 1)[0] + "."
+    return reply_text
 
-    audio_url = None
+
+def speaking_reply_audio(reply_text: str, session_id: str | None) -> str | None:
     try:
-        audio_url = _generate_tts_audio(reply_text, 0, session_id)
-    except Exception:
-        pass
+        return _generate_tts_audio(reply_text, 0, session_id)
+    except Exception as error:
+        logging.getLogger(__name__).warning("Speaking reply TTS failed: %s", error)
+        return None
 
-    return {"reply": reply_text, "audio_url": audio_url, "session_topic": chosen_topic}
 
-
-def evaluate_tcf_speaking_conversation(
+def generate_tcf_speaking_reply(
+    message: str,
     history: list[dict[str, str]],
-    task_type: str
+    task_type: str,
+    mode: str = "practice",
+    hints: bool = False,
+    session_id: str | None = None,
+    session_topic: str | None = None,
+    examiner_name: str | None = None,
 ) -> dict[str, object]:
-    """
-    Evaluate a complete TCF Canada speaking session.
-    """
-    # Use ALL candidate turns combined for quality check — a short final reply
-    # should not zero-score an otherwise full conversation.
-    candidate_text = _speaking_candidate_text(history)
-    is_low, low_reason = _is_speaking_low_response(candidate_text)
-    if is_low:
-        feedback_map = {
-            "empty": [
-                "Aucune réponse détectée.",
-                "Répondez en phrases complètes."
-            ],
-            "too_short": [
-                "Votre réponse est trop courte.",
-                "Ajoutez au moins deux idées et un exemple."
-            ],
-            "irrelevant": [
-                "La réponse est hors sujet ou trop vague.",
-                "Reformulez en répondant directement à la question."
-            ],
-        }
-        feedback = feedback_map.get(low_reason, feedback_map["too_short"])
-        return {
-            "fluency": 1,
-            "grammar": 1,
-            "vocabulary": 1,
-            "interaction": 1,
-            "feedback": feedback,
-            "improved_response": "Essayez une réponse plus complète et directement liée au sujet."
-        }
+    """Examiner reply for TCF Canada speaking. task_type: 'basic_interaction' | 'role_play' | 'opinion'."""
+    prompt, chosen_topic, name = _build_speaking_prompt(
+        message, history, task_type, mode, hints, session_id, session_topic, examiner_name
+    )
+    reply_text = _trim_speaking_reply(_generate_text(prompt, temperature=0.75))
+    return {
+        "reply": reply_text,
+        "audio_url": speaking_reply_audio(reply_text, session_id),
+        "session_topic": chosen_topic,
+        "examiner_name": name,
+    }
 
-    history_text = "\n".join(
+
+def stream_tcf_speaking_reply(
+    message: str,
+    history: list[dict[str, str]],
+    task_type: str,
+    mode: str = "practice",
+    hints: bool = False,
+    session_id: str | None = None,
+    session_topic: str | None = None,
+    examiner_name: str | None = None,
+):
+    """
+    Yield ("meta", {...}) first, then ("token", str) chunks of the examiner reply, then ("reply", full_text).
+    Audio is produced by the caller once the full text is known.
+    """
+    prompt, chosen_topic, name = _build_speaking_prompt(
+        message, history, task_type, mode, hints, session_id, session_topic, examiner_name
+    )
+    yield "meta", {"session_topic": chosen_topic, "examiner_name": name}
+    _ensure_api_key()
+    parts: list[str] = []
+    for chunk in _gemini_generate(prompt, stream=True, temperature=0.75):
+        token = getattr(chunk, "text", None)
+        if token:
+            parts.append(token)
+            yield "token", token
+    yield "reply", _trim_speaking_reply("".join(parts))
+
+
+def generate_tcf_speaking_opening(task_type: str, avoid_topics: list[str] | None = None) -> dict[str, object]:
+    """
+    A fresh session opening for the pre-generation pool: new topic + examiner's first line + audio,
+    in one Gemini call. Falls back to the curated topic list when the model output is unusable.
+    """
+    name, title = random.choice(TCF_EXAMINER_NAMES)
+    brief = _SPEAKING_TASK_BRIEFS.get(task_type, _SPEAKING_TASK_BRIEFS["opinion"])
+    examples = "\n".join(f"- {t}" for t in _SPEAKING_TOPIC_LISTS.get(task_type, TCF_OPINION_TOPICS)[:4])
+    avoid = ""
+    if avoid_topics:
+        avoid = "\nSujets déjà utilisés (en choisir un TOUT AUTRE) :\n" + "\n".join(f"- {t[:140]}" for t in avoid_topics[-25:])
+    if task_type == "role_play":
+        opening_rule = (
+            f"opening : salue (« Bonjour, je m'appelle {name}. »), rappelle la situation en une phrase, "
+            "dis quel rôle tu joues et invite le candidat à te poser ses questions."
+        )
+    else:
+        opening_rule = (
+            f"opening : « Bonjour, je m'appelle {name}, je suis votre {title} aujourd'hui. » "
+            "suivi d'UNE seule question claire qui lance le sujet."
+        )
+    prompt = f"""Tu es {name}, {title} TCF Canada. {brief}
+
+Crée une NOUVELLE situation d'examen réaliste (contexte canadien ou francophone, vie courante, niveau B1-B2),
+dans le même style que ces exemples :
+{examples}{avoid}
+
+Réponds en JSON :
+{{
+  "topic": "la situation ou la question du sujet, en une phrase, en français correct avec accents",
+  "opening": "ta première réplique (1-2 phrases)"
+}}
+Règles : {opening_rule} Pas de crochets ni de placeholders. JSON valide uniquement."""
+    payload = _generate_json(prompt, temperature=0.95)
+    topic = str(payload.get("topic", "")).strip()
+    opening = _trim_speaking_reply(str(payload.get("opening", "")))
+    if len(topic) < 15 or len(opening) < 15 or "[" in opening:
+        raise RuntimeError("Speaking opening generation returned unusable content.")
+    audio_url = speaking_reply_audio(opening, None)
+    if not audio_url:
+        raise RuntimeError("Speaking opening audio could not be generated.")
+    return {"reply": opening, "audio_url": audio_url, "session_topic": topic, "examiner_name": name}
+
+
+_SPEAKING_LOW_FEEDBACK = {
+    "empty": ["Aucune réponse détectée.", "Répondez en phrases complètes."],
+    "too_short": ["Votre réponse est trop courte.", "Ajoutez au moins deux idées et un exemple."],
+    "irrelevant": ["La réponse est hors sujet ou trop vague.", "Reformulez en répondant directement à la question."],
+}
+
+_SPEAKING_TASK_LABELS = {
+    "basic_interaction": "Tâche 1 — entretien dirigé (le candidat parle de lui : présentation, vie quotidienne, projets)",
+    "role_play": "Tâche 2 — exercice en interaction (le candidat pose des questions pour obtenir des informations)",
+    "opinion": "Tâche 3 — expression d'un point de vue (le candidat défend une opinion argumentée)",
+}
+
+
+def speaking_low_response_evaluation(history: list[dict[str, str]]) -> dict[str, object] | None:
+    """Fixed low score for empty, very short or off-topic candidate speech (no model call)."""
+    is_low, low_reason = _is_speaking_low_response(_speaking_candidate_text(history))
+    if not is_low:
+        return None
+    return {
+        "fluency": 1,
+        "grammar": 1,
+        "vocabulary": 1,
+        "interaction": 1,
+        "feedback": _SPEAKING_LOW_FEEDBACK.get(low_reason, _SPEAKING_LOW_FEEDBACK["too_short"]),
+        "improved_response": "Essayez une réponse plus complète et directement liée au sujet.",
+        "cefr_level": "A1",
+    }
+
+
+def _speaking_history_text(history: list[dict[str, str]]) -> str:
+    return "\n".join(
         f"{'Candidat' if m['role'] == 'user' else 'Examinateur'}: {m['content']}"
         for m in history
     )
-    task_label = {
-        "basic_interaction": "Interaction de base",
-        "role_play": "Jeu de rôle",
-        "opinion": "Expression d'opinion",
-    }.get(task_type, task_type)
 
-    prompt = f"""Tu es evaluateur TCF Canada pour l'expression orale.
 
-Type de tache : {task_label}
+def _speaking_scores(history: list[dict[str, str]], task_type: str, with_improved: bool) -> dict[str, object]:
+    task_label = _SPEAKING_TASK_LABELS.get(task_type, task_type)
+    improved_field = '  "improved_response": "une meilleure réponse modèle du candidat, en français",\n' if with_improved else ""
+    prompt = f"""Tu es évaluateur certifié du TCF Canada pour l'expression orale.
 
-Conversation :
-{history_text}
+{task_label}
 
-evalue UNIQUEMENT les repliques du candidat. Notation stricte sur :
-- Fluency (aisance)
-- Grammar (grammaire)
-- Relevance (pertinence)
-- Completeness (completude)
+Conversation (transcription automatique de la parole) :
+{_speaking_history_text(history)}
 
-Retourne un JSON avec :
+Évalue UNIQUEMENT les répliques du candidat, selon la grille du TCF Canada : réalisation de la tâche,
+aisance et cohérence, étendue et maîtrise du lexique, correction grammaticale, interaction.
+Sois honnête et exigeant : un candidat B1 n'obtient pas 9/10. Note de 0 à 10 :
+- 0-2 : A1 ou hors sujet ; 3-4 : A2 ; 5-6 : B1 ; 7-8 : B2 ; 9 : C1 ; 10 : C2.
+
+JSON :
 {{
   "fluency": 0-10,
   "grammar": 0-10,
   "vocabulary": 0-10,
-  "interaction": 0-10,
-  "feedback": ["..."],
-  "improved_response": "..."
-}}
-
-EXEMPLE DE SORTIE (ne pas reproduire cet exemple) :
-{{
-  "fluency": 7,
-  "grammar": 6,
-  "vocabulary": 6,
-  "interaction": 7,
-  "feedback": ["Clarifier vos idees", "Utiliser plus de connecteurs"],
-  "improved_response": "..."
-}}
-
-  Regles :
-  - Scores entiers 0 a 10.
-  - 3 a 5 points de feedback concrets.
-  - Si la reponse est faible, courte ou hors sujet, donne des scores entre 0 et 2.
-  - "vocabulary" doit refleter la pertinence.
-  - "interaction" doit refleter la completude de la reponse.
-  - improved_response : exemple d'une meilleure reponse du candidat.
-  - Sortie : JSON valide uniquement.
-"""
-
-    payload = _generate_json(prompt, temperature=0.3)
+  "interaction": 0-10 (réalisation de la tâche et qualité de l'échange),
+  "cefr_level": "A1|A2|B1|B2|C1|C2 (niveau global estimé)",
+  "feedback": ["3 à 5 remarques concrètes en français, citant des mots du candidat"],
+{improved_field}}}
+JSON valide uniquement."""
+    payload = _generate_json(prompt, temperature=0.2)
 
     def _clamp(v: object) -> int:
         try:
-            return max(0, min(10, int(float(v))))  # type: ignore[arg-type]
+            return max(0, min(10, int(round(float(v)))))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return 0
 
     feedback = payload.get("feedback", [])
     if isinstance(feedback, str):
-        feedback = [item.strip() for item in feedback.split("-") if item.strip()]
+        feedback = [item.strip(" -•") for item in feedback.splitlines() if item.strip(" -•")]
     feedback = [str(item).strip() for item in feedback if str(item).strip()]
-
+    level = str(payload.get("cefr_level", "")).strip().upper()[:2]
     return {
         "fluency": _clamp(payload.get("fluency")),
         "grammar": _clamp(payload.get("grammar")),
@@ -1694,7 +1797,42 @@ EXEMPLE DE SORTIE (ne pas reproduire cet exemple) :
         "interaction": _clamp(payload.get("interaction")),
         "feedback": feedback,
         "improved_response": str(payload.get("improved_response", "")).strip(),
+        "cefr_level": level if level in {"A1", "A2", "B1", "B2", "C1", "C2"} else None,
     }
+
+
+def evaluate_tcf_speaking_conversation(
+    history: list[dict[str, str]],
+    task_type: str
+) -> dict[str, object]:
+    """Evaluate a complete TCF Canada speaking session (all candidate turns together)."""
+    low = speaking_low_response_evaluation(history)
+    if low is not None:
+        return low
+    return _speaking_scores(history, task_type, with_improved=True)
+
+
+def speaking_scores_without_model_answer(history: list[dict[str, str]], task_type: str) -> dict[str, object]:
+    return _speaking_scores(history, task_type, with_improved=False)
+
+
+def stream_speaking_model_answer(history: list[dict[str, str]], task_type: str):
+    """Stream an improved model answer for the candidate's last turns, in French."""
+    task_label = _SPEAKING_TASK_LABELS.get(task_type, task_type)
+    prompt = f"""Tu es professeur de français et prépares au TCF Canada (expression orale).
+{task_label}
+
+Conversation :
+{_speaking_history_text(history)}
+
+Écris une réponse modèle de niveau B2 que le candidat aurait pu donner à la DERNIÈRE question de l'examinateur,
+en reprenant ses idées mais avec une langue correcte, des connecteurs et un exemple. 4 à 6 phrases, texte brut,
+sans titre ni guillemets."""
+    _ensure_api_key()
+    for chunk in _gemini_generate(prompt, stream=True, temperature=0.5):
+        token = getattr(chunk, "text", None)
+        if token:
+            yield token
 
 
 # ── Shared utility functions (dictionary, passage, learn) ───────────────────

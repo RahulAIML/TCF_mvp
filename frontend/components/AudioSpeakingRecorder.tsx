@@ -15,9 +15,8 @@ import {
   useState,
 } from "react";
 import { Mic, MicOff, Loader } from "lucide-react";
-
-// NOTE: Use bare /tcf/... paths — Next.js rewrites them to the backend via the
-// catch-all rewrite rule. /api/tcf/... would forward to backend/api/tcf/... (404).
+import { createRecorder, microphoneErrorMessage, recordedMime } from "@/lib/audio-mime";
+import { transcribeRecording } from "@/services/speakingApi";
 
 export interface AudioSpeakingRecorderHandle {
   start: () => void;
@@ -32,23 +31,6 @@ interface AudioSpeakingRecorderProps {
   onTranscript: (transcript: string) => void;
   onError?: (message: string) => void;
   onListeningChange?: (listening: boolean) => void;
-}
-
-/** Preferred MIME types ordered by browser support. */
-function getSupportedMimeType(): string {
-  const types = [
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/ogg;codecs=opus",
-    "audio/ogg",
-    "audio/mp4",
-  ];
-  for (const type of types) {
-    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(type)) {
-      return type;
-    }
-  }
-  return "";
 }
 
 const AudioSpeakingRecorder = forwardRef<
@@ -79,38 +61,21 @@ const AudioSpeakingRecorder = forwardRef<
   }, []);
 
   const transcribeAudio = useCallback(
-    async (blob: Blob, mimeType: string) => {
+    async (blob: Blob) => {
       if (cancelledRef.current) return;
       setIsTranscribing(true);
       try {
-        const form = new FormData();
-        const ext = mimeType.startsWith("audio/ogg")
-          ? "ogg"
-          : mimeType.startsWith("audio/mp4")
-          ? "mp4"
-          : "webm";
-        form.append("audio", blob, `recording.${ext}`);
-        form.append("language", language.split("-")[0]); // fr-FR -> fr
-
-        const res = await fetch(`/tcf/transcribe-audio`, {
-          method: "POST",
-          body: form,
-        });
-
-        if (!res.ok) {
-          const err = await res.text();
-          throw new Error(err || "Transcription failed");
-        }
-
-        const data = (await res.json()) as { transcript: string };
-        const text = data.transcript.trim();
+        const result = await transcribeRecording(blob, language);
+        const text = result.transcript.trim();
         if (text) {
           onTranscript(text);
         } else {
-          onError?.("No speech detected. Please try again.");
+          onError?.(result.message ?? "Aucune parole détectée. Parlez plus près du micro et réessayez.");
+          onTranscript("");
         }
       } catch (err) {
-        onError?.(err instanceof Error ? err.message : "Transcription error");
+        onError?.(err instanceof Error ? err.message : "Transcription failed. Please try again.");
+        onTranscript("");
       } finally {
         setIsTranscribing(false);
       }
@@ -121,8 +86,8 @@ const AudioSpeakingRecorder = forwardRef<
   const startRecording = useCallback(async () => {
     if (isDisabled || isRecording) return;
 
-    if (!navigator.mediaDevices?.getUserMedia) {
-      onError?.("Microphone access is not supported in this browser.");
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      onError?.(microphoneErrorMessage(null));
       return;
     }
 
@@ -132,8 +97,7 @@ const AudioSpeakingRecorder = forwardRef<
       cancelledRef.current = false;
       chunksRef.current = [];
 
-      const mimeType = getSupportedMimeType();
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const recorder = createRecorder(stream);
 
       recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) {
@@ -146,8 +110,8 @@ const AudioSpeakingRecorder = forwardRef<
         setIsRecording(false);
         onListeningChange?.(false);
         if (!cancelledRef.current && chunksRef.current.length > 0) {
-          const blob = new Blob(chunksRef.current, { type: mimeType || "audio/webm" });
-          void transcribeAudio(blob, mimeType || "audio/webm");
+          const blob = new Blob(chunksRef.current, { type: recordedMime(recorder, chunksRef.current) });
+          void transcribeAudio(blob);
         }
         chunksRef.current = [];
       };
@@ -158,11 +122,7 @@ const AudioSpeakingRecorder = forwardRef<
       onListeningChange?.(true);
     } catch (err) {
       stopStream();
-      const msg =
-        err instanceof Error && err.name === "NotAllowedError"
-          ? "Microphone access denied. Please allow microphone access in your browser."
-          : "Failed to access microphone.";
-      onError?.(msg);
+      onError?.(microphoneErrorMessage(err));
     }
   }, [isDisabled, isRecording, stopStream, transcribeAudio, onError, onListeningChange]);
 

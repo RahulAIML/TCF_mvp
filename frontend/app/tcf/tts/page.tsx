@@ -9,16 +9,16 @@ import TcfAppShell from "@/components/TcfAppShell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   deleteTtsHistoryItem,
-  evaluatePronunciationAudio,
   startTtsJob,
   pollTtsJob,
   getTtsHistory,
   getTtsVoices,
-  transcribeAudio,
-  type PronunciationEvalResult,
 } from "@/services/api";
+import { streamPronunciationEvaluation, transcribeRecording } from "@/services/speakingApi";
+import type { PronunciationEvalResult } from "@/types/tcf-speaking";
 import type { TtsHistoryItem, TtsVoice } from "@/types/tts";
 import { getAuthToken } from "@/lib/auth";
+import { createRecorder, extensionForMime, microphoneErrorMessage, recordedMime } from "@/lib/audio-mime";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const MAX_CHARS = 10000;
@@ -134,6 +134,10 @@ export default function TtsPage() {
   const [transcribing, setTranscribing] = useState(false);
   const [transcriptError, setTranscriptError] = useState("");
 
+  // Voices
+  const [voicesError, setVoicesError] = useState("");
+  const [voicesLoading, setVoicesLoading] = useState(true);
+
   // TTS
   const [generating, setGenerating] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -145,23 +149,38 @@ export default function TtsPage() {
   // Evaluation
   const [evaluating, setEvaluating] = useState(false);
   const [evalResult, setEvalResult] = useState<PronunciationEvalResult | null>(null);
+  const [evalUserText, setEvalUserText] = useState("");
+  const [evalFeedback, setEvalFeedback] = useState("");
   const [evalError, setEvalError] = useState("");
+  const [evalNotice, setEvalNotice] = useState("");
 
-  useEffect(() => {
+  // Download
+  const [downloadError, setDownloadError] = useState("");
+
+  const loadVoices = useCallback(() => {
+    setVoicesLoading(true);
+    setVoicesError("");
     getTtsVoices()
       .then((v) => {
         setVoices(v);
         const first = v.find((x) => x.language === "fr") ?? v[0];
         if (first) setSelectedVoice(first.id);
       })
-      .catch(() => {});
+      .catch((e: unknown) => {
+        setVoicesError(e instanceof Error ? e.message : "Voices could not be loaded.");
+      })
+      .finally(() => setVoicesLoading(false));
+  }, []);
+
+  useEffect(() => {
+    loadVoices();
 
     if (getAuthToken()) {
       getTtsHistory().then(setHistory).catch(() => setHistory(loadGuestHistory()));
     } else {
       setHistory(loadGuestHistory());
     }
-  }, []);
+  }, [loadVoices]);
 
   const languageVoices = voices.filter((v) => v.language === language);
   const currentLanguage = LANGUAGES.find((l) => l.code === language) ?? LANGUAGES[0];
@@ -181,14 +200,18 @@ export default function TtsPage() {
 
   const startRecording = useCallback(async () => {
     setTranscriptError("");
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setTranscriptError(microphoneErrorMessage(null));
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mr = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+      const mr = createRecorder(stream);
       chunksRef.current = [];
       mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       mr.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(chunksRef.current, { type: "audio/webm;codecs=opus" });
+        const blob = new Blob(chunksRef.current, { type: recordedMime(mr, chunksRef.current) });
         setRecordBlob(blob);
         setRecordUrl(URL.createObjectURL(blob));
         setRecordState("recorded");
@@ -200,8 +223,8 @@ export default function TtsPage() {
       timerRef.current = setInterval(() => {
         setRecordSecs((s) => { if (s + 1 >= MAX_RECORD_SECS) stopRecording(); return s + 1; });
       }, 1000);
-    } catch {
-      setTranscriptError("Microphone access denied. Please allow microphone in your browser.");
+    } catch (err) {
+      setTranscriptError(microphoneErrorMessage(err));
     }
   }, [stopRecording]);
 
@@ -210,18 +233,23 @@ export default function TtsPage() {
     setRecordBlob(null); setRecordUrl(null);
     setRecordState("idle"); setRecordSecs(0);
     setTranscriptError(""); setEvalResult(null); setEvalError("");
+    setEvalUserText(""); setEvalFeedback(""); setEvalNotice("");
   }, [stopRecording]);
 
   const handleTranscribe = useCallback(async () => {
     if (!recordBlob) return;
     setTranscribing(true); setTranscriptError("");
     try {
-      const { transcript } = await transcribeAudio(recordBlob);
-      setText(transcript);
+      const result = await transcribeRecording(recordBlob, language);
+      if (result.no_speech || !result.transcript) {
+        setTranscriptError(result.message ?? "Aucune parole détectée. Parlez plus près du micro et réessayez.");
+        return;
+      }
+      setText(result.transcript);
     } catch (e: unknown) {
       setTranscriptError(e instanceof Error ? e.message : "Transcription failed");
     } finally { setTranscribing(false); }
-  }, [recordBlob]);
+  }, [recordBlob, language]);
 
   // --- TTS generation (polling-based to bypass proxy timeout) ---
   const handleGenerate = useCallback(async () => {
@@ -271,12 +299,26 @@ export default function TtsPage() {
   }, [text, selectedVoice, voices]);
 
   const handleDownload = useCallback(async (url: string, voiceId: string) => {
-    const r = await fetch(url);
-    const blob = await r.blob();
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `tts_${voiceId}_${Date.now()}.mp3`;
-    a.click();
+    setDownloadError("");
+    try {
+      const r = await fetch(url);
+      if (r.status === 404) throw new Error("This audio file has expired. Generate it again to download it.");
+      if (!r.ok) throw new Error("The download failed. Please try again.");
+      const blob = await r.blob();
+      if (!blob.type.startsWith("audio/")) throw new Error("This audio file has expired. Generate it again to download it.");
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = `tts_${voiceId}_${Date.now()}.${extensionForMime(blob.type)}`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
+    } catch (e: unknown) {
+      setDownloadError(
+        e instanceof TypeError
+          ? "Connection problem. Check your internet connection and try again."
+          : e instanceof Error ? e.message : "The download failed. Please try again.",
+      );
+    }
   }, []);
 
   const handleDeleteHistory = useCallback(async (id: number) => {
@@ -303,13 +345,19 @@ export default function TtsPage() {
   const handleEvaluate = useCallback(async () => {
     if (!recordBlob || !text.trim()) return;
     setEvaluating(true); setEvalError(""); setEvalResult(null);
+    setEvalUserText(""); setEvalFeedback(""); setEvalNotice("");
+    let feedback = "";
     try {
-      const result = await evaluatePronunciationAudio(text, recordBlob);
-      setEvalResult(result);
+      await streamPronunciationEvaluation(text, recordBlob, language, {
+        onTranscript: setEvalUserText,
+        onFeedbackToken: (token) => { feedback += token; setEvalFeedback(feedback); },
+        onScores: setEvalResult,
+        onNoSpeech: (result) => setEvalNotice(result.feedback),
+      });
     } catch (e: unknown) {
-      setEvalError(e instanceof Error ? e.message : "Evaluation failed");
+      setEvalError(e instanceof Error ? e.message : "Evaluation failed. Please try again.");
     } finally { setEvaluating(false); }
-  }, [recordBlob, text]);
+  }, [recordBlob, text, language]);
 
   const overallScore = evalResult ? (evalResult.accuracy + evalResult.clarity) / 2 : null;
   const scoreLabel = overallScore === null ? "" : overallScore >= 8 ? "Excellent" : overallScore >= 6 ? "Good" : overallScore >= 4 ? "Fair" : "Needs work";
@@ -357,6 +405,17 @@ export default function TtsPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
+            {voicesLoading && (
+              <p className="text-xs text-slate-400 flex items-center gap-1.5">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading voices…
+              </p>
+            )}
+            {voicesError && (
+              <div className="flex items-center justify-between gap-3 rounded-lg bg-red-50 border border-red-200 p-3 text-xs text-red-600">
+                <span className="flex items-center gap-1.5"><AlertCircle className="h-3.5 w-3.5 shrink-0" /> {voicesError}</span>
+                <button onClick={loadVoices} className="font-medium underline hover:text-red-700">Retry</button>
+              </div>
+            )}
             <div className="flex flex-wrap gap-2">
               {languageVoices.map((v) => (
                 <button key={v.id} onClick={() => setSelectedVoice(v.id)}
@@ -461,7 +520,7 @@ export default function TtsPage() {
         </Card>
 
         {/* Generate button */}
-        <button onClick={handleGenerate} disabled={!text.trim() || generating}
+        <button onClick={handleGenerate} disabled={!text.trim() || generating || voices.length === 0}
           className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold flex items-center justify-center gap-2 transition-colors shadow-sm">
           {generating ? <Loader2 className="h-5 w-5 animate-spin" /> : <Volume2 className="h-5 w-5" />}
           {generating ? "Generating…" : "Generate Audio"}
@@ -470,6 +529,12 @@ export default function TtsPage() {
         {ttsError && (
           <div className="flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 p-3 text-red-600 text-sm">
             <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" /> {ttsError}
+          </div>
+        )}
+
+        {downloadError && (
+          <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 p-3 text-amber-700 text-sm">
+            <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" /> {downloadError}
           </div>
         )}
 
@@ -568,6 +633,32 @@ export default function TtsPage() {
               </CardContent>
             )}
 
+            {evalNotice && (
+              <CardContent className="pt-0">
+                <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 p-3 text-amber-700 text-xs">
+                  <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" /> {evalNotice}
+                </div>
+              </CardContent>
+            )}
+
+            {evalUserText && !evalResult && (
+              <CardContent className="pt-0 space-y-3">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-1">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">What you said</p>
+                  <p className="text-sm leading-relaxed text-slate-700">{evalUserText}</p>
+                </div>
+                {evalFeedback && (
+                  <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 space-y-1">
+                    <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide">Coach Feedback</p>
+                    <p className="text-sm text-slate-700 leading-relaxed">{evalFeedback}</p>
+                  </div>
+                )}
+                <p className="text-xs text-slate-400 flex items-center gap-1.5">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Scoring…
+                </p>
+              </CardContent>
+            )}
+
             {evalResult && (
               <CardContent className="pt-0 space-y-4">
                 <div className="flex items-center justify-around rounded-xl bg-slate-50 border border-slate-200 py-4 px-2">
@@ -580,11 +671,11 @@ export default function TtsPage() {
                   <ScoreRing value={evalResult.clarity} label="Clarity" />
                 </div>
 
-                {evalResult.user_text && (
+                {(evalResult.user_text || evalUserText) && (
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-1">
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">What you said</p>
                     <p className="text-sm leading-relaxed">
-                      <HighlightedText text={evalResult.user_text} mistakes={evalResult.mistakes} />
+                      <HighlightedText text={evalResult.user_text || evalUserText} mistakes={evalResult.mistakes} />
                     </p>
                   </div>
                 )}
@@ -604,10 +695,10 @@ export default function TtsPage() {
                   </div>
                 )}
 
-                {evalResult.feedback && (
+                {(evalFeedback || evalResult.feedback) && (
                   <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 space-y-1">
                     <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide">Coach Feedback</p>
-                    <p className="text-sm text-slate-700 leading-relaxed">{evalResult.feedback}</p>
+                    <p className="text-sm text-slate-700 leading-relaxed">{evalFeedback || evalResult.feedback}</p>
                   </div>
                 )}
 
