@@ -19,6 +19,7 @@ from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Deque, Dict, List, Optional, Set, Tuple
 
+import answer_balance
 import pregen_pool
 import tts_service
 from schemas import ListeningQuestionResponse
@@ -639,8 +640,8 @@ def build_question(level: str, question_number: Optional[int] = None, with_audio
     fmt, is_dialogue = random.choice(LISTENING_FORMATS[level])
     names = _pick_names()
     last_error: Exception | None = None
+    target_letter = answer_balance.next_letter(f"listening:{level}")
     for _attempt in range(MAX_ATTEMPTS):
-        target_letter = random.choice(LETTERS)
         prompt = _build_prompt(level, number, fmt, is_dialogue, names, target_letter, HISTORY.themes(level))
         try:
             payload = _generate_json(prompt, temperature=0.9)

@@ -153,7 +153,7 @@ def test_exam_cache_is_bounded(monkeypatch):
 # ── Answer key integrity ─────────────────────────────────────────────────────
 
 def test_answer_moved_to_target_letter_when_model_disagrees(monkeypatch):
-    monkeypatch.setattr(rs.random, "choice", lambda seq: "D" if seq == rs.LETTERS else seq[0])
+    monkeypatch.setattr(rs.answer_balance, "next_letter", lambda bucket: "D")
     fake = FakeLLM(answer="A", explanation="L'option A est correcte car le texte le précise.")
     monkeypatch.setattr(rs, "_llm_json", fake)
     q = rs.produce_reading_question("B2")

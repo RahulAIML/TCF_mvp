@@ -1,5 +1,5 @@
 import { API_BASE_URL, authHeaders, friendlyErrorMessage, friendlyNetworkError, parseResponse } from "@/services/api";
-import { extensionForMime } from "@/lib/audio-mime";
+import { extensionForMime, isSilentRecording, NO_SPEECH_MESSAGE } from "@/lib/audio-mime";
 import type {
   PronunciationEvalResult,
   TcfConversationRequest,
@@ -85,6 +85,9 @@ function recordingFile(blob: Blob): { blob: Blob; name: string } {
 }
 
 export async function transcribeRecording(blob: Blob, language = "fr"): Promise<TranscriptionResult> {
+  if (await isSilentRecording(blob)) {
+    return { transcript: "", no_speech: true, message: NO_SPEECH_MESSAGE };
+  }
   const form = new FormData();
   const file = recordingFile(blob);
   form.append("audio", file.blob, file.name);
@@ -117,6 +120,13 @@ export async function streamPronunciationEvaluation(
   language: string,
   handlers: PronunciationStreamHandlers,
 ): Promise<void> {
+  if (await isSilentRecording(blob)) {
+    handlers.onNoSpeech?.({
+      accuracy: 0, clarity: 0, mistakes: [], feedback: NO_SPEECH_MESSAGE,
+      improved_version: targetText, user_text: "", no_speech: true,
+    });
+    return;
+  }
   const form = new FormData();
   const file = recordingFile(blob);
   form.append("target_text", targetText);

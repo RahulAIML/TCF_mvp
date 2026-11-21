@@ -72,3 +72,36 @@ export function microphoneErrorMessage(err: unknown): string {
   }
   return "Could not start the microphone. Please try again.";
 }
+
+const FRAME_SECONDS = 0.03;
+const VOICE_FRAME_RMS = 0.02;
+const MIN_VOICE_SECONDS = 0.3;
+
+/**
+ * True when the recording decodes and holds under 0.3 s of voice-level audio. Speech models invent words from
+ * silence, so silent recordings must never be uploaded. Decode failures return false (unknown → let it through).
+ */
+export async function isSilentRecording(blob: Blob): Promise<boolean> {
+  if (typeof window === "undefined" || blob.size === 0) return blob.size === 0;
+  const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!Ctx) return false;
+  const ctx = new Ctx();
+  try {
+    const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
+    const data = decoded.getChannelData(0);
+    const frame = Math.max(1, Math.floor(decoded.sampleRate * FRAME_SECONDS));
+    let voiced = 0;
+    for (let start = 0; start + frame <= data.length; start += frame) {
+      let sum = 0;
+      for (let i = start; i < start + frame; i += 1) sum += data[i] * data[i];
+      if (Math.sqrt(sum / frame) >= VOICE_FRAME_RMS) voiced += 1;
+    }
+    return voiced * FRAME_SECONDS < MIN_VOICE_SECONDS;
+  } catch {
+    return false;
+  } finally {
+    void ctx.close().catch(() => undefined);
+  }
+}
+
+export const NO_SPEECH_MESSAGE = "Aucune parole détectée. Parlez plus près du micro et réessayez.";

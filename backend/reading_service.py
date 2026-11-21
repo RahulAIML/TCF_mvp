@@ -18,6 +18,7 @@ import unicodedata
 from collections import OrderedDict, deque
 from typing import Any, Deque, Dict, List, Optional, Set, Tuple
 
+import answer_balance
 import pregen_pool
 import tcf_ai_service as ai
 from schemas import PassageQuizResponse, PassageResponse, TcfExamQuestion
@@ -408,8 +409,8 @@ def produce_reading_question(level: str, question_number: Optional[int] = None) 
     qnum = question_number or random.randint(start, end)
     low, high = spec["words"]
     last_error: Exception | None = None
+    target_letter = answer_balance.next_letter(f"reading:{level}")
     for _ in range(MAX_ATTEMPTS):
-        target_letter = random.choice(LETTERS)
         prompt = build_reading_prompt(level, qnum, target_letter, _registry.recent_topics(f"q:{level}"))
         try:
             payload = _llm_json(prompt, 0.8)

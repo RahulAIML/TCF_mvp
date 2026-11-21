@@ -16,7 +16,7 @@ import requests as _requests
 from google.genai import types
 from dotenv import load_dotenv
 
-from audio_mime import NO_SPEECH_MESSAGE, NO_SPEECH_TOKEN, base_mime, clean_transcript
+from audio_mime import NO_SPEECH_MESSAGE, NO_SPEECH_TOKEN, base_mime, clean_transcript, has_speech
 from tcf_ai_service import _gemini_generate
 
 load_dotenv()
@@ -78,7 +78,7 @@ class GeminiService:
     @staticmethod
     def transcribe_bytes(audio_data: bytes, language: str = "fr", mime_type: str = "audio/webm") -> str:
         """Verbatim transcript, or "" when the recording has no intelligible speech."""
-        if not audio_data:
+        if not audio_data or not has_speech(audio_data, mime_type):
             return ""
         prompt = (
             f"Transcribe the {_lang_name(language)} speech in this recording verbatim.\n"

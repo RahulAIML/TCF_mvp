@@ -96,7 +96,9 @@ warm = sorted(times)[len(times) // 2] if times else 99
 record("task set latency (median)", warm < 3.0, f"{warm:.1f}s (pool should make this near-instant)")
 
 # 2. Evaluation honesty: weak vs strong on-topic text for the same Task 1 prompt.
-task1 = sets[0]["task1_prompt"] if sets else "Écrivez un message à votre voisine Claire pour l'inviter à un repas de quartier samedi."
+# Fixed prompt that both texts actually answer (a random generated prompt would make both off-topic).
+task1 = ("Écrivez un message à votre voisine Claire pour l'inviter à un repas de quartier samedi. "
+         "Précisez le lieu, l'heure et ce que chacun doit apporter. (60 à 120 mots)")
 WEAK = ("Bonjour Claire. Je suis invite toi a le repas samedi. Il y a beaucoup manger. Tu viens ? "
         "C'est bien. Moi aussi je fais un gateau. Le repas il est a midi dans le parc. Merci. "
         "Je suis content si tu viens avec ton mari. A samedi. Au revoir. Marc")
@@ -144,7 +146,17 @@ record("chat answers French in French", looks_french(stream_text.get("chat strea
        stream_text.get("chat stream (FR)", "")[:80].replace("\n", " "))
 events, _, _, err = post_sse("/api/ai/chat/stream", {"message": "What does 'au fur et à mesure' mean?"})
 english = tokens(events)
-record("chat answers English in English", not looks_french(english) and bool(english), english[:80].replace("\n", " "))
+_EN = {"the", "is", "it", "means", "that", "and", "you", "of", "to", "in", "this", "as", "for", "with"}
+_FR = {"le", "la", "les", "est", "et", "vous", "de", "des", "une", "un", "pour", "avec", "qui", "que"}
+
+
+def _english_dominant(text: str) -> bool:
+    # Quoted French examples are expected in an English explanation, so compare function-word counts.
+    words = [w.strip(".,;:!?*\"'()«»").lower() for w in text.split()]
+    return sum(w in _EN for w in words) > sum(w in _FR for w in words)
+
+
+record("chat answers English in English", _english_dominant(english) and bool(english), english[:80].replace("\n", " "))
 events, _, _, err = post_sse("/api/ai/chat/stream", {"message": "Pourquoi le CO2 réchauffe-t-il la planète ?"})
 co2 = tokens(events)
 record("chat uses no LaTeX", "$" not in co2 and "\\text" not in co2 and "_{" not in co2, "CO₂ in Unicode" if "CO₂" in co2 else co2[:80])

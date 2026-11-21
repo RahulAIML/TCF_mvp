@@ -83,6 +83,8 @@ def test_transcribe_silence_returns_no_speech(client, monkeypatch):
         return _FakeResponse("<NO_SPEECH>")
 
     monkeypatch.setattr(gemini_service, "_gemini_generate", fake_generate)
+    # Exercise the model's no-speech path (the voice-activity gate has its own tests).
+    monkeypatch.setattr(gemini_service, "has_speech", lambda data, mime: True)
     r = client.post(
         "/tcf/transcribe-audio",
         files={"audio": ("recording.mp4", _silent_wav(), "audio/mp4;codecs=mp4a.40.2")},
@@ -127,6 +129,8 @@ def test_pronunciation_silence_is_not_scored(client, monkeypatch):
         return _FakeResponse("<NO_SPEECH>")
 
     monkeypatch.setattr(gemini_service, "_gemini_generate", fake_generate)
+    # Exercise the model's no-speech path (the voice-activity gate has its own tests).
+    monkeypatch.setattr(gemini_service, "has_speech", lambda data, mime: True)
     r = client.post(
         "/api/pronunciation/evaluate",
         data={"target_text": "Bonjour", "language": "fr"},
