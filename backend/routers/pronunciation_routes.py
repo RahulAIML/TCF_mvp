@@ -2,6 +2,7 @@
 Pronunciation Training Routes
 Routes for pronunciation evaluation using Gemini and ElevenLabs TTS.
 """
+from starlette.concurrency import run_in_threadpool
 
 import logging
 import os
@@ -73,7 +74,8 @@ async def evaluate_pronunciation(
             f.write(audio_content)
 
         # Evaluate pronunciation using Gemini (pass actual mime type)
-        evaluation = gemini_service.evaluate_pronunciation(
+        evaluation = await run_in_threadpool(
+            gemini_service.evaluate_pronunciation,
             expected_text=target_text,
             audio_path=audio_path,
             language=language,
@@ -104,7 +106,7 @@ async def evaluate_pronunciation(
 
 
 @router.get("/guide/{word}")
-async def get_pronunciation_guide(word: str, language: str = "fr") -> Response:
+def get_pronunciation_guide(word: str, language: str = "fr") -> Response:
     """
     Stream native pronunciation audio directly — no disk writes.
     Primary: ElevenLabs (MP3). Fallback: Gemini TTS (WAV). Returns 503 only if both fail.
@@ -141,7 +143,7 @@ async def get_pronunciation_guide(word: str, language: str = "fr") -> Response:
 # ── VOCABULARY ROUTES ────────────────────────────────────────────────────────
 
 @router.post("/vocabulary/generate")
-async def generate_vocabulary(
+def generate_vocabulary(
     request: VocabularyWordRequest,
     db: Session = Depends(get_db),
     user: User = Depends(get_optional_user),
@@ -205,7 +207,7 @@ async def generate_vocabulary(
 
 
 @router.get("/vocabulary/word/{word}")
-async def get_vocabulary_word(
+def get_vocabulary_word(
     word: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_optional_user),
@@ -242,7 +244,7 @@ async def get_vocabulary_word(
 
 
 @router.put("/vocabulary/progress")
-async def update_vocabulary_progress(
+def update_vocabulary_progress(
     request: VocabularyProgressRequest,
     db: Session = Depends(get_db),
     user: User = Depends(get_optional_user),

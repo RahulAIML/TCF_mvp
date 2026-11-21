@@ -98,7 +98,7 @@ def _call_gemini(message: str) -> str:
 
 
 @router.post("/api/ai/chat", response_model=AIChatResponse)
-async def ai_chat(payload: AIChatRequest) -> AIChatResponse:
+def ai_chat(payload: AIChatRequest) -> AIChatResponse:
     if not payload.message.strip():
         return AIChatResponse(response="Please type a question.")
     try:
@@ -112,10 +112,10 @@ async def ai_chat(payload: AIChatRequest) -> AIChatResponse:
 
 
 @router.post("/api/ai/chat/stream")
-async def ai_chat_stream(payload: AIChatRequest) -> StreamingResponse:
+def ai_chat_stream(payload: AIChatRequest) -> StreamingResponse:
     """Server-Sent Events streaming endpoint — tokens appear as they are generated."""
 
-    async def _generate():
+    def _generate():
         if not payload.message.strip():
             yield f"data: {json.dumps({'token': 'Please type a question.'})}\n\n"
             yield "data: [DONE]\n\n"

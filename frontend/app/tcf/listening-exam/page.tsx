@@ -592,6 +592,7 @@ export default function ListeningExamPage() {
                     )}
                   </div>
                   <ListeningQuestionCard
+                    key={practiceQuestion.script}
                     question={practiceQuestion}
                     questionNumber={practiceCount - 1}
                     selectedAnswer={practiceAnswer}
@@ -747,6 +748,7 @@ export default function ListeningExamPage() {
                   )}
                   {currentQuestionData && (
                     <ListeningQuestionCard
+                      key={`exam-${currentQuestion}-${currentQuestionData.script.length}`}
                       question={currentQuestionData}
                       questionNumber={currentQuestion}
                       selectedAnswer={currentAnswer}

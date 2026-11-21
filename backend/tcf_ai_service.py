@@ -44,6 +44,40 @@ AUDIO_STORAGE_PATH = os.getenv(
     os.path.join(os.path.dirname(__file__), "data", "audio")
 )
 
+# Low thinking keeps generation latency down; set GEMINI_THINKING_LEVEL=off to disable.
+GEMINI_THINKING_LEVEL = os.getenv("GEMINI_THINKING_LEVEL", "low").strip().lower()
+_thinking_enabled = GEMINI_THINKING_LEVEL not in ("", "off", "none")
+_shared_client: "genai_client.Client | None" = None
+
+
+def _gemini_client() -> "genai_client.Client":
+    global _shared_client
+    if not API_KEY:
+        raise RuntimeError("Missing API key. Set GEMINI_API_KEY in backend/.env.")
+    if _shared_client is None:
+        _shared_client = genai_client.Client(api_key=API_KEY)
+    return _shared_client
+
+
+def _gen_config(**kwargs: Any) -> "types.GenerateContentConfig":
+    if _thinking_enabled:
+        kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL)
+    return types.GenerateContentConfig(**kwargs)
+
+
+def _gemini_generate(contents: Any, stream: bool = False, **config_kwargs: Any) -> Any:
+    """generate_content with the shared client; drops thinking_config once if the model rejects it."""
+    global _thinking_enabled
+    method = _gemini_client().models.generate_content_stream if stream else _gemini_client().models.generate_content
+    try:
+        return method(model=MODEL_NAME, contents=contents, config=_gen_config(**config_kwargs))
+    except Exception as error:
+        if _thinking_enabled and "think" in str(error).lower():
+            logging.getLogger(__name__).warning("Model rejected thinking_config (%s); disabling it.", error)
+            _thinking_enabled = False
+            return method(model=MODEL_NAME, contents=contents, config=_gen_config(**config_kwargs))
+        raise
+
 # ── Shared scenario pools (reused for variety) ──────────────────────────────
 
 DOMAINS = [
@@ -605,16 +639,8 @@ def _extract_json(text: str) -> Dict[str, Any]:
 
 def _generate_json(prompt: str, temperature: float = 0.7) -> Dict[str, Any]:
     _ensure_api_key()
-    client = genai_client.Client(api_key=API_KEY)
     try:
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=temperature,
-                response_mime_type="application/json"
-            )
-        )
+        response = _gemini_generate(prompt, temperature=temperature, response_mime_type="application/json")
     except Exception as error:
         raise RuntimeError(f"Gemini generate_content failed: {error}") from error
     if not getattr(response, "text", None):
@@ -624,15 +650,8 @@ def _generate_json(prompt: str, temperature: float = 0.7) -> Dict[str, Any]:
 
 def _generate_text(prompt: str, temperature: float = 0.4) -> str:
     _ensure_api_key()
-    client = genai_client.Client(api_key=API_KEY)
     try:
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=temperature,
-            )
-        )
+        response = _gemini_generate(prompt, temperature=temperature)
     except Exception as error:
         raise RuntimeError(f"Gemini generate_content failed: {error}") from error
     if not getattr(response, "text", None):
@@ -1275,12 +1294,7 @@ def stream_assist_tcf_writing(
 
     prompt, temperature = _build_writing_prompt(action, clean, direction, context)
     _ensure_api_key()
-    client = genai_client.Client(api_key=API_KEY)
-    for chunk in client.models.generate_content_stream(
-        model=MODEL_NAME,
-        contents=prompt,
-        config=types.GenerateContentConfig(temperature=temperature),
-    ):
+    for chunk in _gemini_generate(prompt, stream=True, temperature=temperature):
         token = getattr(chunk, "text", None)
         if token:
             yield token
@@ -2208,18 +2222,14 @@ Regles STRICTES :
 def extract_text_from_image_bytes(raw: bytes, content_type: str) -> str:
     """Extract text from an image using Gemini vision."""
     _ensure_api_key()
-    client = genai_client.Client(api_key=API_KEY)
     mime = content_type or "image/jpeg"
     try:
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=[
+        response = _gemini_generate(
+            [
                 types.Part.from_bytes(data=raw, mime_type=mime),
                 "Extract all readable text from this image. Output plain text only."
             ],
-            config=types.GenerateContentConfig(
-                temperature=0.1,
-            )
+            temperature=0.1,
         )
         return str(response.text).strip() if getattr(response, "text", None) else ""
     except Exception as error:

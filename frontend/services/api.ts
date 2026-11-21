@@ -52,21 +52,46 @@ import type { McpCreatedToken, McpInfo, McpTokenRecord } from "@/types/mcp";
 import { getAuthToken } from "@/lib/auth";
 import { emitAuthFailure } from "@/lib/auth-events";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-async function parseResponse<T>(res: Response): Promise<T> {
+/** Turn any failed response into a short message that is safe to show to a student. */
+export async function friendlyErrorMessage(res: Response): Promise<string> {
+  let detail = "";
+  try {
+    const body = await res.clone().json();
+    const raw = body?.detail ?? body?.message ?? body?.error;
+    if (typeof raw === "string") detail = raw;
+    else if (Array.isArray(raw) && typeof raw[0]?.msg === "string") detail = raw[0].msg;
+  } catch {
+    // Non-JSON body (HTML error page, proxy text): never show it.
+  }
+  const technical = /gemini|generate_content|traceback|exception|elevenlabs|sqlalchemy|failed after retries|http \d{3}/i;
+  if (detail && detail.length <= 160 && !technical.test(detail)) return detail;
+  if (res.status === 404) return "This item is no longer available. Please try again.";
+  if (res.status === 413) return "The file is too large.";
+  if (res.status === 422 || res.status === 400) return "Some information is missing or invalid. Please check and try again.";
+  if (res.status === 429) return "Too many requests right now. Please wait a moment and try again.";
+  return "The service is temporarily unavailable. Please try again in a moment.";
+}
+
+export async function parseResponse<T>(res: Response): Promise<T> {
   if (res.status === 401) {
     emitAuthFailure();
     throw new Error("Session expired. Please sign in again.");
   }
   if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(errorText || `Request failed with status ${res.status}`);
+    throw new Error(await friendlyErrorMessage(res));
   }
   return res.json() as Promise<T>;
 }
 
-function authHeaders(): HeadersInit {
+/** Network failures (offline, CORS, dropped connection) surface as TypeError: give them a readable message. */
+export function friendlyNetworkError(err: unknown): Error {
+  if (err instanceof TypeError) return new Error("Connection problem. Check your internet connection and try again.");
+  return err instanceof Error ? err : new Error("Something went wrong. Please try again.");
+}
+
+export function authHeaders(): HeadersInit {
   const token = getAuthToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }

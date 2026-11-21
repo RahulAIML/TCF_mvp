@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+import pregen_pool
 from database import init_db
 from routers.auth_routes import router as auth_router
 from routers.dictionary import router as dictionary_router
@@ -74,6 +75,12 @@ app.include_router(mcp_router)
 @app.on_event("startup")
 async def on_startup() -> None:
   init_db()
+  pregen_pool.warm_all()
+
+
+@app.get("/api/pregen/stats")
+def pregen_stats() -> dict:
+  return pregen_pool.all_stats()
 
 
 @app.get("/")

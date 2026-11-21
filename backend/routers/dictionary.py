@@ -10,7 +10,7 @@ router = APIRouter(tags=["dictionary"])
 
 
 @router.post("/word-meaning", response_model=WordMeaningResponse)
-async def post_word_meaning(
+def post_word_meaning(
   payload: WordMeaningRequest,
   _user: User = Depends(get_optional_user)
 ) -> WordMeaningResponse:
@@ -21,7 +21,7 @@ async def post_word_meaning(
 
 
 @router.post("/explain-text", response_model=ExplainTextResponse)
-async def post_explain_text(
+def post_explain_text(
   payload: ExplainTextRequest,
   _user: User = Depends(get_optional_user)
 ) -> ExplainTextResponse:
@@ -32,7 +32,7 @@ async def post_explain_text(
 
 
 @router.post("/translate")
-async def post_translate(
+def post_translate(
   text: str = Body(..., embed=True),
   _user: User = Depends(get_optional_user)
 ) -> dict:

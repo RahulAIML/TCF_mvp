@@ -70,14 +70,23 @@ export default function ListeningQuestionCard({
   const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
   const [localAudioUrl, setLocalAudioUrl] = useState("");
 
+  // Keyed on the script too: deferred-audio questions all have audio_url=null,
+  // so without it a new question would keep playing the previous question's audio.
   useEffect(() => {
-    const url = question.audio_url ?? "";
-    if (!url) {
-      setLocalAudioUrl("");
-      return;
+    const audio = audioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
     }
-    setLocalAudioUrl(url.startsWith("http") ? url : `${apiBase}${url}`);
-  }, [question.audio_url, apiBase]);
+    setIsPlaying(false);
+    setIsBuffering(false);
+    setAudioCurrentTime(0);
+    setAudioDuration(0);
+    setCurrentWordIndex(0);
+    const url = question.audio_url ?? "";
+    setLocalAudioUrl(url ? (url.startsWith("http") ? url : `${apiBase}${url}`) : "");
+  }, [question.script, question.audio_url, apiBase]);
 
   const audioSrc = localAudioUrl;
 

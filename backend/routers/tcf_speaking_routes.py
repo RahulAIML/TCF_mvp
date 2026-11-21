@@ -1,4 +1,5 @@
-﻿import os
+from starlette.concurrency import run_in_threadpool
+import os
 import tempfile
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/tcf", tags=["tcf", "speaking"])
 
 
 @router.post("/conversation", response_model=TcfConversationResponse)
-async def post_conversation(
+def post_conversation(
   payload: TcfConversationRequest,
   _user: User = Depends(get_optional_user)
 ) -> TcfConversationResponse:
@@ -39,7 +40,7 @@ async def post_conversation(
 
 
 @router.post("/evaluate", response_model=TcfSpeakingEvaluationResponse)
-async def post_speaking_evaluation(
+def post_speaking_evaluation(
   payload: TcfSpeakingEvaluationRequest,
   _user: User = Depends(get_optional_user)
 ) -> TcfSpeakingEvaluationResponse:
@@ -87,7 +88,9 @@ async def transcribe_audio(
       tmp.write(audio_data)
       tmp_path = tmp.name
 
-    transcript = GeminiService.transcribe_speech(tmp_path, language, mime_type=content_type)
+    transcript = await run_in_threadpool(
+      GeminiService.transcribe_speech, tmp_path, language, mime_type=content_type
+    )
     return {"transcript": transcript.strip()}
   except Exception as exc:
     raise HTTPException(status_code=500, detail=f"Transcription failed: {exc}") from exc

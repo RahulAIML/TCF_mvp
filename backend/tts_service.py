@@ -8,6 +8,8 @@ Languages: French, English, Spanish, Portuguese (see LANGUAGES / VOICE_REGISTRY)
 import io
 import logging
 import os
+import threading
+import time
 import uuid
 import wave
 from typing import TypedDict
@@ -191,6 +193,26 @@ _SESSION = requests.Session()
 
 GEMINI_SAMPLE_RATE = 24000  # Gemini TTS returns 16-bit mono PCM at 24 kHz
 
+# ElevenLabs rejects requests above the plan's concurrency limit (HTTP 429), so every caller shares this cap.
+ELEVENLABS_SLOTS = threading.BoundedSemaphore(max(1, int(os.getenv("ELEVENLABS_MAX_CONCURRENCY", "4"))))
+
+
+def elevenlabs_post(url: str, headers: dict, payload: dict, timeout) -> requests.Response:
+    """POST to ElevenLabs within the shared concurrency cap, retrying 429/5xx with backoff."""
+    delay = 1.0
+    for attempt in range(4):
+        with ELEVENLABS_SLOTS:
+            resp = _SESSION.post(url, headers=headers, json=payload, timeout=timeout)
+        if resp.status_code != 429 and resp.status_code < 500:
+            resp.raise_for_status()
+            return resp
+        if attempt == 3:
+            resp.raise_for_status()
+        logger.warning("ElevenLabs HTTP %s, retrying in %.0fs", resp.status_code, delay)
+        time.sleep(delay)
+        delay *= 2
+    raise RuntimeError("unreachable")
+
 
 class AudioResult(TypedDict):
     data: bytes
@@ -253,8 +275,7 @@ def _generate_via_elevenlabs(text: str, voice: VoiceConfig) -> AudioResult:
     }
     headers = {"xi-api-key": _ELEVENLABS_API_KEY, "Content-Type": "application/json"}
     logger.info("ElevenLabs TTS: voice=%s chars=%s", voice["id"], len(text))
-    resp = _SESSION.post(url, headers=headers, json=payload, timeout=(5, 120))
-    resp.raise_for_status()
+    resp = elevenlabs_post(url, headers, payload, timeout=(5, 120))
     return {"data": resp.content, "extension": "mp3", "mime_type": "audio/mpeg", "provider": "elevenlabs"}
 
 

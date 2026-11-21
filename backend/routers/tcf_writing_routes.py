@@ -34,7 +34,7 @@ router = APIRouter(prefix="/tcf", tags=["tcf", "writing"])
 
 
 @router.post("/generate-writing-tasks", response_model=TcfGenerateWritingTasksResponse)
-async def post_generate_writing_tasks(
+def post_generate_writing_tasks(
   payload: TcfGenerateWritingTasksRequest,
   _user: User = Depends(get_optional_user)
 ) -> TcfGenerateWritingTasksResponse:
@@ -47,7 +47,7 @@ async def post_generate_writing_tasks(
 
 
 @router.post("/evaluate-writing", response_model=TcfWritingEvaluationResponse)
-async def post_evaluate_writing(
+def post_evaluate_writing(
   payload: TcfWritingEvaluationRequest,
   _user: User = Depends(get_optional_user)
 ) -> TcfWritingEvaluationResponse:
@@ -60,7 +60,7 @@ async def post_evaluate_writing(
 
 
 @router.post("/evaluate-writing-step", response_model=TcfWritingStepFeedbackResponse)
-async def post_evaluate_writing_step(
+def post_evaluate_writing_step(
   payload: TcfWritingStepFeedbackRequest,
   _user: User = Depends(get_optional_user)
 ) -> TcfWritingStepFeedbackResponse:
@@ -73,7 +73,7 @@ async def post_evaluate_writing_step(
 
 
 @router.post("/writing/assistant", response_model=TcfWritingAssistantResponse)
-async def post_writing_assistant(
+def post_writing_assistant(
   payload: TcfWritingAssistantRequest,
   _user: User = Depends(get_optional_user)
 ) -> TcfWritingAssistantResponse:
@@ -91,11 +91,11 @@ async def post_writing_assistant(
 
 
 @router.post("/writing/assistant/stream")
-async def post_writing_assistant_stream(
+def post_writing_assistant_stream(
   payload: TcfWritingAssistantRequest,
   _user: User = Depends(get_optional_user)
 ) -> StreamingResponse:
-  async def _generate():
+  def _generate():
     try:
       for token in stream_assist_tcf_writing(
         action=payload.action,
@@ -117,7 +117,7 @@ async def post_writing_assistant_stream(
 
 
 @router.post("/writing/save-progress", response_model=WritingProgressResponse)
-async def post_save_writing_progress(
+def post_save_writing_progress(
   payload: TcfWritingProgressRequest,
   db: Session = Depends(get_db),
   user: User = Depends(get_optional_user)
@@ -157,7 +157,7 @@ async def post_save_writing_progress(
 
 
 @router.post("/writing/submit", response_model=TcfWritingSubmitResponse)
-async def post_submit_writing(
+def post_submit_writing(
   payload: TcfWritingSubmitRequest,
   db: Session = Depends(get_db),
   user: User = Depends(get_optional_user)

@@ -24,7 +24,7 @@ router = APIRouter(prefix="/tcf/speaking/enhanced", tags=["tcf", "speaking"])
 
 
 @router.post("/session/init", response_model=SpeakingSessionInitResponse)
-async def init_speaking_session(
+def init_speaking_session(
     payload: SpeakingSessionInitRequest,
     db: Session = Depends(get_db),
     user: User = Depends(get_optional_user),
@@ -71,7 +71,7 @@ async def init_speaking_session(
 
 
 @router.post("/conversation", response_model=EnhancedTcfConversationResponse)
-async def enhanced_conversation(
+def enhanced_conversation(
     payload: EnhancedTcfConversationRequest,
     db: Session = Depends(get_db),
     user: User = Depends(get_optional_user),
@@ -186,7 +186,7 @@ async def store_user_audio(
 
 
 @router.post("/evaluate", response_model=EnhancedSpeakingEvaluationResponse)
-async def enhanced_evaluate(
+def enhanced_evaluate(
     payload: dict,
     db: Session = Depends(get_db),
     user: User = Depends(get_optional_user),

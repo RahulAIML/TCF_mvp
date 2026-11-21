@@ -1,4 +1,5 @@
 from __future__ import annotations
+from starlette.concurrency import run_in_threadpool
 
 import logging
 
@@ -25,7 +26,7 @@ router = APIRouter(prefix="/learn", tags=["learn"])
 
 
 @router.post("/analyze", response_model=LearnContentResponse)
-async def analyze_content(
+def analyze_content(
   payload: LearnAnalyzeRequest,
   _user: User = Depends(get_optional_user)
 ) -> LearnContentResponse:
@@ -46,11 +47,11 @@ async def upload_content(
   content_type = (file.content_type or "").lower()
   raw = await file.read()
 
-  if content_type == "application/pdf" or file.filename.endswith(".pdf"):
-    text = _extract_pdf_text(raw)
+  if content_type == "application/pdf" or (file.filename or "").endswith(".pdf"):
+    text = await run_in_threadpool(_extract_pdf_text, raw)
     source_type = "pdf"
   elif content_type.startswith("image/"):
-    text = extract_text_from_image_bytes(raw, content_type)
+    text = await run_in_threadpool(extract_text_from_image_bytes, raw, content_type)
     source_type = "image"
   else:
     raise HTTPException(status_code=415, detail="Only PDF and image files are supported.")
@@ -62,7 +63,7 @@ async def upload_content(
 
 
 @router.post("/evaluate", response_model=LearnEvaluationResponse)
-async def evaluate_answer(
+def evaluate_answer(
   payload: LearnEvaluateRequest,
   _user: User = Depends(get_optional_user)
 ) -> LearnEvaluationResponse:
@@ -81,7 +82,7 @@ async def evaluate_answer(
 
 
 @router.post("/more-exercises", response_model=list[LearnExercise])
-async def more_exercises(
+def more_exercises(
   payload: LearnMoreExercisesRequest,
   _user: User = Depends(get_optional_user)
 ) -> list[LearnExercise]:
@@ -102,7 +103,7 @@ async def more_exercises(
 
 
 @router.post("/session/save", response_model=LearnSessionSummary)
-async def save_session(
+def save_session(
   payload: LearnSaveSessionRequest,
   db: Session = Depends(get_db),
   user: User = Depends(get_optional_user)
