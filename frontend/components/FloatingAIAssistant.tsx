@@ -3,74 +3,18 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { MessageCircle, X, Send, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+import { MarkdownText } from "@/lib/markdown";
+import { streamSSE } from "@/lib/sse";
 
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+  isError?: boolean;
 }
 
-function stripLatex(text: string): string {
-  // Convert common LaTeX subscript/superscript, strip $ delimiters
-  return text
-    .replace(/\$([^$]+)\$/g, (_, inner) =>
-      inner
-        .replace(/_\{([^}]+)\}/g, (_m: string, sub: string) => sub.split("").map((c: string) => "₀₁₂₃₄₅₆₇₈₉".includes(c) ? c : c).join(""))
-        .replace(/_(\d)/g, (_m: string, d: string) => "₀₁₂₃₄₅₆₇₈₉"[Number(d)])
-        .replace(/\^\{([^}]+)\}/g, (_m: string, sup: string) => sup)
-        .replace(/\^(\d)/g, (_m: string, d: string) => "⁰¹²³⁴⁵⁶⁷⁸⁹"[Number(d)])
-    );
-}
-
-function renderMarkdown(md: string): React.ReactNode {
-  const lines = stripLatex(md).split("\n");
-  const nodes: React.ReactNode[] = [];
-  let listItems: string[] = [];
-
-  const flushList = () => {
-    if (listItems.length) {
-      nodes.push(
-        <ul key={`ul-${nodes.length}`} className="list-disc list-outside ml-4 space-y-0.5 my-1">
-          {listItems.map((item, i) => (
-            <li key={i}>{inlineFormat(item)}</li>
-          ))}
-        </ul>
-      );
-      listItems = [];
-    }
-  };
-
-  const inlineFormat = (text: string): React.ReactNode => {
-    // bold + italic pass — split on ** and *
-    const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g);
-    return parts.map((part, i) => {
-      if (part.startsWith("**") && part.endsWith("**"))
-        return <strong key={i}>{part.slice(2, -2)}</strong>;
-      if (part.startsWith("*") && part.endsWith("*"))
-        return <em key={i}>{part.slice(1, -1)}</em>;
-      return part;
-    });
-  };
-
-  lines.forEach((line, idx) => {
-    const trimmed = line.trim();
-    if (/^[*-] /.test(trimmed)) {
-      listItems.push(trimmed.replace(/^[*-] /, ""));
-    } else {
-      flushList();
-      if (!trimmed) {
-        if (nodes.length) nodes.push(<div key={`sp-${idx}`} className="h-1" />);
-      } else {
-        nodes.push(<p key={idx}>{inlineFormat(trimmed)}</p>);
-      }
-    }
-  });
-  flushList();
-  return <>{nodes}</>;
-}
+const MAX_HISTORY = 16;
 
 const WELCOME: Message = {
   id: "welcome",
@@ -86,6 +30,7 @@ export default function FloatingAIAssistant() {
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -97,84 +42,66 @@ export default function FloatingAIAssistant() {
     }
   }, [isOpen]);
 
-  const handleOpen = useCallback(() => {
-    // Clear stale conversation state when re-opening after a long gap
-    setIsOpen(true);
-  }, []);
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const handleClear = useCallback(() => {
+    abortRef.current?.abort();
     setMessages([WELCOME]);
+    setIsLoading(false);
   }, []);
 
   const handleSendMessage = useCallback(async () => {
     const text = input.trim();
     if (!text || isLoading) return;
 
-    const userMsg: Message = {
-      id: `u-${Date.now()}`,
-      role: "user",
-      content: text,
-      timestamp: Date.now(),
-    };
+    const history = messages
+      .filter((m) => m.id !== WELCOME.id && !m.isError && m.content.trim())
+      .slice(-MAX_HISTORY)
+      .map(({ role, content }) => ({ role, content }));
+
+    const userMsg: Message = { id: `u-${Date.now()}`, role: "user", content: text, timestamp: Date.now() };
     const aiMsgId = `a-${Date.now()}`;
     setMessages((prev) => [...prev, userMsg, { id: aiMsgId, role: "assistant", content: "", timestamp: Date.now() }]);
     setInput("");
     setIsLoading(true);
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const update = (fn: (m: Message) => Message) =>
+      setMessages((prev) => prev.map((m) => (m.id === aiMsgId ? fn(m) : m)));
+
     try {
-      const res = await fetch(`${API_BASE_URL}/api/ai/chat/stream`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
-        cache: "no-store",
-      });
-
-      if (!res.ok || !res.body) throw new Error(`Status ${res.status}`);
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const raw = line.slice(6).trim();
-          if (raw === "[DONE]") break;
-          try {
-            const parsed = JSON.parse(raw) as { token?: string; error?: string };
-            if (parsed.token) {
-              setMessages((prev) =>
-                prev.map((m) => m.id === aiMsgId ? { ...m, content: m.content + parsed.token } : m)
-              );
-            } else if (parsed.error) {
-              setMessages((prev) =>
-                prev.map((m) => m.id === aiMsgId ? { ...m, content: parsed.error ?? "Error" } : m)
-              );
-            }
-          } catch { /* malformed chunk — skip */ }
-        }
-      }
-    } catch {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === aiMsgId ? { ...m, content: "Connection error. Please check the server and try again." } : m
-        )
+      await streamSSE(
+        "/api/ai/chat/stream",
+        { message: text, history },
+        (event) => {
+          if (typeof event.token === "string") {
+            const token = event.token;
+            update((m) => ({ ...m, content: m.content + token }));
+          } else if (typeof event.error === "string") {
+            const error = event.error;
+            update((m) => ({ ...m, content: m.content || error, isError: !m.content }));
+          }
+        },
+        controller.signal
       );
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      const message = err instanceof Error ? err.message : "Connection problem. Please try again.";
+      update((m) => ({ ...m, content: message, isError: true }));
     } finally {
-      setIsLoading(false);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setIsLoading(false);
+      }
     }
-  }, [input, isLoading]);
+  }, [input, isLoading, messages]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        handleSendMessage();
+        void handleSendMessage();
       }
     },
     [handleSendMessage]
@@ -183,7 +110,7 @@ export default function FloatingAIAssistant() {
   if (!isOpen) {
     return (
       <button
-        onClick={handleOpen}
+        onClick={() => setIsOpen(true)}
         className="fixed bottom-6 right-6 z-40 h-14 w-14 rounded-full bg-emerald-600 text-white shadow-lg hover:bg-emerald-700 transition-all duration-200 flex items-center justify-center hover:scale-110"
         title="Open French Expert Assistant"
         aria-label="Open AI assistant"
@@ -194,7 +121,7 @@ export default function FloatingAIAssistant() {
   }
 
   return (
-    <Card className="fixed bottom-6 right-6 z-40 w-96 shadow-2xl rounded-2xl border border-slate-200 flex flex-col overflow-hidden"
+    <Card className="fixed bottom-6 right-6 z-40 w-96 max-w-[calc(100vw-3rem)] shadow-2xl rounded-2xl border border-slate-200 flex flex-col overflow-hidden"
       style={{ maxHeight: "min(520px, calc(100vh - 96px))" }}>
       <CardHeader className="flex flex-row items-center justify-between pb-3 flex-shrink-0">
         <div>
@@ -222,23 +149,20 @@ export default function FloatingAIAssistant() {
       </CardHeader>
 
       <CardContent className="flex flex-col flex-1 min-h-0 p-4 pt-0">
-        {/* Messages area */}
-        <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-1 min-h-0">
+        <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-1 min-h-0" aria-live="polite">
           {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-            >
+            <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
               <div
                 className={`rounded-xl px-3 py-2 text-sm leading-relaxed break-words ${
                   msg.role === "user"
                     ? "bg-emerald-600 text-white max-w-[85%] whitespace-pre-wrap"
-                    : "bg-slate-100 text-slate-800 max-w-[90%]"
+                    : msg.isError
+                      ? "bg-rose-50 text-rose-700 border border-rose-100 max-w-[90%]"
+                      : "bg-slate-100 text-slate-800 max-w-[90%]"
                 }`}
               >
                 {msg.role === "assistant" && msg.content === "" && isLoading ? (
-                  /* Typing indicator — shown while first token hasn't arrived yet */
-                  <span className="flex items-center gap-1 py-0.5">
+                  <span className="flex items-center gap-1 py-0.5" aria-label="Assistant is typing">
                     {[0, 150, 300].map((delay) => (
                       <span
                         key={delay}
@@ -248,7 +172,7 @@ export default function FloatingAIAssistant() {
                     ))}
                   </span>
                 ) : msg.role === "assistant" ? (
-                  renderMarkdown(msg.content)
+                  <MarkdownText text={msg.content} />
                 ) : (
                   msg.content
                 )}
@@ -258,10 +182,9 @@ export default function FloatingAIAssistant() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Quick suggestions */}
         {messages.length === 1 && (
           <div className="flex flex-wrap gap-1.5 mb-3">
-            {["Translate 'bonjour'", "What is passé composé?", "Formal vs informal"].map((s) => (
+            {["Translate 'bonjour'", "Qu'est-ce que le passé composé ?", "Formal vs informal"].map((s) => (
               <button
                 key={s}
                 onClick={() => { setInput(s); inputRef.current?.focus(); }}
@@ -273,7 +196,6 @@ export default function FloatingAIAssistant() {
           </div>
         )}
 
-        {/* Input area */}
         <div className="flex gap-2 flex-shrink-0">
           <input
             ref={inputRef}
@@ -287,7 +209,7 @@ export default function FloatingAIAssistant() {
             aria-label="Message input"
           />
           <button
-            onClick={handleSendMessage}
+            onClick={() => void handleSendMessage()}
             disabled={isLoading || !input.trim()}
             className="p-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-40 transition flex-shrink-0"
             title="Send message"

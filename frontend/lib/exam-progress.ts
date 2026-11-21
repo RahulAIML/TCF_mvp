@@ -39,6 +39,12 @@ export interface WritingProgressState {
   currentTask: number;
   sessionId: string | null;
   prompts: string[];
+  /** Absent in saves made before modes were stored; treat those as exam. */
+  mode?: "practice" | "exam";
+  /** Epoch ms when the exam timer started, so a resumed exam keeps counting down. */
+  examStartedAt?: number | null;
+  /** Practice step answers per task (task1, task2, task3). */
+  stepValues?: Record<string, string>[];
 }
 
 /** Speaking exam saved state */

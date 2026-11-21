@@ -14,6 +14,7 @@ import logging
 import os
 import random
 import re
+import threading
 import uuid
 from collections import deque
 from typing import Any, Dict, Tuple
@@ -22,6 +23,7 @@ from dotenv import load_dotenv
 from google import genai as genai_client
 from google.genai import types
 
+from pregen_pool import PregenPool
 from schemas import TcfExamQuestion, ListeningQuestionResponse
 
 load_dotenv()
@@ -743,43 +745,189 @@ def generate_tcf_listening_question(
     return get_question(question_number, session_id, defer_audio, target_level)
 
 
-def generate_tcf_writing_tasks() -> dict[str, str]:
-    """
-    Generate 3 TCF Canada writing task prompts.
-      Task 1: Short message (A1–A2), 60–100 words
-      Task 2: Description (A2–B1), 100–150 words
-      Task 3: Opinion + justification (B1–C1), 150–250 words
-    """
-    prompt = """Tu es un concepteur d'epreuves TCF Canada. Genere trois consignes d'expression ecrite en francais.
+# ── Writing (official TCF Canada format) ────────────────────────────────────
 
----
-EXEMPLE DE FORMAT ATTENDU (ne pas reproduire cet exemple) :
+WRITING_TASK_SPECS: dict[str, dict[str, Any]] = {
+    "task1": {
+        "label": "Tâche 1 — Message (décrire, raconter, expliquer)",
+        "min_words": 60,
+        "max_words": 120,
+        "criteria": (
+            "transmettre clairement les informations demandées au(x) destinataire(s), décrire / raconter / "
+            "expliquer, registre adapté (tutoiement ou vouvoiement), formules d'ouverture et de clôture, "
+            "correction de base"
+        ),
+    },
+    "task2": {
+        "label": "Tâche 2 — Article, courrier ou note (compte rendu ou récit + opinion argumentée)",
+        "min_words": 120,
+        "max_words": 150,
+        "criteria": (
+            "rendre compte d'un événement ou d'une expérience, exprimer et justifier une opinion avec des "
+            "arguments, cohérence et cohésion (connecteurs), vocabulaire et structures adaptés au genre"
+        ),
+    },
+    "task3": {
+        "label": "Tâche 3 — Comparer deux points de vue puis prendre position",
+        "min_words": 120,
+        "max_words": 180,
+        "criteria": (
+            "synthétiser et comparer les deux points de vue des documents (40 à 60 mots) en reformulant sans "
+            "recopier, puis défendre une position argumentée (80 à 120 mots), connecteurs logiques, richesse "
+            "et précision lexicales, structures complexes maîtrisées"
+        ),
+    },
+}
 
-Tache 1 : Vous laissez un message court a votre voisin pour lui demander de recuperer un colis.
-Tache 2 : Decrivez un lieu que vous aimez visiter et expliquez pourquoi.
-Tache 3 : Donnez votre opinion sur le teletravail et justifiez votre point de vue.
----
+_WRITING_DEFAULT_SPEC: dict[str, Any] = {
+    "label": "Tâche d'expression écrite",
+    "min_words": 60,
+    "max_words": 180,
+    "criteria": "accomplissement de la tâche, cohérence, vocabulaire, correction grammaticale",
+}
 
-Contraintes :
-- Tache 1 (A1-A2) : Message court (60-100 mots).
-- Tache 2 (A2-B1) : Description (100-150 mots).
-- Tache 3 (B1-C1) : Opinion et justification (150-250 mots).
+WRITING_THEMES = [
+    "le logement et la colocation", "les transports en commun", "le travail à distance",
+    "le bénévolat dans la communauté", "l'alimentation locale", "les réseaux sociaux",
+    "l'apprentissage des langues", "le sport amateur", "les vacances en famille",
+    "la vie de quartier", "les bibliothèques publiques", "le recyclage et les déchets",
+    "les fêtes et traditions", "l'accueil des nouveaux arrivants", "la santé au travail",
+    "les études à l'âge adulte", "le commerce en ligne", "les animaux de compagnie",
+    "l'hiver canadien", "les parcs et espaces verts", "la sécurité routière",
+    "le cinéma et les séries", "les jeux vidéo", "la consommation d'énergie",
+    "les petits commerces", "le tourisme local", "la lecture chez les jeunes",
+    "les horaires de travail", "le partage de voitures", "les jardins communautaires",
+    "la musique en direct", "les objets de seconde main", "le téléphone à l'école",
+    "les cours en ligne", "la cuisine maison", "les déménagements",
+]
 
-Regles :
-- Consignes concises, realistes, de style examen.
-- Sortie : JSON valide uniquement.
-{
+_writing_lock = threading.Lock()
+_writing_recent_themes: deque[str] = deque(maxlen=18)
+_writing_prompt_history: deque[str] = deque(maxlen=2000)
+_writing_served_by_session: dict[str, deque[str]] = {}
+
+_BULLET_PREFIX_RE = re.compile(r"^\s*(?:[-•*–—]|\d{1,2}[.)])\s+")
+_INLINE_BULLET_SPLIT_RE = re.compile(r"\s+-\s+(?=[A-ZÀ-ÖØ-Ý«\"])")
+
+
+def _count_words(text: str) -> int:
+    return len([w for w in re.split(r"\s+", text.strip()) if w])
+
+
+def _split_feedback(value: Any) -> list[str]:
+    """Split model feedback into points without breaking hyphenated words (peut-être, est-ce)."""
+    if isinstance(value, list):
+        raw_items = [str(item) for item in value]
+    else:
+        raw_items = []
+        for line in str(value or "").splitlines():
+            stripped = line.strip()
+            if stripped.startswith(("-", "•", "*")) and _INLINE_BULLET_SPLIT_RE.search(stripped):
+                raw_items.extend(_INLINE_BULLET_SPLIT_RE.split(stripped))
+            else:
+                raw_items.append(line)
+    items: list[str] = []
+    for item in raw_items:
+        clean = _BULLET_PREFIX_RE.sub("", item).strip()
+        if clean:
+            items.append(clean)
+    return items
+
+
+def _pick_writing_themes(count: int = 3) -> list[str]:
+    with _writing_lock:
+        fresh = [t for t in WRITING_THEMES if t not in _writing_recent_themes]
+        if len(fresh) < count:
+            fresh = list(WRITING_THEMES)
+        chosen = random.sample(fresh, count)
+        _writing_recent_themes.extend(chosen)
+    return chosen
+
+
+def _writing_tasks_prompt(themes: list[str]) -> str:
+    return f"""Tu es concepteur officiel d'épreuves d'expression écrite du TCF Canada (France Éducation international).
+Rédige UNE série complète de trois tâches, en français, au format officiel. Contexte canadien bienvenu.
+
+Thèmes imposés (un par tâche, dans cet ordre) : 1) {themes[0]} ; 2) {themes[1]} ; 3) {themes[2]}.
+
+Format officiel à respecter :
+- Tâche 1 (60 à 120 mots) : rédiger un MESSAGE (courriel, mot, invitation…) adressé à un ou plusieurs destinataires
+  nommés, pour décrire, raconter ou expliquer quelque chose. La consigne précise le destinataire et 2 ou 3 éléments
+  à inclure.
+- Tâche 2 (120 à 150 mots) : rédiger un ARTICLE, un COURRIER ou une NOTE pour un lecteur précis (journal local,
+  blogue, association…) qui rend compte d'un événement ou d'une expérience ET donne une opinion argumentée.
+- Tâche 3 (120 à 180 mots) : deux courts documents (60 à 90 mots chacun) présentent deux points de vue OPPOSÉS sur
+  le thème. La consigne demande : comparer les deux points de vue (40 à 60 mots), puis donner son opinion
+  argumentée (80 à 120 mots). Inclure les deux documents DANS task3_prompt, sous la forme
+  "Document 1 : …" puis "Document 2 : …", après la consigne.
+
+Règles :
+- Consignes naturelles et réalistes, vouvoiement du candidat, nombre de mots indiqué dans chaque consigne.
+- Pas de jargon, situations de la vie courante, professionnelle ou citoyenne.
+- Sortie : JSON valide uniquement, sans Markdown :
+{{
   "task1_prompt": "...",
   "task2_prompt": "...",
   "task3_prompt": "..."
-}
+}}
 """
-    payload = _generate_json(prompt, temperature=0.7)
-    return {
-        "task1_prompt": str(payload.get("task1_prompt", "")).strip(),
-        "task2_prompt": str(payload.get("task2_prompt", "")).strip(),
-        "task3_prompt": str(payload.get("task3_prompt", "")).strip(),
-    }
+
+
+def _generate_writing_task_set() -> dict[str, str]:
+    """One brand-new task set: never repeats a prompt already generated by this process."""
+    last_error: Exception | None = None
+    for _ in range(3):
+        themes = _pick_writing_themes()
+        try:
+            payload = _generate_json(_writing_tasks_prompt(themes), temperature=0.9)
+        except Exception as error:
+            last_error = error
+            continue
+        tasks = {key: str(payload.get(key, "")).strip() for key in ("task1_prompt", "task2_prompt", "task3_prompt")}
+        if not all(tasks.values()):
+            last_error = RuntimeError("Incomplete writing task set.")
+            continue
+        if "Document 1" not in tasks["task3_prompt"] or "Document 2" not in tasks["task3_prompt"]:
+            last_error = RuntimeError("Task 3 is missing its two documents.")
+            continue
+        fingerprints = [_fingerprint(value) for value in tasks.values()]
+        with _writing_lock:
+            if any(fp in _writing_prompt_history for fp in fingerprints):
+                last_error = RuntimeError("Duplicate writing prompt; regenerating.")
+                continue
+            _writing_prompt_history.extend(fingerprints)
+        return tasks
+    raise RuntimeError(f"Writing task generation failed: {last_error}") from last_error
+
+
+_writing_task_pool: PregenPool[dict[str, str]] = PregenPool(
+    "writing_tasks",
+    lambda _key: _generate_writing_task_set(),
+    target=int(os.getenv("PREGEN_WRITING_TARGET", "5")),
+    warm_keys=("all",),
+)
+
+
+def _writing_session_served(session_id: str | None) -> deque[str]:
+    with _writing_lock:
+        return _writing_served_by_session.setdefault(session_id or "__anon__", deque(maxlen=200))
+
+
+def generate_tcf_writing_tasks(session_id: str | None = None) -> dict[str, str]:
+    """Serve a ready task set from the pre-generated pool (instant); generate one live only if the pool is empty."""
+    served = _writing_session_served(session_id)
+    for _ in range(5):
+        tasks = _writing_task_pool.take("all")
+        if tasks is None:
+            break
+        key = _fingerprint("".join(tasks.values()))
+        if key in served:
+            continue
+        served.append(key)
+        return tasks
+    tasks = _generate_writing_task_set()
+    served.append(_fingerprint("".join(tasks.values())))
+    return tasks
 
 
 def assist_tcf_writing(
@@ -791,61 +939,10 @@ def assist_tcf_writing(
     clean = message.strip()
     if not clean:
         return "Veuillez fournir un texte pour continuer."
-
-    context_block = f"\nContexte de la consigne :\n{context}\n" if context else ""
-
-    if action == "translate":
-        if direction == "en-fr":
-            prompt = (
-                "Translate the following English text to French. "
-                "Output only the French translation - no explanations, no labels.\n\n"
-                f"English text:\n{clean}"
-            )
-            return _generate_text(prompt, temperature=0.2).strip()
-        prompt = (
-            "Translate the following French text to English. "
-            "Output only the English translation - no explanations, no labels.\n\n"
-            f"French text:\n{clean}"
-        )
-        return _generate_text(prompt, temperature=0.2).strip()
-
-    if action == "grammar":
-        prompt = f"""Tu es correcteur de franÃ§ais. Corrige la grammaire, l'orthographe et la ponctuation.
-{context_block}
-Texte :
-{clean}
-
-RÃ©ponds uniquement avec la version corrigÃ©e, sans explications.
-"""
-        return _generate_text(prompt, temperature=0.2).strip()
-
-    if action == "suggestions":
-        prompt = f"""Tu es coach TCF Canada en expression Ã©crite. Donne 3 Ã  5 suggestions concrÃ¨tes et concises
-pour amÃ©liorer la rÃ©ponse.
-{context_block}
-Texte :
-{clean}
-
-RÃ©ponds par une liste simple (tirets), sans texte supplÃ©mentaire.
-"""
-        return _generate_text(prompt, temperature=0.3).strip()
-
-    if action == "example":
-        prompt = f"""Tu es examinateur TCF Canada. GÃ©nÃ¨re un exemple de rÃ©ponse claire et naturelle.
-{context_block}
-Consigne ou sujet :
-{clean}
-
-Contraintes :
-- 80 Ã  140 mots.
-- FranÃ§ais naturel et cohÃ©rent.
-- Pas de titres, pas de puces.
-
-RÃ©ponds uniquement avec l'exemple.
-"""
-        return _generate_text(prompt, temperature=0.4).strip()
-
-    return "Action non prise en charge."
+    prompt, temperature = _build_writing_prompt(action, clean, direction, context)
+    if temperature == 0.0:
+        return prompt
+    return _generate_text(prompt, temperature=temperature).strip()
 
 
 def _build_writing_prompt(action: str, message: str, direction: str | None, context: str | None) -> tuple[str, float]:
@@ -871,7 +968,8 @@ def _build_writing_prompt(action: str, message: str, direction: str | None, cont
         return (
             f"Tu es correcteur de français. Corrige la grammaire, l'orthographe et la ponctuation.\n"
             f"{context_block}Texte :\n{clean}\n\n"
-            "Réponds uniquement avec la version corrigée, sans explications.",
+            "Réponds d'abord avec la version corrigée, puis une courte liste (tirets) des principales corrections. "
+            "N'utilise jamais LaTeX.",
             0.2,
         )
 
@@ -887,7 +985,8 @@ def _build_writing_prompt(action: str, message: str, direction: str | None, cont
         return (
             f"Tu es examinateur TCF Canada. Génère un exemple de réponse claire et naturelle.\n"
             f"{context_block}Consigne ou sujet :\n{clean}\n\n"
-            "Contraintes :\n- 80 à 140 mots.\n- Français naturel et cohérent.\n- Pas de titres, pas de puces.\n\n"
+            "Contraintes :\n- Respecte le nombre de mots demandé par la consigne (sinon 80 à 140 mots).\n"
+            "- Français naturel et cohérent.\n- Pas de titres, pas de puces.\n\n"
             "Réponds uniquement avec l'exemple.",
             0.4,
         )
@@ -907,6 +1006,9 @@ def stream_assist_tcf_writing(
         return
 
     prompt, temperature = _build_writing_prompt(action, clean, direction, context)
+    if temperature == 0.0:
+        yield prompt
+        return
     _ensure_api_key()
     for chunk in _gemini_generate(prompt, stream=True, temperature=temperature):
         token = getattr(chunk, "text", None)
@@ -914,42 +1016,32 @@ def stream_assist_tcf_writing(
             yield token
 
 
-def evaluate_tcf_writing_task(
-    task_type: str,
-    prompt_text: str,
-    response_text: str
-) -> dict[str, object]:
-    """
-    Evaluate a TCF Canada writing submission.
-    task_type: 'task1' | 'task2' | 'task3'
-    """
-    config = {
-        "task1": {
-            "label": "Message court (A1–A2)",
-            "word_range": "60–100 mots",
-            "criteria": "Accomplissement de la tâche, clarté, orthographe de base, registre approprié.",
-        },
-        "task2": {
-            "label": "Description (A2–B1)",
-            "word_range": "100–150 mots",
-            "criteria": "Organisation, cohérence, vocabulaire descriptif, correction grammaticale.",
-        },
-        "task3": {
-            "label": "Opinion et justification (B1–C1)",
-            "word_range": "150–250 mots",
-            "criteria": "Qualité de l'argumentation, connecteurs logiques, richesse lexicale, grammaire.",
-        },
-    }.get(task_type, {
-        "label": "Tâche d'expression écrite",
-        "word_range": "60–250 mots",
-        "criteria": "Accomplissement de la tâche, grammaire, cohérence, vocabulaire.",
-    })
+# Evaluation is streamed in a line format so scores appear first and feedback fills in progressively.
+_LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"]
+_EVAL_SCORE_KEYS = {
+    "structure": "STRUCTURE",
+    "grammar": "GRAMMAIRE",
+    "coherence": "COHERENCE",
+    "vocab": "VOCABULAIRE",
+}
 
-    prompt = f"""Tu es evaluateur officiel TCF Canada pour l'expression ecrite. Sois strict et realiste.
 
-Type de tache : {config['label']}
-Nombre de mots attendu : {config['word_range']}
-Criteres d'evaluation : {config['criteria']}
+def _strip_accents_upper(text: str) -> str:
+    import unicodedata
+    return "".join(
+        c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn"
+    ).upper()
+
+
+def _writing_eval_prompt(task_type: str, prompt_text: str, response_text: str) -> str:
+    spec = WRITING_TASK_SPECS.get(task_type, _WRITING_DEFAULT_SPEC)
+    words = _count_words(response_text)
+    return f"""Tu es correcteur certifié de l'expression écrite du TCF Canada. Tu évalues avec honnêteté et exigence,
+comme un vrai examinateur : jamais de complaisance, jamais de note généreuse par défaut.
+
+{spec['label']}
+Longueur attendue : {spec['min_words']} à {spec['max_words']} mots. Longueur réelle : {words} mots.
+Critères officiels : {spec['criteria']}.
 
 Consigne :
 {prompt_text}
@@ -957,60 +1049,205 @@ Consigne :
 Production du candidat :
 {response_text}
 
-Calibration OBLIGATOIRE des scores (barème TCF Canada) :
-- 9-10 : C1-C2, production quasi-parfaite, erreurs negligeables. Réservé aux excellents.
-- 7-8 : B2, bonne maîtrise, quelques erreurs mineures.
-- 5-6 : B1, communication réussie mais erreurs régulières, vocabulaire limité.
-- 3-4 : A2, communication partielle, erreurs fréquentes, structure basique.
-- 0-2 : A1 ou hors-sujet, communication très difficile.
-Un email ou message simple = maximum 5-6/10. Ne donne JAMAIS 8+ pour une réponse ordinaire.
-Sois exigeant : identifie les vraies faiblesses grammaticales, lexicales et structurelles.
+Barème (chaque critère sur 10, ancré sur le CECRL) :
+- 0-2 : A1 ou hors sujet ; communication très difficile.
+- 3-4 : A2 ; message partiel, erreurs fréquentes qui gênent la compréhension, phrases simples juxtaposées.
+- 5-6 : B1 ; tâche globalement réalisée, erreurs régulières mais compréhensible, vocabulaire courant et limité.
+- 7-8 : B2 ; tâche bien réalisée, argumentation claire, erreurs peu nombreuses qui ne gênent pas.
+- 9 : C1 ; aisance, précision, structures complexes maîtrisées, quasiment pas d'erreurs.
+- 10 : C2 uniquement si la production est irréprochable et d'une grande finesse.
+Règles d'honnêteté :
+- Une production correcte mais ordinaire, sans erreurs graves, vaut 5 à 6 : pas davantage.
+- Hors sujet ou consigne non respectée : 0 à 2 sur tous les critères.
+- Moins de {spec['min_words']} mots : STRUCTURE au maximum 5.
+- Chaque point à améliorer cite un extrait précis du texte et propose une correction.
+- Le NIVEAU global est cohérent avec la moyenne des quatre notes.
 
-Retourne un JSON avec :
-{{
-  "level": "A2/B1",
-  "scores": {{
-    "structure": 0-10,
-    "grammar": 0-10,
-    "coherence": 0-10,
-    "vocab": 0-10
-  }},
-  "feedback": ["..."],
-  "improved_version": "..."
-}}
-
-Regles :
-- Scores entiers entre 0 et 10. Anchores sur le bareme ci-dessus.
-- 3 a 6 points de feedback concrets et actionnables (pas de compliments vides).
-- improved_version : version amelioree respectant la plage de mots.
-- Sortie : JSON valide uniquement.
+Réponds EXACTEMENT dans ce format, en français, sans Markdown, sans LaTeX, sans rien avant ni après :
+NIVEAU: <A1|A2|B1|B2|C1|C2>
+STRUCTURE: <0-10>
+GRAMMAIRE: <0-10>
+COHERENCE: <0-10>
+VOCABULAIRE: <0-10>
+POINTS A AMELIORER:
+- <3 à 6 points concrets>
+VERSION AMELIOREE:
+<version améliorée du texte, entre {spec['min_words']} et {spec['max_words']} mots>
 """
 
-    payload = _generate_json(prompt, temperature=0.3)
-    scores = payload.get("scores", {}) if isinstance(payload.get("scores", {}), dict) else {}
 
-    def _clamp(v: object) -> int:
-        try:
-            return max(0, min(10, int(float(v))))  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            return 0
+def _level_from_average(average: float) -> str:
+    if average < 3:
+        return "A1"
+    if average < 5:
+        return "A2"
+    if average < 7:
+        return "B1"
+    if average < 8.5:
+        return "B2"
+    if average < 9.5:
+        return "C1"
+    return "C2"
 
-    feedback = payload.get("feedback", [])
-    if isinstance(feedback, str):
-        feedback = [item.strip() for item in feedback.split("-") if item.strip()]
-    feedback = [str(item).strip() for item in feedback if str(item).strip()]
 
+def parse_writing_evaluation_text(text: str) -> dict[str, Any]:
+    """Parse the streamed line format. Missing parts are None/empty; `complete` tells if all scores were found."""
+    level: str | None = None
+    scores: dict[str, int | None] = {key: None for key in _EVAL_SCORE_KEYS}
+    feedback_lines: list[str] = []
+    improved_lines: list[str] = []
+    section = ""
+    for line in text.splitlines():
+        if section == "improved":
+            improved_lines.append(line)
+            continue
+        upper = _strip_accents_upper(line.strip())
+        header = re.match(r"^([A-Z ]+?)\s*:\s*(.*)$", upper)
+        if header:
+            name, rest = header.group(1).strip(), header.group(2).strip()
+            if name == "NIVEAU":
+                found = re.search(r"\b(A1|A2|B1|B2|C1|C2)\b", rest)
+                level = found.group(1) if found else level
+                section = ""
+                continue
+            matched_score = next((k for k, label in _EVAL_SCORE_KEYS.items() if name == label), None)
+            if matched_score:
+                number = re.search(r"\d+(?:[.,]\d+)?", rest)
+                if number:
+                    scores[matched_score] = max(0, min(10, round(float(number.group(0).replace(",", ".")))))
+                section = ""
+                continue
+            if name.startswith("POINTS"):
+                section = "feedback"
+                continue
+            if name.startswith("VERSION AMELIOREE"):
+                section = "improved"
+                original_rest = line.split(":", 1)[1].strip() if ":" in line else ""
+                if original_rest:
+                    improved_lines.append(original_rest)
+                continue
+        if section == "feedback":
+            feedback_lines.append(line)
     return {
-        "level": str(payload.get("level", "A2/B1")).strip(),
-        "scores": {
-            "structure": _clamp(scores.get("structure")),
-            "grammar": _clamp(scores.get("grammar")),
-            "coherence": _clamp(scores.get("coherence")),
-            "vocab": _clamp(scores.get("vocab")),
-        },
-        "feedback": feedback,
-        "improved_version": str(payload.get("improved_version", "")).strip(),
+        "level": level,
+        "scores": scores,
+        "feedback": _split_feedback("\n".join(feedback_lines)),
+        "improved_version": "\n".join(improved_lines).strip(),
+        "complete": level is not None and all(v is not None for v in scores.values()),
     }
+
+
+def _empty_writing_evaluation() -> dict[str, object]:
+    return {
+        "level": "A1",
+        "scores": {key: 0 for key in _EVAL_SCORE_KEYS},
+        "feedback": ["Aucune production : rédigez votre réponse avant de demander une évaluation."],
+        "improved_version": "",
+    }
+
+
+def _apply_writing_guards(result: dict[str, Any], task_type: str, response_text: str) -> dict[str, object]:
+    spec = WRITING_TASK_SPECS.get(task_type, _WRITING_DEFAULT_SPEC)
+    scores = {key: int(result["scores"].get(key) or 0) for key in _EVAL_SCORE_KEYS}
+    words = _count_words(response_text)
+    if words < spec["min_words"] * 0.5:
+        scores = {key: min(value, 4) for key, value in scores.items()}
+    elif words < spec["min_words"]:
+        scores["structure"] = min(scores["structure"], 5)
+    average = sum(scores.values()) / len(scores)
+    computed = _level_from_average(average)
+    level = result.get("level")
+    # Never above what the scores justify; a slightly stricter model judgement (one band lower) is kept.
+    if level not in _LEVELS or not (0 <= _LEVELS.index(computed) - _LEVELS.index(level) <= 1):
+        level = computed
+    feedback = [str(item) for item in result.get("feedback") or []]
+    if words < spec["min_words"]:
+        feedback.insert(0, f"Longueur insuffisante : {words} mots pour {spec['min_words']} à {spec['max_words']} attendus.")
+    elif words > spec["max_words"] * 1.2:
+        feedback.insert(0, f"Texte trop long : {words} mots pour {spec['min_words']} à {spec['max_words']} attendus.")
+    return {
+        "level": level,
+        "scores": scores,
+        "feedback": feedback,
+        "improved_version": str(result.get("improved_version") or "").strip(),
+    }
+
+
+def stream_writing_evaluation_tokens(task_type: str, prompt_text: str, response_text: str):
+    if not response_text.strip():
+        return
+    _ensure_api_key()
+    for chunk in _gemini_generate(
+        _writing_eval_prompt(task_type, prompt_text, response_text), stream=True, temperature=0.2
+    ):
+        token = getattr(chunk, "text", None)
+        if token:
+            yield token
+
+
+def finalize_writing_evaluation(
+    streamed_text: str, task_type: str, prompt_text: str, response_text: str
+) -> dict[str, object]:
+    """Normalize the streamed evaluation; one non-streamed retry if the stream was malformed."""
+    if not response_text.strip():
+        return _empty_writing_evaluation()
+    parsed = parse_writing_evaluation_text(streamed_text)
+    if not parsed["complete"]:
+        retry_text = _generate_text(_writing_eval_prompt(task_type, prompt_text, response_text), temperature=0.1)
+        retry = parse_writing_evaluation_text(retry_text)
+        if not retry["complete"]:
+            raise RuntimeError("Writing evaluation could not be parsed.")
+        parsed = retry
+    return _apply_writing_guards(parsed, task_type, response_text)
+
+
+def evaluate_tcf_writing_task(
+    task_type: str,
+    prompt_text: str,
+    response_text: str
+) -> dict[str, object]:
+    """Evaluate a TCF Canada writing submission. task_type: 'task1' | 'task2' | 'task3'."""
+    if not response_text.strip():
+        return _empty_writing_evaluation()
+    text = "".join(stream_writing_evaluation_tokens(task_type, prompt_text, response_text))
+    return finalize_writing_evaluation(text, task_type, prompt_text, response_text)
+
+
+def _writing_step_prompt(task_type: str, step: str, prompt_text: str, text: str) -> str:
+    spec = WRITING_TASK_SPECS.get(task_type, _WRITING_DEFAULT_SPEC)
+    return f"""Tu es coach TCF Canada en expression écrite. Donne un retour honnête et précis sur une étape de rédaction.
+
+{spec['label']}
+Étape : {step}
+Consigne :
+{prompt_text}
+
+Brouillon du candidat pour cette étape :
+{text}
+
+Réponds EXACTEMENT dans ce format, en français, sans Markdown ni LaTeX :
+- <2 à 4 points concis : cite l'extrait concerné et propose la correction>
+VERSION AMELIOREE:
+<version légèrement améliorée de cette étape>
+"""
+
+
+def stream_writing_step_feedback(task_type: str, step: str, prompt_text: str, text: str):
+    if not text.strip():
+        yield "- Écrivez quelques phrases pour cette étape avant de demander un retour."
+        return
+    _ensure_api_key()
+    for chunk in _gemini_generate(_writing_step_prompt(task_type, step, prompt_text, text), stream=True, temperature=0.3):
+        token = getattr(chunk, "text", None)
+        if token:
+            yield token
+
+
+def parse_writing_step_feedback(text: str) -> dict[str, object]:
+    parts = re.split(r"(?im)^\s*VERSION\s+AM[ÉE]LIOR[ÉE]E\s*:\s*", text, maxsplit=1)
+    feedback = _split_feedback(parts[0])
+    improved = parts[1].strip() if len(parts) > 1 else ""
+    return {"feedback": feedback, "improved_version": improved}
 
 
 def evaluate_tcf_writing_step(
@@ -1019,42 +1256,10 @@ def evaluate_tcf_writing_step(
     prompt_text: str,
     text: str
 ) -> dict[str, object]:
-    prompt = f"""Tu es un coach TCF Canada en expression ecrite. Donne un retour sur une etape de redaction.
-
-Type de tache : {task_type}
-Etape : {step}
-Consigne :
-{prompt_text}
-
-Brouillon du candidat pour cette etape :
-{text}
-
-Retourne un JSON avec :
-{{
-  "feedback": ["..."],
-  "improved_version": "..."
-}}
-
-EXEMPLE DE SORTIE (ne pas reproduire cet exemple) :
-{{
-  "feedback": ["Ajouter une formule de politesse", "Preciser la demande"],
-  "improved_version": "..."
-}}
-
-Regles :
-- 2 a 4 points de retour concis et actionnables.
-- improved_version : version legerement amelioree de l'etape.
-- Sortie : JSON valide uniquement.
-"""
-    payload = _generate_json(prompt, temperature=0.4)
-    feedback = payload.get("feedback", [])
-    if isinstance(feedback, str):
-        feedback = [item.strip() for item in feedback.split("-") if item.strip()]
-    feedback = [str(item).strip() for item in feedback if str(item).strip()]
-    return {
-        "feedback": feedback,
-        "improved_version": str(payload.get("improved_version", "")).strip(),
-    }
+    result = parse_writing_step_feedback("".join(stream_writing_step_feedback(task_type, step, prompt_text, text)))
+    if not result["feedback"]:
+        result["feedback"] = ["Retour indisponible pour cette étape. Réessayez dans un instant."]
+    return result
 
 
 def _speaking_candidate_text(history: list[dict[str, str]]) -> str:
@@ -1341,14 +1546,55 @@ Regles :
     }
 
 
-def translate_passage(text: str) -> str:
-    clean = text.strip()
-    prompt = (
+def _translate_prompt(text: str, direction: str = "fr-en") -> str:
+    if direction == "en-fr":
+        return (
+            "Translate the following English text to natural French. "
+            "Output only the French translation — no explanations, no labels.\n\n"
+            f"English text:\n{text}"
+        )
+    return (
         "Translate the following French text to English. "
         "Output only the English translation — no explanations, no labels.\n\n"
-        f"French text:\n{clean}"
+        f"French text:\n{text}"
     )
-    return _generate_text(prompt, temperature=0.2).strip()
+
+
+def translate_passage(text: str) -> str:
+    return _generate_text(_translate_prompt(text.strip()), temperature=0.2).strip()
+
+
+def stream_translate(text: str, direction: str = "fr-en"):
+    clean = text.strip()
+    if not clean:
+        return
+    _ensure_api_key()
+    for chunk in _gemini_generate(_translate_prompt(clean, direction), stream=True, temperature=0.2):
+        token = getattr(chunk, "text", None)
+        if token:
+            yield token
+
+
+def stream_explain_text(text: str):
+    """Phrase Helper explanation streamed as short Markdown sections (renders progressively in the UI)."""
+    clean = text.strip()
+    if not clean:
+        return
+    prompt = f"""Tu aides un apprenant qui prépare le TCF Canada. Explique ce mot, cette expression ou ce passage français.
+
+Texte : « {clean} »
+
+Réponds EXACTEMENT avec ces quatre sections, dans cet ordre, en Markdown simple, sans LaTeX ni rien d'autre :
+**Sens** : 1 à 2 phrases simples en français.
+**Explication** : usage, registre et nuance, en français accessible (2 à 3 phrases).
+**Traduction** : traduction anglaise courte.
+**Exemple** : une phrase d'exemple naturelle en français.
+"""
+    _ensure_api_key()
+    for chunk in _gemini_generate(prompt, stream=True, temperature=0.4):
+        token = getattr(chunk, "text", None)
+        if token:
+            yield token
 
 
 def explain_word(word: str) -> Any:
