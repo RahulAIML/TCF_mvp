@@ -408,14 +408,25 @@ def _extract_dialogue_speakers(script: str) -> list[str]:
     return seen if len(seen) >= 2 else []
 
 
-_DIALOGUE_VOICE_IDS = ["fr-FR-male-1", "fr-FR-female-1", "fr-FR-male-2", "fr-FR-female-2"]
+# All (speaker-A, speaker-B) voice pairs — always opposite genders, covering all 4 EL voices.
+_DIALOGUE_VOICE_PAIRS = [
+    ("fr-FR-male-1",   "fr-FR-female-1"),
+    ("fr-FR-female-1", "fr-FR-male-1"),
+    ("fr-FR-male-2",   "fr-FR-female-2"),
+    ("fr-FR-female-2", "fr-FR-male-2"),
+    ("fr-FR-male-1",   "fr-FR-female-2"),
+    ("fr-FR-female-2", "fr-FR-male-1"),
+    ("fr-FR-male-2",   "fr-FR-female-1"),
+    ("fr-FR-female-1", "fr-FR-male-2"),
+]
 
 
 def _generate_dialogue_audio_segmented(script: str, speakers: list[str], question_number: int, session_id: str | None) -> str:
     """Generate dialogue TTS by synthesising each speaker's lines separately with distinct voices."""
     from tts_service import synthesize_elevenlabs as _tts_synthesize
 
-    speaker_voice = {name: _DIALOGUE_VOICE_IDS[i % len(_DIALOGUE_VOICE_IDS)] for i, name in enumerate(speakers)}
+    voice_pair = random.choice(_DIALOGUE_VOICE_PAIRS)
+    speaker_voice = {name: voice_pair[i % 2] for i, name in enumerate(speakers)}
 
     segments: list[tuple[str, str]] = []
     current_speaker: str | None = None
@@ -836,28 +847,46 @@ def generate_tcf_exam_question(
 _LISTENING_FORMATS = {
     "C2": [
         "un entretien entre un journaliste et un expert (deux voix distinctes)",
-        "un extrait de documentaire avec un narrateur",
+        "un extrait de documentaire avec un narrateur principal",
         "une discussion entre deux professionnels sur un sujet de société",
+        "une conférence enregistrée avec un intervenant spécialisé",
+        "un podcast analytique avec deux animateurs qui débattent",
+        "un témoignage long d'un acteur impliqué dans un événement",
     ],
     "C1": [
         "un reportage radio avec un journaliste et un témoin",
-        "un débat entre deux intervenants",
-        "un entretien professionnel approfondi",
+        "un débat entre deux intervenants sur un enjeu de société",
+        "un entretien professionnel approfondi avec un expert",
+        "une émission culturelle avec un animateur et un invité",
+        "un podcast d'actualité avec deux animateurs aux opinions différentes",
+        "une présentation d'une initiative ou d'un projet innovant",
+        "une conversation entre un chercheur et un journaliste",
     ],
     "B2": [
-        "une interview radio d'un professionnel",
-        "un reportage sur un sujet culturel ou social",
-        "une conversation téléphonique entre deux collègues",
+        "une interview radio d'un professionnel sur son métier",
+        "un reportage sur un sujet environnemental ou technologique",
+        "une conversation téléphonique entre deux collègues de travail",
+        "une émission de radio avec un animateur et un auditeur en direct",
+        "un message d'information officiel avec plusieurs détails importants",
+        "une conversation entre deux amis sur un projet ou une décision",
+        "un bulletin d'informations radiophonique court sur l'actualité locale",
+        "une discussion entre un client et un conseiller professionnel",
+        "un témoignage personnel enregistré sur une expérience vécue",
     ],
     "B1": [
-        "un dialogue entre deux amis qui planifient quelque chose",
-        "un message sur répondeur téléphonique",
+        "un dialogue entre deux amis qui planifient quelque chose ensemble",
+        "un message sur répondeur téléphonique avec des instructions",
         "une émission de radio courte sur la vie quotidienne",
+        "une conversation dans un magasin ou un bureau entre deux personnes",
+        "un message vocal laissé par un membre de la famille",
+        "une annonce dans un lieu public avec des informations pratiques",
     ],
     "A2": [
         "un court dialogue entre deux personnes dans un lieu public",
         "une annonce publique simple (gare, magasin, école)",
         "un message vocal court laissé à un ami",
+        "une conversation simple entre deux voisins ou collègues",
+        "un message d'information très court sur une activité ou un horaire",
     ],
     "A1": [
         "un échange très court entre deux personnes (bonjour, merci, au revoir)",
@@ -980,13 +1009,24 @@ def generate_tcf_listening_question(
 
     is_dialogue = any(kw in chosen_format for kw in [
         "dialogue", "voix", "deux personnes", "journaliste et",
-        "intervenants", "collègues", "amis", "témoin"
+        "intervenants", "collègues", "amis", "témoin", "animateurs",
+        "animateur et", "client et", "chercheur et", "expert", "invité",
+        "deux collègues", "deux amis", "deux animateurs", "deux voisins"
     ])
 
     if is_dialogue:
+        _DIALOGUE_NAME_PAIRS = [
+            ("Marc", "Sophie"), ("Thomas", "Isabelle"), ("Pierre", "Marie"),
+            ("Julien", "Claire"), ("Antoine", "Léa"), ("Nicolas", "Camille"),
+            ("Luc", "Emma"), ("Paul", "Nathalie"), ("Simon", "Julie"),
+            ("David", "Laura"), ("Éric", "Sandrine"), ("François", "Céline"),
+        ]
+        name_a, name_b = random.choice(_DIALOGUE_NAME_PAIRS)
         script_instruction = (
-            f"Le script doit être un dialogue entre DEUX personnes avec des répliques alternées. "
-            f"Format : 'Personne A : ...' et 'Personne B : ...'. "
+            f"Le script doit être un dialogue naturel entre DEUX personnes avec des répliques alternées. "
+            f"Les personnages s'appellent {name_a} et {name_b}. "
+            f"Format : '{name_a} : ...' et '{name_b} : ...'. "
+            f"Chaque réplique doit sonner spontanée et authentique. "
             f"Au total {spec['word_count']}."
         )
     else:
