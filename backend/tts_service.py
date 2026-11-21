@@ -299,16 +299,35 @@ def _clean_edges(pcm_bytes: bytes, voice_id: str) -> bytes:
         return pcm_bytes
 
 
+_GEMINI_TTS_TIMEOUT_MS = int(os.getenv("GEMINI_TTS_TIMEOUT_MS", "60000"))
+_gemini_tts_client = None
+_gemini_tts_client_lock = threading.Lock()
+
+
+def _get_gemini_tts_client():
+    """Shared client with a request timeout, so a stalled TTS call can never hang a job forever."""
+    global _gemini_tts_client
+    from google import genai as genai_client
+    from google.genai import types
+    with _gemini_tts_client_lock:
+        if _gemini_tts_client is None or _gemini_tts_client[0] is not genai_client:
+            kwargs = {"api_key": _GEMINI_API_KEY}
+            http_options_cls = getattr(types, "HttpOptions", None)
+            if http_options_cls is not None:
+                kwargs["http_options"] = http_options_cls(timeout=_GEMINI_TTS_TIMEOUT_MS)
+            _gemini_tts_client = (genai_client, genai_client.Client(**kwargs))
+        return _gemini_tts_client[1]
+
+
 def _generate_via_gemini(text: str, voice: VoiceConfig) -> AudioResult:
     if not _GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY not configured.")
     try:
-        from google import genai as genai_client
         from google.genai import types
     except ImportError as exc:
         raise RuntimeError("google-genai package not installed.") from exc
 
-    client = genai_client.Client(api_key=_GEMINI_API_KEY)
+    client = _get_gemini_tts_client()
     logger.info("Gemini TTS: voice=%s chars=%s", voice["id"], len(text))
     response = client.models.generate_content(
         model=_GEMINI_TTS_MODEL,
@@ -343,6 +362,16 @@ def synthesize_elevenlabs(text: str, voice_id: str) -> AudioResult:
     if len(text) > MAX_TEXT_LENGTH:
         raise ValueError(f"Text exceeds maximum length of {MAX_TEXT_LENGTH} characters.")
     return _generate_via_elevenlabs(text, get_voice(voice_id))
+
+
+def synthesize_gemini(text: str, voice_id: str) -> AudioResult:
+    """Generate audio via Gemini only (no ElevenLabs fallback) with the voice's Gemini counterpart."""
+    text = text.strip()
+    if not text:
+        raise ValueError("Text must not be empty.")
+    if len(text) > MAX_TEXT_LENGTH:
+        raise ValueError(f"Text exceeds maximum length of {MAX_TEXT_LENGTH} characters.")
+    return _generate_via_gemini(text, get_voice(voice_id))
 
 
 def synthesize(text: str, voice_id: str) -> AudioResult:

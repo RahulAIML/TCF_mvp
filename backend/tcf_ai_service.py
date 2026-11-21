@@ -10,17 +10,14 @@ Standalone AI service for the TCF Canada exam platform.
 from __future__ import annotations
 
 import hashlib
-import io
 import logging
 import os
 import random
 import re
 import uuid
-import wave
 from collections import deque
 from typing import Any, Dict, Tuple
 
-import requests
 from dotenv import load_dotenv
 from google import genai as genai_client
 from google.genai import types
@@ -30,7 +27,6 @@ from schemas import TcfExamQuestion, ListeningQuestionResponse
 load_dotenv()
 
 logger = logging.getLogger("tcf.tts")
-_ELEVENLABS_SESSION = requests.Session()
 
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
@@ -395,13 +391,6 @@ _tcf_exam_hashes_global: dict[str, deque[str]] = {}
 _tcf_exam_hashes_all_global: deque[str] = deque(maxlen=_TCF_EXAM_HASHES_PER_SESSION_ALL)
 _tcf_exam_text_hashes_all_global: deque[str] = deque(maxlen=_TCF_EXAM_HASHES_PER_SESSION_ALL)
 
-_tcf_listening_hashes_by_session: dict[str, deque[str]] = {}
-_tcf_listening_hashes_all_by_session: dict[str, deque[str]] = {}
-_tcf_listening_script_hashes_by_session: dict[str, deque[str]] = {}
-_tcf_listening_sessions: deque[str] = deque()
-_tcf_listening_hashes_global: deque[str] = deque(maxlen=200)
-_tcf_listening_hashes_all_global: deque[str] = deque(maxlen=200)
-_tcf_listening_script_hashes_global: deque[str] = deque(maxlen=200)
 
 _TCF_PASSAGE_HASHES: deque[str] = deque(maxlen=25)
 
@@ -427,181 +416,38 @@ def _ensure_elevenlabs_config() -> None:
         raise RuntimeError("Missing ELEVENLABS_VOICE_ID for ElevenLabs TTS.")
 
 
-# Matches "Speaker : text" at the start of a line — catches "Personne A :", "Journaliste :", "Marc :", etc.
-_SPEAKER_LINE_RE = re.compile(r"^([\wÀ-ž][\wÀ-ž\s]{0,30}?)\s*:", re.MULTILINE)
-_DIALOGUE_VOICE_POOL = ["Puck", "Aoede", "Fenrir", "Leda", "Kore", "Charon"]
-
-
-def _extract_dialogue_speakers(script: str) -> list[str]:
-    """Return unique speaker names in order of first appearance, or [] if not a dialogue."""
-    seen: list[str] = []
-    for m in _SPEAKER_LINE_RE.finditer(script):
-        name = m.group(1).strip()
-        if name and name not in seen:
-            seen.append(name)
-    return seen if len(seen) >= 2 else []
-
-
-# All (speaker-A, speaker-B) voice pairs — always opposite genders, covering all 4 EL voices.
-_DIALOGUE_VOICE_PAIRS = [
-    ("fr-FR-male-1",   "fr-FR-female-1"),
-    ("fr-FR-female-1", "fr-FR-male-1"),
-    ("fr-FR-male-2",   "fr-FR-female-2"),
-    ("fr-FR-female-2", "fr-FR-male-2"),
-    ("fr-FR-male-1",   "fr-FR-female-2"),
-    ("fr-FR-female-2", "fr-FR-male-1"),
-    ("fr-FR-male-2",   "fr-FR-female-1"),
-    ("fr-FR-female-1", "fr-FR-male-2"),
-]
-
-
-def _generate_dialogue_audio_segmented(script: str, speakers: list[str], question_number: int, session_id: str | None) -> str:
-    """Generate dialogue TTS by synthesising each speaker's lines separately with distinct voices."""
-    from tts_service import synthesize_elevenlabs as _tts_synthesize
-
-    voice_pair = random.choice(_DIALOGUE_VOICE_PAIRS)
-    speaker_voice = {name: voice_pair[i % 2] for i, name in enumerate(speakers)}
-
-    segments: list[tuple[str, str]] = []
-    current_speaker: str | None = None
-    current_lines: list[str] = []
-
-    for line in script.splitlines():
-        m = _SPEAKER_LINE_RE.match(line)
-        if m:
-            name = m.group(1).strip()
-            if name in speaker_voice:
-                if current_speaker and current_lines:
-                    segments.append((current_speaker, " ".join(current_lines)))
-                current_speaker = name
-                rest = line[m.end():].strip()
-                current_lines = [rest] if rest else []
-                continue
-        if current_speaker and line.strip():
-            current_lines.append(line.strip())
-    if current_speaker and current_lines:
-        segments.append((current_speaker, " ".join(current_lines)))
-
-    if not segments:
-        raise RuntimeError("No dialogue segments found in script.")
-
-    logger.info("Dialogue TTS (segmented): %d segments, speaker→voice=%s", len(segments), speaker_voice)
-
-    from concurrent.futures import ThreadPoolExecutor
-
-    jobs = [(text, speaker_voice[speaker]) for speaker, text in segments if text.strip()]
-    with ThreadPoolExecutor(max_workers=min(5, max(1, len(jobs)))) as pool:
-        results = list(pool.map(lambda job: _tts_synthesize(job[0], job[1]), jobs))
-    audio_parts: list[bytes] = [r["data"] for r in results]
-    ext = results[-1]["extension"] if results else "mp3"
-
-    if not audio_parts:
-        raise RuntimeError("No audio segments generated.")
-
-    os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
-    combined = b"".join(audio_parts)
-    file_name = f"tcf_audio_{question_number}_{session_id or 'global'}_{uuid.uuid4().hex[:8]}.{ext}"
-    with open(os.path.join(AUDIO_STORAGE_PATH, file_name), "wb") as f:
-        f.write(combined)
-
-    logger.info("Dialogue TTS complete: %d segments → %s (%d bytes)", len(audio_parts), file_name, len(combined))
-    return f"/audio/{file_name}"
-
-
-def _generate_gemini_tts_audio(script: str, question_number: int, session_id: str | None) -> str:
-    speakers = _extract_dialogue_speakers(script)
-    if speakers:
-        return _generate_dialogue_audio_segmented(script, speakers, question_number, session_id)
-
-    _ensure_api_key()
-    os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
-    client = genai_client.Client(api_key=API_KEY)
-
-    speech_config = types.SpeechConfig(
-            voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                    voice_name=random.choice(["Kore", "Charon", "Fenrir", "Aoede", "Puck", "Leda"])
-                )
-            )
-        )
-
-    try:
-        response = client.models.generate_content(
-            model=GEMINI_TTS_MODEL,
-            contents=script,
-            config=types.GenerateContentConfig(
-                response_modalities=["AUDIO"],
-                speech_config=speech_config,
-            )
-        )
-    except Exception as error:
-        logger.error("Gemini TTS request failed: %s", error)
-        raise RuntimeError(f"Gemini TTS failed with model '{GEMINI_TTS_MODEL}': {error}") from error
-
-    try:
-        inline_data = response.candidates[0].content.parts[0].inline_data
-        audio_bytes = inline_data.data
-    except Exception as error:
-        logger.error("Gemini TTS returned no audio data: %s", error)
-        raise RuntimeError("Gemini TTS returned no audio data.") from error
-
-    buffer = io.BytesIO()
-    with wave.open(buffer, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(24000)
-        wf.writeframes(audio_bytes)
-    wav_bytes = buffer.getvalue()
-
-    file_name = f"tcf_audio_{question_number}_{session_id or 'global'}_{uuid.uuid4().hex[:8]}.wav"
-    file_path = os.path.join(AUDIO_STORAGE_PATH, file_name)
-    with open(file_path, "wb") as audio_file:
-        audio_file.write(wav_bytes)
-
-    logger.info("Gemini TTS success: bytes=%s file=%s", len(wav_bytes), file_name)
-    return f"/audio/{file_name}"
-
-
 def _generate_tts_audio(script: str, question_number: int, session_id: str | None) -> str:
-    """Generate TTS audio. Dialogue scripts get per-speaker voices; monologues use ElevenLabs then Gemini."""
-    speakers = _extract_dialogue_speakers(script)
-    if speakers:
-        return _generate_dialogue_audio_segmented(script, speakers, question_number, session_id)
-
-    if not ELEVENLABS_API_KEY or not ELEVENLABS_VOICE_ID:
-        return _generate_gemini_tts_audio(script, question_number, session_id)
+    """Single-voice audio (speaking examiner replies). ElevenLabs within the shared cap, Gemini as fallback."""
+    import tts_service
 
     os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
-    payload = {
-        "text": script,
-        "model_id": "eleven_multilingual_v2",
-        "optimize_streaming_latency": ELEVENLABS_OPTIMIZE_LATENCY,
-        "output_format": ELEVENLABS_OUTPUT_FORMAT
-    }
-    headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
+    data: bytes
+    ext = "mp3"
+    if ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID:
+        try:
+            response = tts_service.elevenlabs_post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
+                {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
+                {
+                    "text": script,
+                    "model_id": "eleven_multilingual_v2",
+                    "optimize_streaming_latency": ELEVENLABS_OPTIMIZE_LATENCY,
+                    "output_format": ELEVENLABS_OUTPUT_FORMAT,
+                },
+                timeout=(5, 40),
+            )
+            data = response.content
+        except Exception as error:
+            logger.warning("ElevenLabs TTS failed: %s. Falling back to Gemini TTS.", error)
+            result = tts_service.synthesize_gemini(script, "fr-FR-female-1")
+            data, ext = result["data"], result["extension"]
+    else:
+        result = tts_service.synthesize_gemini(script, "fr-FR-female-1")
+        data, ext = result["data"], result["extension"]
 
-    logger.info(
-        "ElevenLabs TTS request: question=%s session=%s chars=%s",
-        question_number, session_id or "global", len(script)
-    )
-
-    try:
-        response = _ELEVENLABS_SESSION.post(url, headers=headers, json=payload, timeout=30)
-        response.raise_for_status()
-    except requests.RequestException as error:
-        logger.warning("ElevenLabs TTS failed: %s. Falling back to Gemini TTS.", error)
-        return _generate_gemini_tts_audio(script, question_number, session_id)
-
-    file_name = f"tcf_audio_{question_number}_{session_id or 'global'}_{uuid.uuid4().hex[:8]}.mp3"
-    file_path = os.path.join(AUDIO_STORAGE_PATH, file_name)
-    with open(file_path, "wb") as audio_file:
-        audio_file.write(response.content)
-
-    logger.info(
-        "ElevenLabs TTS success: status=%s bytes=%s file=%s",
-        response.status_code, len(response.content), file_name
-    )
+    file_name = f"tcf_audio_{question_number}_{session_id or 'global'}_{uuid.uuid4().hex[:8]}.{ext}"
+    with open(os.path.join(AUDIO_STORAGE_PATH, file_name), "wb") as audio_file:
+        audio_file.write(data)
     return f"/audio/{file_name}"
 
 
@@ -860,124 +706,9 @@ def generate_tcf_exam_question(
     ) from last_error
 
 
-# ── Listening format pools by CEFR band ─────────────────────────────────────
-
-_LISTENING_FORMATS = {
-    "C2": [
-        "un entretien entre un journaliste et un expert (deux voix distinctes)",
-        "un extrait de documentaire avec un narrateur principal",
-        "une discussion entre deux professionnels sur un sujet de société",
-        "une conférence enregistrée avec un intervenant spécialisé",
-        "un podcast analytique avec deux animateurs qui débattent",
-        "un témoignage long d'un acteur impliqué dans un événement",
-    ],
-    "C1": [
-        "un reportage radio avec un journaliste et un témoin",
-        "un débat entre deux intervenants sur un enjeu de société",
-        "un entretien professionnel approfondi avec un expert",
-        "une émission culturelle avec un animateur et un invité",
-        "un podcast d'actualité avec deux animateurs aux opinions différentes",
-        "une présentation d'une initiative ou d'un projet innovant",
-        "une conversation entre un chercheur et un journaliste",
-    ],
-    "B2": [
-        "une interview radio d'un professionnel sur son métier",
-        "un reportage sur un sujet environnemental ou technologique",
-        "une conversation téléphonique entre deux collègues de travail",
-        "une émission de radio avec un animateur et un auditeur en direct",
-        "un message d'information officiel avec plusieurs détails importants",
-        "une conversation entre deux amis sur un projet ou une décision",
-        "un bulletin d'informations radiophonique court sur l'actualité locale",
-        "une discussion entre un client et un conseiller professionnel",
-        "un témoignage personnel enregistré sur une expérience vécue",
-    ],
-    "B1": [
-        "un dialogue entre deux amis qui planifient quelque chose ensemble",
-        "un message sur répondeur téléphonique avec des instructions",
-        "une émission de radio courte sur la vie quotidienne",
-        "une conversation dans un magasin ou un bureau entre deux personnes",
-        "un message vocal laissé par un membre de la famille",
-        "une annonce dans un lieu public avec des informations pratiques",
-    ],
-    "A2": [
-        "un court dialogue entre deux personnes dans un lieu public",
-        "une annonce publique simple (gare, magasin, école)",
-        "un message vocal court laissé à un ami",
-        "une conversation simple entre deux voisins ou collègues",
-        "un message d'information très court sur une activité ou un horaire",
-    ],
-    "A1": [
-        "un échange très court entre deux personnes (bonjour, merci, au revoir)",
-        "une annonce d'une seule phrase simple",
-        "un message court de 10 à 15 mots",
-    ],
-}
-
-_LISTENING_SPECS = {
-    "C2": {
-        "word_count": "80 à 110 mots",
-        "complexity": (
-            "Vocabulaire avancé et nuancé, NATUREL (pas de jargon artificiel). "
-            "Registre formel soutenu. L'information-clé est implicite ou déduite du contexte. "
-            "Exemples de vocabulaire C2 NATUREL : 'exacerber', 'incontournable', 'pragmatique', "
-            "'contreproductif'. ÉVITER : néologismes académiques inventés, jargon incompréhensible."
-        ),
-        "answer_difficulty": "inférence ou implication non explicitée dans le texte",
-    },
-    "C1": {
-        "word_count": "65 à 90 mots",
-        "complexity": (
-            "Vocabulaire riche et varié, registre formel. "
-            "Arguments développés, quelques nuances implicites. "
-            "Exemples : 'engager', 'valoriser', 'préconiser', 'envisager', 'résoudre'."
-        ),
-        "answer_difficulty": "compréhension d'un point de vue ou d'une argumentation",
-    },
-    "B2": {
-        "word_count": "50 à 70 mots",
-        "complexity": (
-            "Vocabulaire courant et varié, quelques mots moins fréquents. "
-            "Registre neutre à formel. Information directe mais avec quelques détails."
-        ),
-        "answer_difficulty": "compréhension d'un fait précis ou d'une opinion exprimée",
-    },
-    "B1": {
-        "word_count": "35 à 55 mots",
-        "complexity": (
-            "Vocabulaire courant, phrases simples et composées. "
-            "Registre neutre ou légèrement informel. Contenu concret de la vie quotidienne."
-        ),
-        "answer_difficulty": "compréhension d'une information factuelle directe",
-    },
-    "A2": {
-        "word_count": "20 à 35 mots",
-        "complexity": (
-            "Vocabulaire très simple et fréquent. Phrases courtes. "
-            "Sujet concret : heure, lieu, prix, activité, personne. "
-            "EXEMPLES de mots A2 : fermer, ouvrir, venir, aller, aujourd'hui, demain, euro, heure."
-        ),
-        "answer_difficulty": "compréhension littérale d'une information très simple",
-    },
-    "A1": {
-        "word_count": "10 à 20 mots MAXIMUM",
-        "complexity": (
-            "Vocabulaire de base uniquement : bonjour, merci, oui, non, s'il vous plaît, "
-            "aujourd'hui, demain, fermé, ouvert, ici, là. "
-            "UNE seule idée par échange. Phrases de 3 à 7 mots."
-        ),
-        "answer_difficulty": "compréhension immédiate d'un seul mot ou d'une seule idée",
-    },
-}
-
-
 def _infer_cefr_from_question_number(question_number: int) -> str:
-    # TCF Canada: progressive A1→C2 (easiest first)
-    if question_number <= 13:
-        return "A2"
-    elif question_number <= 26:
-        return "B1"
-    else:
-        return "C1"
+    from listening_service import level_for_question
+    return level_for_question(question_number)
 
 
 def _shuffle_answer_options(normalized: dict) -> dict:
@@ -1007,126 +738,9 @@ def generate_tcf_listening_question(
     defer_audio: bool = False,
     target_level: str | None = None,
 ) -> ListeningQuestionResponse:
-    """
-    Generate one TCF Canada listening question.
-    39 questions, 35 minutes, progressive difficulty A1→C2.
-    target_level overrides CEFR inference from question_number (used in practice mode).
-    """
-    if target_level and target_level.upper() in _LISTENING_SPECS:
-        cefr = target_level.upper()
-    else:
-        cefr = _infer_cefr_from_question_number(question_number)
-
-    spec = _LISTENING_SPECS[cefr]
-    formats = _LISTENING_FORMATS[cefr]
-    chosen_format = random.choice(formats)
-
-    domain = _pick_domain()
-    freshness_token = _freshness_token()
-    place, context = _scenario_from_seed(freshness_token)
-
-    # Pre-assign the correct answer position uniformly — prevents A/B model bias.
-    target_correct_letter = random.choice(["A", "B", "C", "D"])
-
-    is_dialogue = any(kw in chosen_format for kw in [
-        "dialogue", "voix", "deux personnes", "journaliste et",
-        "intervenants", "collègues", "amis", "témoin", "animateurs",
-        "animateur et", "client et", "chercheur et", "expert", "invité",
-        "deux collègues", "deux amis", "deux animateurs", "deux voisins"
-    ])
-
-    if is_dialogue:
-        _DIALOGUE_NAME_PAIRS = [
-            ("Marc", "Sophie"), ("Thomas", "Isabelle"), ("Pierre", "Marie"),
-            ("Julien", "Claire"), ("Antoine", "Léa"), ("Nicolas", "Camille"),
-            ("Luc", "Emma"), ("Paul", "Nathalie"), ("Simon", "Julie"),
-            ("David", "Laura"), ("Éric", "Sandrine"), ("François", "Céline"),
-        ]
-        name_a, name_b = random.choice(_DIALOGUE_NAME_PAIRS)
-        script_instruction = (
-            f"Le script doit être un dialogue naturel entre DEUX personnes avec des répliques alternées. "
-            f"Les personnages s'appellent {name_a} et {name_b}. "
-            f"Format : '{name_a} : ...' et '{name_b} : ...'. "
-            f"Chaque réplique doit sonner spontanée et authentique. "
-            f"Au total {spec['word_count']}."
-        )
-    else:
-        script_instruction = (
-            f"Le script doit être {chosen_format}. "
-            f"Au total {spec['word_count']}."
-        )
-
-    prompt = f"""Tu es un concepteur expert d'épreuves TCF Canada. Génère UNE question de compréhension orale.
-
-Numéro : {question_number} sur 39
-Niveau CEFR CIBLE : {cefr}
-Format audio : {chosen_format}
-Domaine : {domain}
-Lieu : {place}, contexte : {context}
-Jeton de fraîcheur : {freshness_token} (ne pas inclure dans la sortie)
-
-CONSIGNES DE SCRIPT :
-{script_instruction}
-Complexité linguistique : {spec['complexity']}
-Type de réponse attendue : {spec['answer_difficulty']}
-
-CONSIGNES GÉNÉRALES :
-- Le script doit sonner NATUREL et AUTHENTIQUE, comme une vraie conversation ou émission.
-- NE PAS utiliser de jargon académique inventé ou incompréhensible.
-- Les 4 options de réponse doivent être PLAUSIBLES (pas d'options évidemment fausses).
-- La bonne réponse DOIT être la lettre {target_correct_letter}. Construis les options en conséquence.
-- La bonne réponse doit être {spec['answer_difficulty']}.
-- Écrire des distracteurs crédibles qui testent vraiment la compréhension.
-
-FORMAT DE SORTIE — JSON valide uniquement, PAS de Markdown :
-{{
-  "script": "...",
-  "question": "...",
-  "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
-  "correct_answer": "A ou B ou C ou D",
-  "explanation": "...",
-  "format_type": "dialogue ou monologue ou announcement ou phone_message ou radio_clip"
-}}
-"""
-
-    last_error: Exception | None = None
-    for _ in range(3):
-        try:
-            payload = _generate_json(prompt, temperature=0.85)
-            normalized = _normalize_listening_question(payload)
-            normalized["format_type"] = chosen_format
-
-            normalized = _shuffle_answer_options(normalized)
-
-            fp = _fingerprint(
-                normalized["script"] + normalized["question"] + "".join(normalized["options"])
-            )
-
-            session_cache = _tcf_listening_hashes_by_session.setdefault(
-                session_id or "__global__", deque(maxlen=80)
-            )
-            if fp in session_cache or fp in _tcf_listening_hashes_global:
-                last_error = RuntimeError("Duplicate TCF listening question; retrying.")
-                continue
-
-            audio_url = None
-            if not defer_audio:
-                audio_url = _generate_tts_audio(
-                    normalized["script"], question_number, session_id
-                )
-
-            session_cache.append(fp)
-            _tcf_listening_hashes_global.append(fp)
-            normalized["audio_url"] = audio_url
-            return ListeningQuestionResponse.model_validate(normalized)
-
-        except Exception as error:
-            last_error = error
-            continue
-
-    raise RuntimeError(
-        f"TCF listening question generation failed after retries: {last_error}"
-    ) from last_error
+    """One unique TCF Canada listening question (see listening_service)."""
+    from listening_service import get_question
+    return get_question(question_number, session_id, defer_audio, target_level)
 
 
 def generate_tcf_writing_tasks() -> dict[str, str]:
@@ -1867,8 +1481,9 @@ Regles :
 
 
 def generate_tcf_listening_audio(script: str, question_number: int, session_id: str | None = None) -> str:
-    """Public wrapper for TTS — used by the listening route's audio endpoint."""
-    return _generate_tts_audio(script, question_number, session_id)
+    """Audio for a listening script (one voice per speaker for dialogues)."""
+    from listening_service import synthesize_listening_audio
+    return synthesize_listening_audio(script)
 
 
 def analyze_learn_content(text: str) -> Dict[str, Any]:

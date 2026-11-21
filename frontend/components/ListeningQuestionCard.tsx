@@ -66,12 +66,16 @@ export default function ListeningQuestionCard({
   const [isBuffering, setIsBuffering] = useState(false);
   const [audioCurrentTime, setAudioCurrentTime] = useState(0);
   const [audioDuration, setAudioDuration] = useState(0);
+  const [hasStarted, setHasStarted] = useState(false);
+  const [hasEnded, setHasEnded] = useState(false);
+  const [audioError, setAudioError] = useState("");
 
   const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  const resolveUrl = (url: string) => (url.startsWith("http") ? url : `${apiBase}${url}`);
   const [localAudioUrl, setLocalAudioUrl] = useState("");
 
-  // Keyed on the script too: deferred-audio questions all have audio_url=null,
-  // so without it a new question would keep playing the previous question's audio.
+  // A new question (new script) always starts from a clean player: deferred-audio questions all have
+  // audio_url=null, so the script is what tells questions apart.
   useEffect(() => {
     const audio = audioRef.current;
     if (audio) {
@@ -84,16 +88,28 @@ export default function ListeningQuestionCard({
     setAudioCurrentTime(0);
     setAudioDuration(0);
     setCurrentWordIndex(0);
-    const url = question.audio_url ?? "";
-    setLocalAudioUrl(url ? (url.startsWith("http") ? url : `${apiBase}${url}`) : "");
-  }, [question.script, question.audio_url, apiBase]);
+    setHasStarted(false);
+    setHasEnded(false);
+    setAudioError("");
+    setLocalAudioUrl("");
+  }, [question.script]);
+
+  // Audio that arrives later (background pre-generation) is adopted without interrupting playback.
+  useEffect(() => {
+    const url = question.audio_url;
+    if (!url) return;
+    setLocalAudioUrl((prev) => prev || resolveUrl(url));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [question.audio_url, question.script, apiBase]);
 
   const audioSrc = localAudioUrl;
 
   const words = useMemo(() => question.script.split(/\s+/).filter(Boolean), [question.script]);
 
   const remainingPlays = maxPlays ? Math.max(0, maxPlays - playCount) : null;
-  const canPlay = (Boolean(audioSrc) || Boolean(onRequestAudio)) && (remainingPlays === null || remainingPlays > 0);
+  // Pausing mid-clip in the exam does not use up the single play: the clip can be resumed until it ends.
+  const canResume = hasStarted && !hasEnded && !isPlaying;
+  const canPlay = canResume || ((Boolean(audioSrc) || Boolean(onRequestAudio)) && (remainingPlays === null || remainingPlays > 0));
 
   useEffect(() => {
     if (!audioRef.current) return;
@@ -116,19 +132,25 @@ export default function ListeningQuestionCard({
       setIsPlaying(true);
       setAutoScroll(true);
       setIsBuffering(false);
+      setHasStarted(true);
     };
     const handlePause = () => setIsPlaying(false);
-    const handleEnded = () => { setIsPlaying(false); setAudioCurrentTime(audio.duration || 0); };
+    const handleEnded = () => {
+      setIsPlaying(false);
+      setHasEnded(true);
+      setAudioCurrentTime(audio.duration || 0);
+    };
     const handleCanPlay = () => setIsBuffering(false);
     const handleTimeUpdate = () => setAudioCurrentTime(audio.currentTime);
-    const handleLoadedMetadata = () => setAudioDuration(audio.duration || 0);
+    const handleDuration = () => setAudioDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
 
     audio.addEventListener("play", handlePlay);
     audio.addEventListener("pause", handlePause);
     audio.addEventListener("ended", handleEnded);
     audio.addEventListener("canplaythrough", handleCanPlay);
     audio.addEventListener("timeupdate", handleTimeUpdate);
-    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener("loadedmetadata", handleDuration);
+    audio.addEventListener("durationchange", handleDuration);
 
     return () => {
       audio.removeEventListener("play", handlePlay);
@@ -136,7 +158,8 @@ export default function ListeningQuestionCard({
       audio.removeEventListener("ended", handleEnded);
       audio.removeEventListener("canplaythrough", handleCanPlay);
       audio.removeEventListener("timeupdate", handleTimeUpdate);
-      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.removeEventListener("loadedmetadata", handleDuration);
+      audio.removeEventListener("durationchange", handleDuration);
     };
   }, []);
 
@@ -163,50 +186,70 @@ export default function ListeningQuestionCard({
     }
   }, [currentWordIndex, showTranscript, autoScroll]);
 
-  const handlePlayClick = async () => {
-    if (!audioRef.current) return;
+  const waitUntilPlayable = (audio: HTMLAudioElement) =>
+    new Promise<boolean>((resolve) => {
+      const done = (ok: boolean) => {
+        audio.removeEventListener("canplay", onReady);
+        audio.removeEventListener("error", onError);
+        clearTimeout(timer);
+        resolve(ok);
+      };
+      const onReady = () => done(true);
+      const onError = () => done(false);
+      const timer = setTimeout(() => done(audio.readyState >= 2), 30000);
+      audio.addEventListener("canplay", onReady);
+      audio.addEventListener("error", onError);
+      audio.load();
+    });
 
-    // Lazy-load audio if not yet available
+  const handlePlayClick = async () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    setAudioError("");
+
+    if (canResume) {
+      try {
+        await audio.play();
+      } catch {
+        setAudioError("The audio could not be resumed. Please try again.");
+      }
+      return;
+    }
+    if (remainingPlays !== null && remainingPlays <= 0) return;
+
     let effectiveSrc = audioSrc;
     if (!effectiveSrc && onRequestAudio) {
       setIsBuffering(true);
+      let fetched: string | undefined;
       try {
-        const fetched = await onRequestAudio(question);
-        if (fetched) {
-          const resolved = fetched.startsWith("http") ? fetched : `${apiBase}${fetched}`;
-          setLocalAudioUrl(resolved);
-          effectiveSrc = resolved;
-        }
+        fetched = await onRequestAudio(question);
       } catch {
+        fetched = undefined;
+      }
+      if (!fetched) {
         setIsBuffering(false);
+        setAudioError("The audio is not available right now.");
         return;
       }
+      effectiveSrc = resolveUrl(fetched);
+      setLocalAudioUrl(effectiveSrc);
+    }
+    if (!effectiveSrc) {
+      setAudioError("The audio is not available right now.");
+      return;
     }
 
-    if (!effectiveSrc || (remainingPlays !== null && remainingPlays <= 0)) return;
-
-    const audio = audioRef.current;
     if (audio.src !== effectiveSrc) {
       audio.src = effectiveSrc;
     }
-
     if (audio.readyState < 3) {
       setIsBuffering(true);
-      await new Promise<void>((resolve, reject) => {
-        const handleReady = () => {
-          audio.removeEventListener("canplaythrough", handleReady);
-          audio.removeEventListener("error", handleError);
-          resolve();
-        };
-        const handleError = () => {
-          audio.removeEventListener("canplaythrough", handleReady);
-          audio.removeEventListener("error", handleError);
-          reject();
-        };
-        audio.addEventListener("canplaythrough", handleReady);
-        audio.addEventListener("error", handleError);
-        audio.load();
-      }).catch(() => undefined);
+      const ok = await waitUntilPlayable(audio);
+      if (!ok) {
+        setIsBuffering(false);
+        setAudioError("The audio could not be loaded.");
+        return;
+      }
     }
 
     try {
@@ -214,24 +257,11 @@ export default function ListeningQuestionCard({
       onPlay?.();
     } catch {
       setIsBuffering(false);
+      setAudioError("Playback was blocked by the browser. Press Play again.");
     }
   };
-  const handlePauseClick = async () => {
-    if (!audioRef.current) return;
-    const audio = audioRef.current;
-    if (isPlaying) {
-      audio.pause();
-      return;
-    }
-    if (audio.readyState < 3) {
-      setIsBuffering(true);
-      audio.load();
-    }
-    try {
-      await audio.play();
-    } catch {
-      setIsBuffering(false);
-    }
+  const handlePauseClick = () => {
+    audioRef.current?.pause();
   };
   const handleReplayClick = async () => {
     if (!audioRef.current) return;
@@ -241,6 +271,7 @@ export default function ListeningQuestionCard({
     setCurrentWordIndex(0);
     setAutoScroll(true);
     setIsBuffering(false);
+    setHasEnded(false);
     // In practice mode (replayPlays=true): restart playback immediately from the top.
     // In exam mode (replayPlays=false): only reset position — do not play again.
     if (replayPlays && audioSrc) {
@@ -282,8 +313,8 @@ export default function ListeningQuestionCard({
           <div className="flex flex-wrap items-center gap-2">
             {/* Primary play/pause toggle */}
             <Button
-              onClick={isPlaying ? handlePauseClick : handlePlayClick}
-              disabled={!canPlay && !isPlaying}
+              onClick={isPlaying ? handlePauseClick : () => void handlePlayClick()}
+              disabled={(!canPlay && !isPlaying) || isBuffering}
               className="gap-2"
             >
               {isBuffering ? (
@@ -302,11 +333,13 @@ export default function ListeningQuestionCard({
               ) : (
                 <>
                   <span className="h-0 w-0 border-y-[6px] border-l-[10px] border-y-transparent border-l-current" />
-                  {remainingPlays !== null && remainingPlays <= 0
-                    ? "Limit reached"
-                    : remainingPlays !== null
-                      ? `Play (${remainingPlays} left)`
-                      : "Play"}
+                  {canResume
+                    ? "Resume"
+                    : remainingPlays !== null && remainingPlays <= 0
+                      ? "Limit reached"
+                      : remainingPlays !== null
+                        ? `Play (${remainingPlays} left)`
+                        : "Play"}
                 </>
               )}
             </Button>
@@ -330,6 +363,19 @@ export default function ListeningQuestionCard({
               </span>
             )}
           </div>
+
+          {audioError && (
+            <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              <span>{audioError}</span>
+              <button
+                type="button"
+                className="font-semibold underline"
+                onClick={() => void handlePlayClick()}
+              >
+                Retry
+              </button>
+            </div>
+          )}
 
           {/* Audio progress bar + time */}
           {audioDuration > 0 && (

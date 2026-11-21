@@ -9,8 +9,9 @@ export interface GenerateListeningQuestionRequest {
 
 export interface GenerateListeningAudioRequest {
   script: string;
-  question_number: number;
+  question_number?: number;
   session_id?: string;
+  speakers?: string[];
 }
 
 export interface GenerateListeningAudioResponse {
@@ -18,6 +19,9 @@ export interface GenerateListeningAudioResponse {
 }
 
 export interface ListeningQuestion {
+  question_id?: string;
+  level?: string | null;
+  speakers?: string[];
   script: string;
   transcript?: string | null;
   audio_url?: string | null;

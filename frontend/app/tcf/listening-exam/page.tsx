@@ -12,6 +12,8 @@ import TimerClock from "@/components/TimerClock";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
+  API_BASE_URL,
+  friendlyNetworkError,
   generateTcfListeningQuestion,
   generateTcfListeningAudio,
   submitTcfListeningExam,
@@ -22,42 +24,66 @@ import type { AnswerOption } from "@/types/exam";
 import type { ExplainTextResponse } from "@/types/text-helper";
 import type { ListeningQuestion, ListeningSubmitResult } from "@/types/listening";
 
-const TOTAL_QUESTIONS = 39;
-const EXAM_DURATION_SECONDS = 35 * 60;
-const PREFETCH_AHEAD = 1;
+const FULL_EXAM_QUESTIONS = 39;
+const FULL_EXAM_SECONDS = 35 * 60;
+const EXAM_PREFETCH_AHEAD = 4;
+const PRACTICE_QUEUE_SIZE = 4;
 const MAX_PLAYS = 1;
 
-type ListeningDifficultyGroup = "all" | "c2" | "c1" | "b2" | "b1" | "a2" | "a1";
-const LISTENING_DIFFICULTY_RANGES: Record<ListeningDifficultyGroup, { start: number; end: number; label: string }> = {
-  all: { start: 1,  end: 39, label: "All Levels" },
-  a1:  { start: 1,  end: 13, label: "A1" },
-  a2:  { start: 1,  end: 13, label: "A2" },
-  b1:  { start: 14, end: 26, label: "B1" },
-  b2:  { start: 14, end: 26, label: "B2" },
-  c1:  { start: 27, end: 39, label: "C1" },
-  c2:  { start: 27, end: 39, label: "C2" },
+const LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"] as const;
+type Level = (typeof LEVELS)[number];
+
+// Official TCF Canada order: easiest first. Question number -> CEFR band.
+const LEVEL_RANGES: Record<Level, [number, number]> = {
+  A1: [1, 4],
+  A2: [5, 10],
+  B1: [11, 19],
+  B2: [20, 29],
+  C1: [30, 35],
+  C2: [36, 39],
 };
 
-type PracticeLevel = "C2" | "C1" | "B2" | "B1" | "A2" | "A1";
-const PRACTICE_LEVEL_RANGES: Record<PracticeLevel, [number, number]> = {
-  "A1": [1,  13],
-  "A2": [1,  13],
-  "B1": [14, 26],
-  "B2": [14, 26],
-  "C1": [27, 39],
-  "C2": [27, 39],
+const levelForQuestion = (questionNumber: number): Level =>
+  LEVELS.find((lvl) => questionNumber >= LEVEL_RANGES[lvl][0] && questionNumber <= LEVEL_RANGES[lvl][1]) ?? "C2";
+
+type ExamFocus = "all" | Level;
+
+const examRange = (focus: ExamFocus): [number, number] => (focus === "all" ? [1, FULL_EXAM_QUESTIONS] : LEVEL_RANGES[focus]);
+
+// A focused exam keeps the real exam's pace: about 54 s per item, never under 5 minutes.
+const examDurationSeconds = (focus: ExamFocus) => {
+  if (focus === "all") return FULL_EXAM_SECONDS;
+  const [start, end] = examRange(focus);
+  return Math.max(5 * 60, Math.round((FULL_EXAM_SECONDS * (end - start + 1)) / FULL_EXAM_QUESTIONS / 60) * 60);
 };
 
-const levelLabel = (questionNumber: number) => {
-  if (questionNumber <= 13) return "A1-A2";
-  if (questionNumber <= 26) return "B1-B2";
-  return "C1-C2";
+const newSessionId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+const resolveAudioUrl = (url: string) => (url.startsWith("http") ? url : `${API_BASE_URL}${url}`);
+
+const questionKey = (q: ListeningQuestion) => q.question_id || q.script;
+
+const errorMessage = (err: unknown, fallback: string) => {
+  const e = friendlyNetworkError(err);
+  return e.message || fallback;
 };
+
+interface QueuedQuestion {
+  level: Level;
+  promise: Promise<ListeningQuestion>;
+  settled: boolean;
+  value?: ListeningQuestion;
+  failed: boolean;
+}
 
 export default function ListeningExamPage() {
   const [mode, setMode] = useState<"practice" | "exam">("exam");
   const [showTranscript, setShowTranscript] = useState(false);
 
+  // Exam state is indexed by position in the exam (1..examSize); positions map to real TCF question numbers.
   const [isExamStarted, setIsExamStarted] = useState(false);
   const [currentQuestion, setCurrentQuestion] = useState(1);
   const [questions, setQuestions] = useState<Record<number, ListeningQuestion>>({});
@@ -77,32 +103,43 @@ export default function ListeningExamPage() {
   const [practiceQuestion, setPracticeQuestion] = useState<ListeningQuestion | null>(null);
   const [practiceAnswer, setPracticeAnswer] = useState<AnswerOption | "">("");
   const [practiceCount, setPracticeCount] = useState(1);
-  const [practicePlayCount, setPracticePlayCount] = useState(0);
   const [practiceScore, setPracticeScore] = useState({ correct: 0, total: 0 });
 
   const [helperText, setHelperText] = useState("");
   const [helperResult, setHelperResult] = useState<ExplainTextResponse | null>(null);
   const [helperLoading, setHelperLoading] = useState(false);
 
-  // Difficulty + translation state
-  const [examDifficulty, setExamDifficulty] = useState<ListeningDifficultyGroup>("all");
-  const [practiceLevel, setPracticeLevel] = useState<PracticeLevel>("A1");
+  const [examFocus, setExamFocus] = useState<ExamFocus>("all");
+  const [practiceLevel, setPracticeLevel] = useState<Level>("A1");
   const [transcriptTranslations, setTranscriptTranslations] = useState<Record<string, string>>({});
   const [showTranslation, setShowTranslation] = useState(false);
   const [isTranslating, setIsTranslating] = useState(false);
+  const [translationError, setTranslationError] = useState("");
 
-  const [pendingPracticeLevel, setPendingPracticeLevel] = useState<PracticeLevel | null>(null);
+  const [pendingPracticeLevel, setPendingPracticeLevel] = useState<Level | null>(null);
+  const [audioUrls, setAudioUrls] = useState<Record<string, string>>({});
 
   const questionsRef = useRef<Record<number, ListeningQuestion>>({});
   const inFlightRef = useRef<Partial<Record<number, Promise<ListeningQuestion>>>>({});
   const examSessionIdRef = useRef<string | null>(null);
   const practiceSessionIdRef = useRef<string | null>(null);
-  const nextPracticeRef = useRef<Promise<ListeningQuestion> | null>(null);
+  const practiceQueueRef = useRef<QueuedQuestion[]>([]);
+  const practiceSeenRef = useRef<Set<string>>(new Set());
+  const practiceLevelRef = useRef<Level>(practiceLevel);
   const audioCacheRef = useRef<Record<string, Promise<string | undefined>>>({});
+  const warmAudioRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+
+  const [examStart, examEnd] = examRange(examFocus);
+  const examSize = examEnd - examStart + 1;
+  const realNumber = (position: number) => examStart + position - 1;
 
   useEffect(() => {
     questionsRef.current = questions;
   }, [questions]);
+
+  useEffect(() => {
+    practiceLevelRef.current = practiceLevel;
+  }, [practiceLevel]);
 
   useEffect(() => {
     setShowTranscript(false);
@@ -124,121 +161,165 @@ export default function ListeningExamPage() {
   }, [mode]);
 
   useEffect(() => {
+    setError("");
     if (mode === "practice") {
       setIsExamStarted(false);
       setResults(null);
       setTimeUp(false);
       setTimerActive(false);
       setSubmitNote("");
-      setError("");
     } else {
       setPracticeQuestion(null);
       setPracticeAnswer("");
     }
   }, [mode]);
 
-  // Reset transcript when moving between exam questions (exam integrity)
+  // Exam integrity: the transcript stays closed when moving between exam questions.
   useEffect(() => {
     if (mode === "exam") setShowTranscript(false);
   }, [currentQuestion, mode]);
 
-  const ensureQuestion = async (questionNumber: number, showLoader = true) => {
-    const existing = questionsRef.current[questionNumber];
-    if (existing) {
-      return existing;
-    }
-    const inFlight = inFlightRef.current[questionNumber];
-    if (inFlight) {
-      if (showLoader) setLoadingQuestion(true);
-      const shouldResumeTimer = showLoader && timerActive;
-      if (shouldResumeTimer) setTimerActive(false);
-      try {
-        return await inFlight;
-      } finally {
-        if (showLoader) setLoadingQuestion(false);
-        if (shouldResumeTimer && !timeUp && !results) setTimerActive(true);
-      }
-    }
+  // ── Audio: requested as soon as a question exists, then pre-buffered by the browser ──────────────
 
-    if (showLoader) setLoadingQuestion(true);
-    const shouldResumeTimer = showLoader && timerActive;
-    if (shouldResumeTimer) setTimerActive(false);
-    try {
-      const request = generateTcfListeningQuestion({
-        question_number: questionNumber,
-        session_id: examSessionIdRef.current ?? undefined,
-        defer_audio: true
-      }).then((question) => {
-        const normalizedQuestion: ListeningQuestion = {
-          ...question,
-          transcript: question.transcript ?? question.script,
-          user_answer: question.user_answer ?? ""
-        };
-        const updated = { ...questionsRef.current, [questionNumber]: normalizedQuestion };
-        questionsRef.current = updated;
-        setQuestions(updated);
-        return normalizedQuestion;
-      });
-      inFlightRef.current[questionNumber] = request;
-      return await request;
-    } finally {
-      delete inFlightRef.current[questionNumber];
-      if (showLoader) setLoadingQuestion(false);
-      if (shouldResumeTimer && !timeUp && !results) setTimerActive(true);
+  const warmAudio = (url: string) => {
+    const resolved = resolveAudioUrl(url);
+    const cache = warmAudioRef.current;
+    if (cache.has(resolved) || typeof Audio === "undefined") return;
+    const el = new Audio();
+    el.preload = "auto";
+    el.src = resolved;
+    el.load();
+    cache.set(resolved, el);
+    if (cache.size > 12) {
+      const oldest = cache.keys().next().value;
+      if (oldest) cache.delete(oldest);
     }
   };
 
-  const prefetchQuestions = (fromQuestion: number) => {
-    if (!isExamStarted || timeUp || results) return;
-    for (let offset = 1; offset <= PREFETCH_AHEAD; offset += 1) {
-      const questionNumber = fromQuestion + offset;
-      if (questionNumber > TOTAL_QUESTIONS) break;
-      if (questionsRef.current[questionNumber]) continue;
-      if (inFlightRef.current[questionNumber]) continue;
-      void ensureQuestion(questionNumber, false).catch(() => undefined);
+  const fetchAudio = (question: ListeningQuestion): Promise<string | undefined> => {
+    if (question.audio_url) {
+      warmAudio(question.audio_url);
+      return Promise.resolve(question.audio_url);
+    }
+    const cache = audioCacheRef.current;
+    const key = question.script;
+    if (!cache[key]) {
+      cache[key] = generateTcfListeningAudio({ script: question.script, speakers: question.speakers ?? [] })
+        .then((res) => {
+          const url = res.audio_url || undefined;
+          if (url) {
+            setAudioUrls((prev) => ({ ...prev, [key]: url }));
+            warmAudio(url);
+          }
+          return url;
+        })
+        .catch(() => {
+          delete cache[key];
+          return undefined;
+        });
+    }
+    return cache[key];
+  };
+
+  const handleRequestAudio = (question: ListeningQuestion): Promise<string | undefined> =>
+    question.script ? fetchAudio(question) : Promise.resolve(undefined);
+
+  const withAudio = (q: ListeningQuestion | null | undefined): ListeningQuestion | null =>
+    q ? (q.audio_url || !audioUrls[q.script] ? q : { ...q, audio_url: audioUrls[q.script] }) : null;
+
+  // ── Exam ─────────────────────────────────────────────────────────────────────────────────────────
+
+  const ensureQuestion = async (position: number, showLoader = true) => {
+    const existing = questionsRef.current[position];
+    if (existing) return existing;
+
+    const resumeTimer = showLoader && timerActive;
+    if (showLoader) setLoadingQuestion(true);
+    if (resumeTimer) setTimerActive(false);
+    try {
+      let request = inFlightRef.current[position];
+      if (!request) {
+        const number = realNumber(position);
+        request = generateTcfListeningQuestion({
+          question_number: number,
+          session_id: examSessionIdRef.current ?? undefined,
+          defer_audio: true,
+          target_level: examFocus === "all" ? levelForQuestion(number) : examFocus,
+        }).then((question) => {
+          const normalized: ListeningQuestion = {
+            ...question,
+            transcript: question.transcript ?? question.script,
+            user_answer: question.user_answer ?? ""
+          };
+          const updated = { ...questionsRef.current, [position]: normalized };
+          questionsRef.current = updated;
+          setQuestions(updated);
+          void fetchAudio(normalized);
+          return normalized;
+        });
+        inFlightRef.current[position] = request;
+        request.finally(() => {
+          delete inFlightRef.current[position];
+        }).catch(() => undefined);
+      }
+      return await request;
+    } finally {
+      if (showLoader) setLoadingQuestion(false);
+      if (resumeTimer && !timeUp && !results) setTimerActive(true);
+    }
+  };
+
+  const prefetchQuestions = (fromPosition: number) => {
+    if (timeUp || results) return;
+    for (let offset = 1; offset <= EXAM_PREFETCH_AHEAD; offset += 1) {
+      const position = fromPosition + offset;
+      if (position > examSize) break;
+      if (questionsRef.current[position] || inFlightRef.current[position]) continue;
+      void ensureQuestion(position, false).catch(() => undefined);
     }
   };
 
   const handleStartExam = async () => {
     if (isExamStarted) return;
+    examSessionIdRef.current = newSessionId();
+    questionsRef.current = {};
+    inFlightRef.current = {};
+    setQuestions({});
+    setAnswers({});
+    setPlayCounts({});
+    setResults(null);
     setIsExamStarted(true);
-    const startQ = LISTENING_DIFFICULTY_RANGES[examDifficulty].start;
-    setCurrentQuestion(startQ);
-    const sessionId = typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    examSessionIdRef.current = sessionId;
+    setCurrentQuestion(1);
     setTimeUp(false);
     setError("");
     setSubmitNote("");
+    // Load the first questions in parallel; the timer starts once the first one is on screen.
+    prefetchQuestions(1);
     try {
-      await ensureQuestion(startQ);
-      prefetchQuestions(startQ);
+      await ensureQuestion(1);
       setStartedAt(new Date().toISOString());
       setTimerKey((prev) => prev + 1);
       setTimerActive(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to generate question.");
+      setError(errorMessage(err, "Failed to generate question."));
       setIsExamStarted(false);
     }
   };
 
-  const handleSelectQuestion = async (questionNumber: number) => {
-    if (results || timeUp) {
-      return;
-    }
-    setCurrentQuestion(questionNumber);
+  const handleSelectQuestion = async (position: number) => {
+    if (results || timeUp) return;
+    if (position < 1 || position > examSize) return;
+    setCurrentQuestion(position);
     setShowTranslation(false);
-    if (!questionsRef.current[questionNumber]) {
+    setError("");
+    prefetchQuestions(position);
+    if (!questionsRef.current[position]) {
       try {
-        await ensureQuestion(questionNumber);
-        prefetchQuestions(questionNumber);
+        await ensureQuestion(position);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load question.");
+        setError(errorMessage(err, "Failed to load question."));
       }
-      return;
     }
-    prefetchQuestions(questionNumber);
   };
 
   const handleAnswerSelect = (value: AnswerOption) => {
@@ -247,17 +328,10 @@ export default function ListeningExamPage() {
     setQuestions((prev) => {
       const existing = prev[currentQuestion];
       if (!existing) return prev;
-      const updatedQuestion: ListeningQuestion = { ...existing, user_answer: value };
-      const updated = { ...prev, [currentQuestion]: updatedQuestion };
+      const updated = { ...prev, [currentQuestion]: { ...existing, user_answer: value } };
       questionsRef.current = updated;
       return updated;
     });
-  };
-
-  const handleTimerExpire = () => {
-    if (timeUp || results) return;
-    setTimeUp(true);
-    void handleSubmitExam();
   };
 
   const submitExamNow = async () => {
@@ -268,56 +342,47 @@ export default function ListeningExamPage() {
     }
     setIsSubmitting(true);
     setError("");
-    setSubmitNote("");
     setTimerActive(false);
 
     try {
       const questionList = Object.entries(questionsRef.current)
-        .map(([num, question]) => ({ number: Number(num), question }))
-        .sort((a, b) => a.number - b.number);
+        .map(([pos, question]) => ({ position: Number(pos), question }))
+        .sort((a, b) => a.position - b.position);
 
       let correct = 0;
-      const detailed = questionList.map(({ number, question }) => {
-        const userAnswer = question.user_answer ?? answers[number] ?? "";
+      const detailed = questionList.map(({ position, question }) => {
+        const userAnswer = question.user_answer ?? answers[position] ?? "";
         const isCorrect = userAnswer === question.correct_answer;
         if (isCorrect) correct += 1;
         return {
-          question_number: number,
+          question_number: realNumber(position),
           question: question.question,
           options: question.options,
           correct_answer: question.correct_answer,
           user_answer: userAnswer,
           is_correct: isCorrect,
           explanation: question.explanation,
-          audio_url: question.audio_url ?? null,
+          audio_url: question.audio_url ?? audioUrls[question.script] ?? null,
           transcript: question.transcript ?? question.script
         };
       });
 
       const total = questionList.length;
-      const attempted = questionList.filter(({ number, question }) =>
-        (question.user_answer ?? answers[number] ?? "") !== ""
+      const attempted = questionList.filter(({ position, question }) =>
+        (question.user_answer ?? answers[position] ?? "") !== ""
       ).length;
       const accuracy = attempted ? (correct / attempted) * 100 : 0;
 
-      const payload: ListeningSubmitResult = {
-        score: correct,
-        total,
-        attempted,
-        accuracy,
-        results: detailed
-      };
-      setResults(payload);
-      const completedAt = new Date().toISOString();
+      setResults({ score: correct, total, attempted, accuracy, results: detailed });
       void submitTcfListeningExam({
         started_at: startedAt,
-        completed_at: completedAt,
+        completed_at: new Date().toISOString(),
         score: correct,
         total,
         accuracy
       }).catch(() => undefined);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to submit exam.");
+      setError(errorMessage(err, "Failed to submit exam."));
     } finally {
       setIsSubmitting(false);
     }
@@ -329,37 +394,47 @@ export default function ListeningExamPage() {
       setError("Exam has not started.");
       return;
     }
-
-    const questionList = Object.entries(questionsRef.current)
-      .map(([num, question]) => ({ number: Number(num), question }))
-      .sort((a, b) => a.number - b.number);
-
-    if (questionList.length < TOTAL_QUESTIONS) {
-      const note =
-        `Partial submission: ${questionList.length} of ${TOTAL_QUESTIONS} questions generated. ` +
-        "Score is based only on generated questions.";
-      setSubmitNote(note);
+    const generated = Object.keys(questionsRef.current).length;
+    if (generated < examSize) {
+      setSubmitNote(
+        `Partial submission: ${generated} of ${examSize} questions were opened. ` +
+        "Your score is based only on the questions you saw."
+      );
       setConfirmPartial(true);
       return;
     }
-
     await submitExamNow();
   };
 
-  const handlePlay = (questionNumber: number) => {
+  // When time runs out the exam is submitted as it stands: no confirmation dialog.
+  const handleTimerExpire = () => {
+    if (timeUp || results) return;
+    setTimeUp(true);
+    setConfirmPartial(false);
+    void submitExamNow();
+  };
+
+  const handlePlay = (position: number) => {
     setPlayCounts((prev) => {
-      const current = prev[questionNumber] ?? 0;
+      const current = prev[position] ?? 0;
       if (current >= MAX_PLAYS) return prev;
-      return { ...prev, [questionNumber]: current + 1 };
+      return { ...prev, [position]: current + 1 };
     });
   };
 
-  const fetchPracticeQuestion = (level: PracticeLevel, sessionId: string): Promise<ListeningQuestion> => {
-    const [minQ, maxQ] = PRACTICE_LEVEL_RANGES[level];
+  // ── Practice: a queue of ready questions for the current level ──────────────────────────────────
+
+  const practiceSession = () => {
+    if (!practiceSessionIdRef.current) practiceSessionIdRef.current = newSessionId();
+    return practiceSessionIdRef.current;
+  };
+
+  const fetchPracticeQuestion = (level: Level): Promise<ListeningQuestion> => {
+    const [minQ, maxQ] = LEVEL_RANGES[level];
     const qNum = Math.floor(Math.random() * (maxQ - minQ + 1)) + minQ;
     return generateTcfListeningQuestion({
       question_number: qNum,
-      session_id: sessionId,
+      session_id: practiceSession(),
       defer_audio: true,
       target_level: level,
     }).then((question) => ({
@@ -369,70 +444,91 @@ export default function ListeningExamPage() {
     }));
   };
 
-  const loadPracticeQuestion = async () => {
-    const sessionId = practiceSessionIdRef.current
-      ?? (typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    practiceSessionIdRef.current = sessionId;
+  const enqueuePractice = (level: Level) => {
+    const entry: QueuedQuestion = { level, settled: false, failed: false, promise: Promise.resolve(null as never) };
+    entry.promise = fetchPracticeQuestion(level).then(
+      (q) => {
+        entry.settled = true;
+        entry.value = q;
+        void fetchAudio(q);
+        return q;
+      },
+      (err) => {
+        entry.settled = true;
+        entry.failed = true;
+        throw err;
+      }
+    );
+    entry.promise.catch(() => undefined);
+    practiceQueueRef.current.push(entry);
+  };
 
+  const prunePracticeQueue = (level: Level) => {
+    practiceQueueRef.current = practiceQueueRef.current.filter(
+      (e) => e.level === level && !e.failed && !(e.value && practiceSeenRef.current.has(questionKey(e.value)))
+    );
+  };
+
+  const topUpPracticeQueue = (level: Level) => {
+    prunePracticeQueue(level);
+    while (practiceQueueRef.current.length < PRACTICE_QUEUE_SIZE) enqueuePractice(level);
+  };
+
+  const takePracticeQuestion = async (level: Level): Promise<ListeningQuestion> => {
+    if (!practiceQueueRef.current.some((e) => e.level === level)) topUpPracticeQueue(level);
+    for (;;) {
+      prunePracticeQueue(level);
+      const ready = practiceQueueRef.current.find((e) => e.value);
+      if (ready?.value) {
+        practiceQueueRef.current = practiceQueueRef.current.filter((e) => e !== ready);
+        return ready.value;
+      }
+      const pending = practiceQueueRef.current.filter((e) => !e.settled);
+      if (!pending.length) break;
+      await Promise.race(pending.map((e) => e.promise.then(() => undefined, () => undefined)));
+    }
+    // Every queued request failed: one direct attempt, whose error is shown with a Retry button.
+    return fetchPracticeQuestion(level);
+  };
+
+  // Keep questions ready for the selected level as soon as practice is open.
+  useEffect(() => {
+    if (mode === "practice") topUpPracticeQueue(practiceLevel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, practiceLevel]);
+
+  const loadPracticeQuestion = async () => {
+    if (loadingQuestion) return;
+    const level = practiceLevel;
     setError("");
     setLoadingQuestion(true);
     setShowTranslation(false);
+    setTranslationError("");
     setShowTranscript(false);
     try {
-      let normalizedQuestion: ListeningQuestion;
-      if (nextPracticeRef.current) {
-        const prefetched = nextPracticeRef.current;
-        nextPracticeRef.current = null;
-        normalizedQuestion = await prefetched;
-      } else {
-        normalizedQuestion = await fetchPracticeQuestion(practiceLevel, sessionId);
-      }
-      setPracticeQuestion(normalizedQuestion);
+      const question = await takePracticeQuestion(level);
+      if (practiceLevelRef.current !== level) return;
+      practiceSeenRef.current.add(questionKey(question));
+      setPracticeQuestion(question);
       setPracticeAnswer("");
-      setPracticePlayCount(0);
       setPracticeCount((prev) => prev + 1);
-      // start prefetching the next one immediately
-      nextPracticeRef.current = fetchPracticeQuestion(practiceLevel, sessionId);
+      topUpPracticeQueue(level);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load practice question.");
+      setError(errorMessage(err, "Failed to load practice question."));
     } finally {
       setLoadingQuestion(false);
     }
   };
 
-  const handlePracticePlay = () => {
-    setPracticePlayCount((prev) => (prev >= MAX_PLAYS ? prev : prev + 1));
+  const applyPracticeLevel = (lvl: Level) => {
+    practiceQueueRef.current = [];
+    setPracticeLevel(lvl);
+    setPracticeQuestion(null);
+    setPracticeAnswer("");
+    setPracticeCount(1);
+    setPracticeScore({ correct: 0, total: 0 });
+    setError("");
   };
-
-  const fetchAudio = (script: string): Promise<string | undefined> => {
-    const cache = audioCacheRef.current;
-    if (!cache[script]) {
-      cache[script] = generateTcfListeningAudio({ script, question_number: 1, session_id: undefined })
-        .then((res) => res.audio_url ?? undefined)
-        .catch(() => {
-          delete cache[script];
-          return undefined;
-        });
-    }
-    return cache[script];
-  };
-
-  const handleRequestAudio = (question: ListeningQuestion): Promise<string | undefined> =>
-    question.script ? fetchAudio(question.script) : Promise.resolve(undefined);
-
-  // Start audio synthesis as soon as a question is shown so Play is near-instant.
-  useEffect(() => {
-    if (practiceQuestion?.script && !practiceQuestion.audio_url) void fetchAudio(practiceQuestion.script);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [practiceQuestion]);
-
-  useEffect(() => {
-    const q = questions[currentQuestion];
-    if (q?.script && !q.audio_url) void fetchAudio(q.script);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [questions, currentQuestion]);
 
   const handlePracticeAnswer = (value: AnswerOption) => {
     if (practiceAnswer) return;
@@ -445,6 +541,8 @@ export default function ListeningExamPage() {
     }
   };
 
+  // ── Helpers ──────────────────────────────────────────────────────────────────────────────────────
+
   const handleExplainText = async () => {
     if (!helperText.trim()) return;
     setHelperLoading(true);
@@ -453,7 +551,7 @@ export default function ListeningExamPage() {
       const result = await explainText({ text: helperText.trim() });
       setHelperResult(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to explain text.");
+      setError(errorMessage(err, "Failed to explain text."));
     } finally {
       setHelperLoading(false);
     }
@@ -469,20 +567,23 @@ export default function ListeningExamPage() {
       return;
     }
     setIsTranslating(true);
+    setTranslationError("");
     try {
       const result = await translatePassage(script);
       setTranscriptTranslations((prev) => ({ ...prev, [key]: result }));
       setShowTranslation(true);
     } catch {
-      // silent
+      setTranslationError("The translation is not available right now. Please try again.");
     } finally {
       setIsTranslating(false);
     }
   };
 
-  const currentQuestionData = questions[currentQuestion];
+  const currentQuestionData = withAudio(questions[currentQuestion]);
+  const displayedPracticeQuestion = withAudio(practiceQuestion);
   const currentAnswer = answers[currentQuestion] ?? "";
   const currentPlays = playCounts[currentQuestion] ?? 0;
+  const practiceHasProgress = Boolean(practiceQuestion) || loadingQuestion || practiceScore.total > 0;
 
   const questionNavigatorAnswers = useMemo(() => answers, [answers]);
 
@@ -514,44 +615,38 @@ export default function ListeningExamPage() {
                 <CardContent className="p-4">
                   <p className="text-sm font-semibold text-slate-700 mb-2">CEFR Level</p>
                   <div className="flex flex-wrap gap-2">
-                    {(Object.keys(PRACTICE_LEVEL_RANGES) as PracticeLevel[]).map((lvl) => (
+                    {LEVELS.map((lvl) => (
                       <button
                         key={lvl}
                         onClick={() => {
                           if (lvl === practiceLevel) return;
-                          if ((practiceQuestion || loadingQuestion) && !practiceAnswer) {
+                          if (practiceHasProgress) {
                             setPendingPracticeLevel(lvl);
                           } else {
-                            setPracticeLevel(lvl);
-                            setPracticeQuestion(null);
-                            setPracticeCount(1);
-                            setPracticeScore({ correct: 0, total: 0 });
-                            nextPracticeRef.current = null;
+                            applyPracticeLevel(lvl);
                           }
                         }}
-                        disabled={loadingQuestion}
                         className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
                           practiceLevel === lvl
                             ? "bg-indigo-600 text-white"
                             : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                        } disabled:opacity-50`}
+                        }`}
                       >
                         {lvl}
                       </button>
                     ))}
                     {pendingPracticeLevel && (
-                      <div className="w-full mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 flex items-center gap-3">
-                        <span>Switch to <strong>{pendingPracticeLevel}</strong>? Current question will be discarded.</span>
+                      <div className="w-full mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 flex flex-wrap items-center gap-3">
+                        <span>
+                          Switch to <strong>{pendingPracticeLevel}</strong>? The current question and your score
+                          ({practiceScore.correct}/{practiceScore.total}) will be reset.
+                        </span>
                         <button
                           className="font-semibold text-amber-900 underline"
                           onClick={() => {
                             const lvl = pendingPracticeLevel;
                             setPendingPracticeLevel(null);
-                            setPracticeLevel(lvl);
-                            setPracticeQuestion(null);
-                            setPracticeCount(1);
-                            setPracticeScore({ correct: 0, total: 0 });
-                            nextPracticeRef.current = null;
+                            applyPracticeLevel(lvl);
                           }}
                         >Confirm</button>
                         <button
@@ -564,69 +659,74 @@ export default function ListeningExamPage() {
                 </CardContent>
               </Card>
 
-              {!practiceQuestion ? (
+              {error && (
+                <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                  <span>{error}</span>
+                  <Button size="sm" variant="outline" onClick={() => void loadPracticeQuestion()} disabled={loadingQuestion}>
+                    Retry
+                  </Button>
+                </div>
+              )}
+
+              {!displayedPracticeQuestion ? (
                 <Card className="border-slate-200 shadow-sm rounded-2xl">
                   <CardContent className="p-6">
                     <h2 className="text-xl font-semibold text-slate-900">Listening Practice</h2>
                     <p className="mt-2 text-sm text-slate-600">
-                      Practice one question at a time. Level: <strong>{practiceLevel}</strong>. Transcript is enabled by default.
+                      Practice one question at a time. Level: <strong>{practiceLevel}</strong>. The transcript is
+                      hidden until you choose to show it.
                     </p>
-                    <Button className="mt-4" onClick={loadPracticeQuestion} disabled={loadingQuestion}>
-                      {loadingQuestion ? "Generating question..." : "Start Practice"}
+                    <Button className="mt-4" onClick={() => void loadPracticeQuestion()} disabled={loadingQuestion}>
+                      {loadingQuestion ? "Loading question…" : "Start Practice"}
                     </Button>
                   </CardContent>
                 </Card>
               ) : (
                 <div className="space-y-4">
-                  {loadingQuestion && (
-                    <p className="text-sm text-slate-500">Preparing practice audio...</p>
-                  )}
                   <div className="flex items-center gap-2">
                     <span className="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700">
                       {practiceLevel}
                     </span>
-                    {practiceScore.total > 0 && (
-                      <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-                        Score: {practiceScore.correct}/{practiceScore.total}
-                      </span>
-                    )}
+                    <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                      Score: {practiceScore.correct}/{practiceScore.total}
+                    </span>
                   </div>
                   <ListeningQuestionCard
-                    key={practiceQuestion.script}
-                    question={practiceQuestion}
+                    key={questionKey(displayedPracticeQuestion)}
+                    question={displayedPracticeQuestion}
                     questionNumber={practiceCount - 1}
                     selectedAnswer={practiceAnswer}
                     onSelect={handlePracticeAnswer}
-                    onPlay={handlePracticePlay}
                     onRequestAudio={handleRequestAudio}
                     showTranscript={showTranscript}
                     onToggleTranscript={() => setShowTranscript((prev) => !prev)}
                     onTranscriptSelect={handleTranscriptSelection}
                     translationText={transcriptTranslations[`practice-${practiceCount}`]}
-                    onTranslate={() => void handleTranslateTranscript(practiceQuestion.script, `practice-${practiceCount}`)}
+                    onTranslate={() => void handleTranslateTranscript(displayedPracticeQuestion.script, `practice-${practiceCount}`)}
                     isTranslating={isTranslating}
                     showTranslation={showTranslation}
                     replayPlays={true}
                   />
+                  {translationError && <p className="text-xs text-rose-600">{translationError}</p>}
                   {practiceAnswer && (
-                    <Card className={`rounded-2xl shadow-sm ${practiceAnswer === practiceQuestion.correct_answer ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
+                    <Card className={`rounded-2xl shadow-sm ${practiceAnswer === displayedPracticeQuestion.correct_answer ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
                       <CardContent className="p-5 space-y-3">
                         <div className="flex items-center justify-between">
-                          <span className={`text-sm font-bold ${practiceAnswer === practiceQuestion.correct_answer ? "text-emerald-700" : "text-rose-700"}`}>
-                            {practiceAnswer === practiceQuestion.correct_answer ? "✓ Correct!" : "✗ Incorrect"}
+                          <span className={`text-sm font-bold ${practiceAnswer === displayedPracticeQuestion.correct_answer ? "text-emerald-700" : "text-rose-700"}`}>
+                            {practiceAnswer === displayedPracticeQuestion.correct_answer ? "✓ Correct!" : "✗ Incorrect"}
                           </span>
                           <span className="text-sm text-slate-600">
-                            Answer: <span className="font-semibold text-slate-900">{practiceQuestion.correct_answer}</span>
+                            Answer: <span className="font-semibold text-slate-900">{displayedPracticeQuestion.correct_answer}</span>
                           </span>
                         </div>
-                        {practiceQuestion.explanation && (
+                        {displayedPracticeQuestion.explanation && (
                           <div className="rounded-xl bg-white/70 px-4 py-3">
                             <p className="text-xs font-semibold uppercase text-slate-400 mb-1">Explanation</p>
-                            <p className="text-sm text-slate-700">{practiceQuestion.explanation}</p>
+                            <p className="text-sm text-slate-700">{displayedPracticeQuestion.explanation}</p>
                           </div>
                         )}
-                        <Button onClick={loadPracticeQuestion}>
-                          Next Question
+                        <Button onClick={() => void loadPracticeQuestion()} disabled={loadingQuestion}>
+                          {loadingQuestion ? "Loading…" : "Next Question"}
                         </Button>
                       </CardContent>
                     </Card>
@@ -640,7 +740,7 @@ export default function ListeningExamPage() {
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Practice Tips</p>
                   <ul className="space-y-1.5 text-xs text-slate-500">
                     <li className="flex gap-2"><span className="text-slate-300">•</span>Listen as many times as you need</li>
-                    <li className="flex gap-2"><span className="text-slate-300">•</span>Show transcript anytime — before or after answering</li>
+                    <li className="flex gap-2"><span className="text-slate-300">•</span>Try to answer before opening the transcript</li>
                     <li className="flex gap-2"><span className="text-slate-300">•</span>Use the translation toggle inside the transcript</li>
                     <li className="flex gap-2"><span className="text-slate-300">•</span>Select transcript text → Phrase Helper auto-fills</li>
                   </ul>
@@ -665,11 +765,11 @@ export default function ListeningExamPage() {
           <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
             <ExamContainer
               currentQuestion={currentQuestion}
-              totalQuestions={TOTAL_QUESTIONS}
-              title="TCF Listening Mock Exam"
+              totalQuestions={examSize}
+              title={examFocus === "all" ? "TCF Listening Mock Exam" : `TCF Listening Mock Exam · ${examFocus} focus`}
               timer={
                 <TimerClock
-                  durationSeconds={EXAM_DURATION_SECONDS}
+                  durationSeconds={examDurationSeconds(examFocus)}
                   isActive={timerActive}
                   resetKey={timerKey}
                   onExpire={handleTimerExpire}
@@ -678,9 +778,9 @@ export default function ListeningExamPage() {
             >
               <div className="flex items-center gap-2 text-xs font-medium text-emerald-700">
                 <span className="rounded-full bg-emerald-50 px-2.5 py-1">
-                  {examDifficulty === "all" ? levelLabel(currentQuestion) : LISTENING_DIFFICULTY_RANGES[examDifficulty].label}
+                  {levelForQuestion(realNumber(currentQuestion))}
                 </span>
-                <span className="text-slate-500">Audio plays only once.</span>
+                <span className="text-slate-500">Each recording plays only once.</span>
               </div>
               {!isExamStarted ? (
                 <Card className="border-slate-200 shadow-sm rounded-2xl">
@@ -688,28 +788,34 @@ export default function ListeningExamPage() {
                     <div>
                       <h2 className="text-xl font-semibold text-slate-900">Listening Mock Exam</h2>
                       <p className="mt-1 text-sm text-slate-600">
-                        35 minutes · Transcript off by default · Transcript translation available
+                        {examSize} questions · {Math.round(examDurationSeconds(examFocus) / 60)} minutes · each
+                        recording plays once · transcripts are shown with your results
                       </p>
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-slate-700 mb-2">Difficulty Focus</p>
                       <div className="flex flex-wrap gap-2">
-                        {(Object.entries(LISTENING_DIFFICULTY_RANGES) as [ListeningDifficultyGroup, typeof LISTENING_DIFFICULTY_RANGES[ListeningDifficultyGroup]][]).map(([key, val]) => (
+                        {(["all", ...LEVELS] as ExamFocus[]).map((key) => (
                           <button
                             key={key}
-                            onClick={() => setExamDifficulty(key)}
+                            onClick={() => setExamFocus(key)}
                             className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                              examDifficulty === key
+                              examFocus === key
                                 ? "bg-slate-800 text-white"
                                 : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                             }`}
                           >
-                            {val.label}
+                            {key === "all" ? "All Levels" : key}
                           </button>
                         ))}
                       </div>
                     </div>
-                    <Button onClick={handleStartExam}>Start Exam</Button>
+                    {error && (
+                      <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                        {error}
+                      </div>
+                    )}
+                    <Button onClick={() => void handleStartExam()}>Start Exam</Button>
                   </CardContent>
                 </Card>
               ) : (
@@ -719,17 +825,22 @@ export default function ListeningExamPage() {
                       Time is up. Your exam has been submitted.
                     </div>
                   )}
-                  {submitNote && (
+                  {submitNote && !results && (
                     <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                       {submitNote}
                     </div>
                   )}
                   {error && (
-                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                      {error}
+                    <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                      <span>{error}</span>
+                      {!questions[currentQuestion] && (
+                        <Button size="sm" variant="outline" onClick={() => void handleSelectQuestion(currentQuestion)}>
+                          Retry
+                        </Button>
+                      )}
                     </div>
                   )}
-                  {loadingQuestion && (
+                  {loadingQuestion && !currentQuestionData && (
                     <Card className="border-slate-200 shadow-sm rounded-2xl animate-pulse">
                       <CardContent className="p-6 space-y-4">
                         <div className="h-4 w-2/3 rounded bg-slate-200" />
@@ -741,14 +852,14 @@ export default function ListeningExamPage() {
                         </div>
                         <p className="text-xs text-slate-400 flex items-center gap-1.5">
                           <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping inline-block" />
-                          Generating question…
+                          Loading question…
                         </p>
                       </CardContent>
                     </Card>
                   )}
                   {currentQuestionData && (
                     <ListeningQuestionCard
-                      key={`exam-${currentQuestion}-${currentQuestionData.script.length}`}
+                      key={`exam-${currentQuestion}-${questionKey(currentQuestionData)}`}
                       question={currentQuestionData}
                       questionNumber={currentQuestion}
                       selectedAnswer={currentAnswer}
@@ -758,11 +869,11 @@ export default function ListeningExamPage() {
                       playCount={currentPlays}
                       onPlay={() => handlePlay(currentQuestion)}
                       onRequestAudio={handleRequestAudio}
-                      showTranscript={showTranscript}
-                      onToggleTranscript={currentAnswer ? () => setShowTranscript((prev) => !prev) : undefined}
+                      showTranscript={Boolean(results) && showTranscript}
+                      onToggleTranscript={results ? () => setShowTranscript((prev) => !prev) : undefined}
                       onTranscriptSelect={handleTranscriptSelection}
                       translationText={transcriptTranslations[`exam-${currentQuestion}`]}
-                      onTranslate={() => void handleTranslateTranscript(currentQuestionData.script, `exam-${currentQuestion}`)}
+                      onTranslate={results ? () => void handleTranslateTranscript(currentQuestionData.script, `exam-${currentQuestion}`) : undefined}
                       isTranslating={isTranslating}
                       showTranslation={showTranslation}
                       hideReplay={true}
@@ -772,19 +883,19 @@ export default function ListeningExamPage() {
                   <div className="flex flex-wrap items-center gap-3">
                     <Button
                       variant="secondary"
-                      onClick={() => handleSelectQuestion(Math.max(LISTENING_DIFFICULTY_RANGES[examDifficulty].start, currentQuestion - 1))}
-                      disabled={currentQuestion === LISTENING_DIFFICULTY_RANGES[examDifficulty].start}
+                      onClick={() => void handleSelectQuestion(currentQuestion - 1)}
+                      disabled={currentQuestion <= 1}
                     >
                       Previous
                     </Button>
                     <Button
                       variant="secondary"
-                      onClick={() => handleSelectQuestion(Math.min(LISTENING_DIFFICULTY_RANGES[examDifficulty].end, currentQuestion + 1))}
-                      disabled={currentQuestion === LISTENING_DIFFICULTY_RANGES[examDifficulty].end}
+                      onClick={() => void handleSelectQuestion(currentQuestion + 1)}
+                      disabled={currentQuestion >= examSize}
                     >
                       Next
                     </Button>
-                    <Button onClick={handleSubmitExam} disabled={isSubmitting || Boolean(results)}>
+                    <Button onClick={() => void handleSubmitExam()} disabled={isSubmitting || Boolean(results)}>
                       {isSubmitting ? "Submitting..." : "Submit Exam"}
                     </Button>
                   </div>
@@ -794,10 +905,10 @@ export default function ListeningExamPage() {
 
             <div className="space-y-4">
               <QuestionNavigator
-                totalQuestions={TOTAL_QUESTIONS}
+                totalQuestions={examSize}
                 currentQuestion={currentQuestion}
                 answers={questionNavigatorAnswers}
-                onSelect={handleSelectQuestion}
+                onSelect={(position) => void handleSelectQuestion(position)}
               />
               <Card className="border-slate-200 shadow-sm rounded-2xl">
                 <CardContent className="p-5">

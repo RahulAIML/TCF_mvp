@@ -217,6 +217,8 @@ class TcfGenerateListeningQuestionRequest(BaseModel):
 
 
 class ListeningQuestionResponse(BaseModel):
+  question_id: str = ""
+  level: str | None = None
   script: str
   audio_url: str | None = None
   question: str
@@ -224,6 +226,7 @@ class ListeningQuestionResponse(BaseModel):
   correct_answer: AnswerOption
   explanation: str
   format_type: str = "monologue"
+  speakers: List[str] = Field(default_factory=list)
 
   @field_validator("options")
   @classmethod
@@ -240,9 +243,10 @@ class GenerateListeningAudioRequest(BaseModel):
 
 
 class TcfGenerateListeningAudioRequest(BaseModel):
-  script: str = Field(min_length=1)
-  question_number: int = Field(ge=1, le=39)
+  script: str = Field(min_length=1, max_length=4000)
+  question_number: int = Field(default=1, ge=1, le=39)
   session_id: str | None = None
+  speakers: List[str] = Field(default_factory=list, max_length=6)
 
 
 class GenerateListeningAudioResponse(BaseModel):
