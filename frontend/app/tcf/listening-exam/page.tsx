@@ -407,7 +407,7 @@ export default function ListeningExamPage() {
 
   const handleRequestAudio = async (question: ListeningQuestion): Promise<string | undefined> => {
     try {
-      const res = await generateTcfListeningAudio({ script: question.script, question_number: 0, session_id: undefined });
+      const res = await generateTcfListeningAudio({ script: question.script, question_number: 1, session_id: undefined });
       return res.audio_url;
     } catch {
       return undefined;
