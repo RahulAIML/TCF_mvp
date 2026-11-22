@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import type { ListeningResultItem } from "@/types/listening";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { estimateCefr, OFFICIAL_SCORE_NOTE } from "@/lib/tcf-results";
 
 interface ListeningResultsProps {
   score: number;
@@ -106,17 +107,39 @@ function ListeningResultCard({ item }: { item: ListeningResultItem }) {
 }
 
 export default function ListeningResults({ score, total, attempted, accuracy, results }: ListeningResultsProps) {
+  const cefr = estimateCefr(results.map((item) => ({
+    question_number: item.question_number,
+    is_correct: item.is_correct,
+    user_answer: item.user_answer,
+  })));
   return (
-    <div className="space-y-4">
-      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 flex flex-wrap gap-4">
-        <span>Generated: <strong>{total}</strong></span>
-        <span>Attempted: <strong>{attempted}</strong></span>
-        <span>Correct: <strong>{score}</strong></span>
-        <span>Accuracy: <strong>{accuracy.toFixed(1)}%</strong></span>
-        <p className="basis-full text-xs text-slate-500">
-          Practice count only. The official test reports a score from 100 to 699, which IRCC converts to NCLC. This is not that score.
+    <div id="exam-results" className="space-y-4">
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">Listening exam results</p>
+        <h2 className="mt-1 text-2xl font-semibold text-slate-900">You scored {score} / {total}</h2>
+        <div className="mt-4 grid gap-4 sm:grid-cols-4">
+          <div>
+            <p className="text-xs uppercase text-slate-400">Correct</p>
+            <p className="text-3xl font-bold text-emerald-600">{score}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase text-slate-400">Answered</p>
+            <p className="text-3xl font-bold text-slate-900">{attempted}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase text-slate-400">Accuracy</p>
+            <p className="text-3xl font-bold text-slate-900">{accuracy.toFixed(1)}%</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase text-slate-400">CEFR estimate</p>
+            <p className="text-3xl font-bold text-indigo-700">{cefr}</p>
+          </div>
+        </div>
+        <p className="mt-4 text-sm text-slate-600">
+          <span className="font-semibold text-slate-800">NCLC: not assigned.</span> {OFFICIAL_SCORE_NOTE}
         </p>
       </div>
+      <h3 className="text-lg font-semibold text-slate-900">Question review</h3>
       <div className="grid gap-3 md:grid-cols-2">
         {results.map((item) => (
           <ListeningResultCard key={`listening-result-${item.question_number}`} item={item} />

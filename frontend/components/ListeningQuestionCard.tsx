@@ -17,6 +17,8 @@ interface ListeningQuestionCardProps {
   onPlay?: () => void;
   /** Called when audio needs to be fetched on-demand (question loaded with defer_audio) */
   onRequestAudio?: (question: ListeningQuestion) => Promise<string | undefined>;
+  /** True while a recording is being fetched, so the exam clock can pause. */
+  onBufferingChange?: (busy: boolean) => void;
   showTranscript: boolean;
   onToggleTranscript?: () => void;
   onTranscriptSelect?: (text: string) => void;
@@ -45,6 +47,7 @@ export default function ListeningQuestionCard({
   playCount = 0,
   onPlay,
   onRequestAudio,
+  onBufferingChange,
   showTranscript,
   onToggleTranscript,
   onTranscriptSelect,
@@ -214,7 +217,7 @@ export default function ListeningQuestionCard({
       };
       const onReady = () => done(true);
       const onError = () => done(false);
-      const timer = setTimeout(() => done(audio.readyState >= 2), 30000);
+      const timer = setTimeout(() => done(audio.readyState >= 2), 12000);
       audio.addEventListener("canplay", onReady);
       audio.addEventListener("error", onError);
       audio.load();
@@ -239,22 +242,32 @@ export default function ListeningQuestionCard({
       if (!onRequestAudio) return undefined;
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const fetched = await onRequestAudio(question);
+          const fetched = await Promise.race([
+            onRequestAudio(question),
+            new Promise<undefined>((_, reject) => {
+              window.setTimeout(() => reject(new Error("The audio is taking too long.")), 12000);
+            }),
+          ]);
           if (fetched) return fetched;
         } catch {
-          // The API helper already retried the network call. Try the whole request once more.
+          // One automatic retry, then the caller shows the message.
         }
-        if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 800));
+        if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 600));
       }
       return undefined;
     };
 
+    const setBusy = (busy: boolean) => {
+      setIsBuffering(busy);
+      onBufferingChange?.(busy);
+    };
+
     let effectiveSrc = audioSrc;
     if (!effectiveSrc && onRequestAudio) {
-      setIsBuffering(true);
+      setBusy(true);
       const fetched = await pullAudio();
       if (!fetched) {
-        setIsBuffering(false);
+        setBusy(false);
         setAudioError("The audio is not available right now.");
         return;
       }
@@ -272,7 +285,7 @@ export default function ListeningQuestionCard({
     const loadSrc = async (src: string) => {
       if (audio.src !== src) audio.src = src;
       if (audio.readyState >= 3) return true;
-      setIsBuffering(true);
+      setBusy(true);
       return waitUntilPlayable(audio);
     };
 
@@ -287,7 +300,7 @@ export default function ListeningQuestionCard({
       }
     }
     if (!ready) {
-      setIsBuffering(false);
+      setBusy(false);
       setAudioError("The audio could not be loaded.");
       return;
     }
@@ -296,8 +309,9 @@ export default function ListeningQuestionCard({
       await audio.play();
       onPlay?.();
     } catch {
-      setIsBuffering(false);
       setAudioError("Playback was blocked by the browser. Press Play again.");
+    } finally {
+      setBusy(false);
     }
   };
   const handlePauseClick = () => {
@@ -365,7 +379,7 @@ export default function ListeningQuestionCard({
               {isBuffering ? (
                 <>
                   <span className="h-3 w-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                  Loading…
+                  Loading audio…
                 </>
               ) : isPlaying ? (
                 <>

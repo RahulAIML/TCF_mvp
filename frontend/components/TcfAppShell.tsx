@@ -15,7 +15,7 @@ import {
 const mobileNavItems = [
   { href: "/tcf/learn",          label: "AI Learn",      icon: Sparkles,        color: "text-emerald-500" },
   { href: "/tcf/reading",        label: "Reading",       icon: BookOpen,        color: "text-indigo-500"  },
-  { href: "/tcf/listening-exam", label: "Listening",     icon: Headphones,      color: "text-teal-500"    },
+  { href: "/tcf/listening-exam?mode=practice", label: "Listening",     icon: Headphones,      color: "text-teal-500"    },
   { href: "/tcf/speaking",       label: "Speaking",      icon: Mic,             color: "text-amber-500"   },
   { href: "/tcf/writing",        label: "Writing",       icon: PenSquare,       color: "text-lime-500"    },
   { href: "/tcf/pronunciation",  label: "Pronunciation", icon: Volume2,         color: "text-pink-500"    },
