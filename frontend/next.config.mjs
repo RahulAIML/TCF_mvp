@@ -37,7 +37,7 @@ const nextConfig = {
       // Proxy bare backend routes (no /api prefix) that the api.ts service uses
       // e.g. /signup, /login, /tcf/*, /learn/*, /ai/chat, etc.
       {
-        source: "/:path((?!_next|favicon|api|audio).*)",
+        source: "/:path((?!_next|favicon|api|audio|version).*)",
         destination: `${apiBase}/:path*`,
       },
     ];

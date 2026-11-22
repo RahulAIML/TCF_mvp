@@ -85,9 +85,19 @@ def pregen_stats() -> dict:
   return pregen_pool.all_stats()
 
 
+def _deploy_commit() -> str:
+  """Render sets RENDER_GIT_COMMIT. Local and other hosts fall back to dev."""
+  return os.getenv("RENDER_GIT_COMMIT") or os.getenv("GIT_COMMIT") or "dev"
+
+
 @app.get("/")
 async def root() -> dict[str, str]:
-  return {"status": "ok", "service": "tcf-backend"}
+  return {"status": "ok", "service": "tcf-backend", "commit": _deploy_commit()}
+
+
+@app.get("/api/version")
+def version() -> dict[str, str]:
+  return {"service": "tcf-backend", "commit": _deploy_commit()}
 
 
 _HEALTH_PROBE_TTL_SECONDS = 60
@@ -126,4 +136,5 @@ def health() -> dict:
     "ELEVENLABS_API_KEY": "set" if os.getenv("ELEVENLABS_API_KEY") else "MISSING",
     "gemini_chat_test": _gemini_probe(),
     "pregen": pregen_pool.all_stats(),
+    "commit": _deploy_commit(),
   }

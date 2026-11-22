@@ -181,10 +181,10 @@ MAX_ATTEMPTS = 4
 
 # ── Speaker labels ──────────────────────────────────────────────────────────────
 
-_NAME_PART = r"[A-ZÀ-ÝÉÈ][a-zà-ÿ'’]+"
-# "Marc :", "— Marie-Ève :", "Jean François (journaliste) :" — a capitalised 1–2 word name, optionally hyphenated.
-SPEAKER_LINE_RE = re.compile(
-    rf"^\s*(?:[-–—]\s*)?({_NAME_PART}(?:[- ]{_NAME_PART})?)\s*(?:\([^)]{{0,40}}\))?\s*:\s*(.*)$"
+_NAME_PART = r"(?:[A-ZÀ-ÝÉÈ][a-zà-ÿ'’]+|[A-ZÀ-Ý]{2,})"
+# A label may sit at the start of a line OR later on the same line ("François : … Paul : …").
+SPEAKER_LABEL_RE = re.compile(
+    rf"(?:[-–—]\s*)?({_NAME_PART}(?:[- ]{_NAME_PART})?)\s*(?:\([^)]{{0,40}}\))?\s*:\s*"
 )
 # Labels that are announcement headings, never people.
 _NOT_SPEAKERS = {
@@ -195,17 +195,24 @@ _NOT_SPEAKERS = {
 
 
 def _speaker_lines(script: str) -> List[Tuple[Optional[str], str]]:
-    """Split a script into (speaker or None, text) lines."""
+    """Split a script into (speaker or None, text) pieces. Several labels on one line each become a turn."""
     out: List[Tuple[Optional[str], str]] = []
     for raw in script.splitlines():
         line = raw.strip()
         if not line:
             continue
-        m = SPEAKER_LINE_RE.match(line)
-        if m and m.group(1) not in _NOT_SPEAKERS:
-            out.append((m.group(1), m.group(2).strip()))
-        else:
+        marks = [m for m in SPEAKER_LABEL_RE.finditer(line) if m.group(1) not in _NOT_SPEAKERS]
+        if not marks:
             out.append((None, line))
+            continue
+        if marks[0].start() > 0:
+            prefix = line[:marks[0].start()].strip()
+            if prefix:
+                out.append((None, prefix))
+        for index, mark in enumerate(marks):
+            end = marks[index + 1].start() if index + 1 < len(marks) else len(line)
+            text = line[mark.end():end].strip()
+            out.append((mark.group(1), text))
     return out
 
 
@@ -229,6 +236,25 @@ def detect_speakers(script: str, known: Optional[List[str]] = None) -> List[str]
     if known is None and labelled < 0.6 * len(lines):
         return []
     return names
+
+
+def _spoken_turn(text: str, speakers: List[str]) -> str:
+    """Drop any speaker label that survived inside a turn, so the voice never says the name as a label."""
+    cleaned = text
+    for name in speakers:
+        cleaned = re.sub(rf"(?:^|\s){re.escape(name)}\s*:\s*", " ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _monologue_text(script: str) -> str:
+    """One voice. A lone 'Animateur :' label is not spoken; announcement lines ('Horaires :') are kept."""
+    parts: List[str] = []
+    for speaker, text in _speaker_lines(script):
+        if speaker:
+            parts.append(text)
+        else:
+            parts.append(text)
+    return re.sub(r"\s+", " ", " ".join(p for p in parts if p)).strip()
 
 
 def dialogue_segments(script: str, speakers: List[str]) -> List[Tuple[Optional[str], str]]:
@@ -328,6 +354,54 @@ def join_mp3(parts: List[bytes]) -> bytes:
     return b"".join(strip_mp3_metadata(p) for p in parts)
 
 
+def _mix_turns(parts: List[bytes], pause_ms: int = 280) -> bytes:
+    """One MP3: each turn, then a short silence, so the browser plays every voice and the joins do not click.
+
+    Decoding to PCM and encoding once avoids a second MP3 header that some players treat as the end of the file
+    (the listener then hears only the first speaker).
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    if len(parts) == 1:
+        return parts[0]
+    if shutil.which("ffmpeg") is None:
+        return join_mp3(parts)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            pcm_parts: List[bytes] = []
+            for index, data in enumerate(parts):
+                src = os.path.join(tmp, f"turn{index}.bin")
+                pcm_path = os.path.join(tmp, f"turn{index}.pcm")
+                with open(src, "wb") as handle:
+                    handle.write(data)
+                decoded = subprocess.run(
+                    ["ffmpeg", "-y", "-v", "error", "-i", src, "-f", "s16le", "-ac", "1", "-ar", "24000", pcm_path],
+                    capture_output=True,
+                )
+                if decoded.returncode != 0 or not os.path.exists(pcm_path):
+                    return join_mp3(parts)
+                with open(pcm_path, "rb") as handle:
+                    pcm_parts.append(handle.read())
+            gap = b"\x00\x00" * int(24000 * pause_ms / 1000)
+            raw_path = os.path.join(tmp, "all.pcm")
+            out_path = os.path.join(tmp, "out.mp3")
+            with open(raw_path, "wb") as handle:
+                handle.write(gap.join(pcm_parts))
+            encoded = subprocess.run(
+                ["ffmpeg", "-y", "-v", "error", "-f", "s16le", "-ar", "24000", "-ac", "1", "-i", raw_path,
+                 "-codec:a", "libmp3lame", "-b:a", "64k", out_path],
+                capture_output=True,
+            )
+            if encoded.returncode != 0 or not os.path.exists(out_path):
+                return join_mp3(parts)
+            with open(out_path, "rb") as handle:
+                return handle.read()
+    except Exception as error:
+        logger.warning("Turn mix failed (%s); joining the MP3s directly.", error)
+        return join_mp3(parts)
+
+
 # ── Audio ───────────────────────────────────────────────────────────────────────
 
 def _audio_dir() -> str:
@@ -357,12 +431,17 @@ def synthesize_listening_audio(script: str, speakers: Optional[List[str]] = None
     names = detect_speakers(script, speakers or None) if speakers else detect_speakers(script)
     if not names:
         voice = random.choice([v for vs in VOICES.values() for v in vs])
-        result = tts_service.synthesize(script, voice)
+        spoken = _monologue_text(script)
+        result = tts_service.synthesize(spoken or script, voice)
         return _save(result["data"], result["extension"])
 
     voices = assign_voices(names)
     segments = dialogue_segments(script, names)
-    jobs = [(text, voices[speaker]) for speaker, text in segments]
+    # Never send the "Name :" label to the synthesizer.
+    jobs = [(_spoken_turn(text, names), voices.get(speaker) or voices[None]) for speaker, text in segments]
+    jobs = [(text, voice) for text, voice in jobs if text]
+    if len({voice for _text, voice in jobs}) < 2 and len(names) >= 2:
+        logger.warning("Dialogue voices collapsed to one id: %s", voices)
     try:
         results = _synthesize_segments(jobs, tts_service.synthesize_elevenlabs)
     except Exception as el_error:
@@ -370,7 +449,7 @@ def synthesize_listening_audio(script: str, speakers: Optional[List[str]] = None
         results = _synthesize_segments(jobs, tts_service.synthesize_gemini)
     ext = results[0]["extension"]
     if ext == "mp3":
-        data = join_mp3([r["data"] for r in results])
+        data = _mix_turns([r["data"] for r in results])
     else:  # WAV only when no MP3 encoder: re-wrap PCM into a single file
         import io
         import wave

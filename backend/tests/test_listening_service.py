@@ -118,6 +118,81 @@ def test_segments_keep_leading_narration_and_continuation_lines():
     assert segs[2] == ("Emma", "Tout de suite.")
 
 
+def test_two_speakers_on_one_line_are_both_heard():
+    script = "François : Allô, c'est toi ? Paul : Oui, j'arrive dans dix minutes."
+    assert ls.detect_speakers(script) == ["François", "Paul"]
+    segments = ls.dialogue_segments(script, ["François", "Paul"])
+    assert [name for name, _text in segments] == ["François", "Paul"]
+    spoken = " ".join(text for _name, text in segments)
+    assert "François :" not in spoken and "Paul :" not in spoken
+    assert "Allô" in spoken and "j'arrive" in spoken
+
+
+def test_two_male_names_get_two_different_male_voices():
+    voices = ls.assign_voices(["François", "Paul"])
+    assert voices["François"].startswith("fr-FR-male")
+    assert voices["Paul"].startswith("fr-FR-male")
+    assert voices["François"] != voices["Paul"]
+
+
+def test_dialogue_audio_has_one_segment_per_speaker(monkeypatch, tmp_path):
+    calls = []
+
+    def fake(text, voice):
+        calls.append((text, voice))
+        # A real MP3 so the turn mixer can decode it. Pitch differs per voice.
+        rate = 660 if voice.endswith("2") else 440
+        return {"data": _tone(rate), "extension": "mp3", "mime_type": "audio/mpeg", "provider": "test"}
+
+    monkeypatch.setattr(ls.tts_service, "synthesize_elevenlabs", fake)
+    monkeypatch.setattr(ls, "_audio_dir", lambda: str(tmp_path))
+    url = ls.synthesize_listening_audio("François : Bonjour. Paul : Bonsoir.")
+    assert len(calls) == 2
+    assert calls[0][1] != calls[1][1]
+    assert all(call[1].startswith("fr-FR-male") for call in calls)
+    assert all(":" not in call[0] for call in calls)
+    data = (tmp_path / url.rsplit("/", 1)[-1]).read_bytes()
+    decoded = _decode_mp3(data)
+    # Two tones plus the pause between them: longer than either turn alone.
+    assert len(decoded) > 24000 * 0.5
+
+
+def test_a_monologue_stays_one_voice_and_drops_a_lone_label(monkeypatch, tmp_path):
+    calls = []
+
+    def fake(text, voice):
+        calls.append((text, voice))
+        return {"data": _tone(440), "extension": "mp3", "mime_type": "audio/mpeg", "provider": "test"}
+
+    monkeypatch.setattr(ls.tts_service, "synthesize", fake)
+    monkeypatch.setattr(ls, "_audio_dir", lambda: str(tmp_path))
+    ls.synthesize_listening_audio("Animateur : Bonjour à tous et bienvenue à l'émission.")
+    assert len(calls) == 1
+    assert "Animateur" not in calls[0][0]
+    assert "Bonjour" in calls[0][0]
+
+
+def _tone(freq, seconds=0.35, rate=24000):
+    import lameenc
+    import math
+    enc = lameenc.Encoder()
+    enc.set_bit_rate(64)
+    enc.set_in_sample_rate(rate)
+    enc.set_channels(1)
+    enc.set_quality(5)
+    samples = bytearray()
+    for i in range(int(rate * seconds)):
+        value = int(8000 * math.sin(2 * math.pi * freq * i / rate))
+        samples += int(value).to_bytes(2, "little", signed=True)
+    return bytes(enc.encode(bytes(samples))) + bytes(enc.flush())
+
+
+def _decode_mp3(data):
+    import miniaudio
+    decoded = miniaudio.decode(data, output_format=miniaudio.SampleFormat.SIGNED16, nchannels=1, sample_rate=24000)
+    return decoded.samples
+
+
 def test_voices_are_distinct_and_match_gender():
     for _ in range(50):
         voices = ls.assign_voices(["Marc", "Sophie", "Nicolas"])
