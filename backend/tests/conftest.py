@@ -7,6 +7,7 @@ _tmp = tempfile.mkdtemp(prefix="tcf_tests_")
 os.environ["DATABASE_URL"] = f"sqlite:///{_tmp}/test.db"
 os.environ["AUDIO_STORAGE_PATH"] = os.path.join(_tmp, "audio")
 os.environ["JWT_SECRET"] = "test-secret"
+os.environ["RESILIENCE_DELAY_SCALE"] = "0"
 os.environ.pop("PUBLIC_BASE_URL", None)
 os.environ.pop("GEMINI_API_KEY", None)
 os.environ.pop("ELEVENLABS_API_KEY", None)

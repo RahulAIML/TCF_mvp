@@ -86,6 +86,29 @@ export function friendlyNetworkError(err: unknown): Error {
   return err instanceof Error ? err : new Error("Something went wrong. Please try again.");
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Fetch with silent retries. A 429, 5xx, or a dropped connection is tried again before the caller sees it. */
+export async function apiFetch(input: string, init: RequestInit = {}, attempts = 4): Promise<Response> {
+  const retryable = !input.includes("/submit");
+  let lastError: unknown;
+  const tries = retryable ? attempts : 1;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    try {
+      const res = await fetch(input, init);
+      const again = retryable && [408, 429, 500, 502, 503, 504].includes(res.status) && attempt < tries - 1;
+      if (!again) return res;
+    } catch (error) {
+      lastError = error;
+      if (attempt === tries - 1) throw friendlyNetworkError(error);
+    }
+    await sleep(350 * 2 ** attempt + Math.random() * 250);
+  }
+  throw friendlyNetworkError(lastError);
+}
+
 export function authHeaders(): HeadersInit {
   const token = getAuthToken();
   const learner = getLearnerId();
@@ -96,7 +119,7 @@ export function authHeaders(): HeadersInit {
 }
 
 export async function signupUser(payload: SignupRequest): Promise<AuthResponse> {
-  const res = await fetch(`${API_BASE_URL}/signup`, {
+  const res = await apiFetch(`${API_BASE_URL}/signup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -106,7 +129,7 @@ export async function signupUser(payload: SignupRequest): Promise<AuthResponse> 
 }
 
 export async function loginUser(payload: LoginRequest): Promise<AuthResponse> {
-  const res = await fetch(`${API_BASE_URL}/login`, {
+  const res = await apiFetch(`${API_BASE_URL}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -118,7 +141,7 @@ export async function loginUser(payload: LoginRequest): Promise<AuthResponse> {
 export async function generateTcfListeningQuestion(
   payload: GenerateListeningQuestionRequest
 ): Promise<ListeningQuestion> {
-  const res = await fetch(`${API_BASE_URL}/tcf/generate-listening-question`, {
+  const res = await apiFetch(`${API_BASE_URL}/tcf/generate-listening-question`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
@@ -130,19 +153,33 @@ export async function generateTcfListeningQuestion(
 export async function generateTcfListeningAudio(
   payload: GenerateListeningAudioRequest
 ): Promise<GenerateListeningAudioResponse> {
-  const res = await fetch(`${API_BASE_URL}/tcf/generate-listening-audio`, {
+  const res = await apiFetch(`${API_BASE_URL}/tcf/generate-listening-audio`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
     cache: "no-store"
   });
-  return parseResponse<GenerateListeningAudioResponse>(res);
+  let body = await parseResponse<GenerateListeningAudioResponse>(res);
+  if (body.audio_url || !body.job_id) return body;
+  // A long interview keeps running on the server. Poll until the file exists.
+  for (let attempt = 0; attempt < 60; attempt++) {
+    await sleep(1200 + Math.random() * 400);
+    const poll = await apiFetch(`${API_BASE_URL}/tcf/listening-audio-jobs/${body.job_id}`, {
+      cache: "no-store",
+      headers: { ...authHeaders() },
+    });
+    if (poll.status === 404) break;
+    body = await parseResponse<GenerateListeningAudioResponse>(poll);
+    if (body.audio_url) return body;
+    if (body.status === "failed") break;
+  }
+  throw new Error("The audio is not available right now.");
 }
 
 export async function submitTcfListeningExam(
   payload: SubmitListeningExamRequest
 ): Promise<SubmitListeningExamResponse> {
-  const res = await fetch(`${API_BASE_URL}/tcf/submit-listening-exam`, {
+  const res = await apiFetch(`${API_BASE_URL}/tcf/submit-listening-exam`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
@@ -154,7 +191,7 @@ export async function submitTcfListeningExam(
 export async function generateTcfQuestion(
   payload: TcfGenerateQuestionRequest
 ): Promise<TcfExamQuestion> {
-  const res = await fetch(`${API_BASE_URL}/tcf/generate-question`, {
+  const res = await apiFetch(`${API_BASE_URL}/tcf/generate-question`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
@@ -164,7 +201,7 @@ export async function generateTcfQuestion(
 }
 
 export async function submitTcfExam(payload: TcfSubmitExamRequest): Promise<TcfSubmitExamResponse> {
-  const res = await fetch(`${API_BASE_URL}/tcf/submit-exam`, {
+  const res = await apiFetch(`${API_BASE_URL}/tcf/submit-exam`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
@@ -174,7 +211,7 @@ export async function submitTcfExam(payload: TcfSubmitExamRequest): Promise<TcfS
 }
 
 export async function generatePassage(): Promise<PassageResponse> {
-  const res = await fetch(`${API_BASE_URL}/generate-passage`, {
+  const res = await apiFetch(`${API_BASE_URL}/generate-passage`, {
     method: "POST",
     headers: { ...authHeaders() },
     cache: "no-store"
@@ -183,7 +220,7 @@ export async function generatePassage(): Promise<PassageResponse> {
 }
 
 export async function generatePassageQuiz(level?: PassageLevel, sessionId?: string): Promise<PassageQuizResponse> {
-  const res = await fetch(`${API_BASE_URL}/generate-passage-quiz`, {
+  const res = await apiFetch(`${API_BASE_URL}/generate-passage-quiz`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ level, session_id: sessionId }),
@@ -195,7 +232,7 @@ export async function generatePassageQuiz(level?: PassageLevel, sessionId?: stri
 export async function explainText(
   payload: ExplainTextRequest
 ): Promise<ExplainTextResponse> {
-  const res = await fetch(`${API_BASE_URL}/explain-text`, {
+  const res = await apiFetch(`${API_BASE_URL}/explain-text`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
@@ -205,7 +242,7 @@ export async function explainText(
 }
 
 export async function translatePassage(text: string): Promise<string> {
-  const res = await fetch(`${API_BASE_URL}/translate`, {
+  const res = await apiFetch(`${API_BASE_URL}/translate`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ text }),
@@ -218,7 +255,7 @@ export async function translatePassage(text: string): Promise<string> {
 export async function explainWord(
   payload: WordMeaningRequest
 ): Promise<WordMeaningResponse> {
-  const res = await fetch(`${API_BASE_URL}/word-meaning`, {
+  const res = await apiFetch(`${API_BASE_URL}/word-meaning`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
@@ -228,7 +265,7 @@ export async function explainWord(
 }
 
 export async function getDashboardSummary(): Promise<DashboardSummaryResponse> {
-  const res = await fetch(`${API_BASE_URL}/dashboard/summary`, {
+  const res = await apiFetch(`${API_BASE_URL}/dashboard/summary`, {
     method: "GET",
     headers: { ...authHeaders() },
     cache: "no-store"
@@ -239,7 +276,7 @@ export async function getDashboardSummary(): Promise<DashboardSummaryResponse> {
 export async function generateTcfWritingTasks(
   payload: TcfGenerateWritingTasksRequest
 ): Promise<TcfGenerateWritingTasksResponse> {
-  const res = await fetch(`${API_BASE_URL}/tcf/generate-writing-tasks`, {
+  const res = await apiFetch(`${API_BASE_URL}/tcf/generate-writing-tasks`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
@@ -251,7 +288,7 @@ export async function generateTcfWritingTasks(
 export async function evaluateTcfWritingTask(
   payload: TcfWritingEvaluationRequest
 ): Promise<TcfWritingEvaluationResponse> {
-  const res = await fetch(`${API_BASE_URL}/tcf/evaluate-writing`, {
+  const res = await apiFetch(`${API_BASE_URL}/tcf/evaluate-writing`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
@@ -263,7 +300,7 @@ export async function evaluateTcfWritingTask(
 export async function evaluateTcfWritingStep(
   payload: TcfWritingStepFeedbackRequest
 ): Promise<TcfWritingStepFeedbackResponse> {
-  const res = await fetch(`${API_BASE_URL}/tcf/evaluate-writing-step`, {
+  const res = await apiFetch(`${API_BASE_URL}/tcf/evaluate-writing-step`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
@@ -275,7 +312,7 @@ export async function evaluateTcfWritingStep(
 export async function saveTcfWritingProgress(
   payload: TcfWritingProgressRequest
 ): Promise<TcfWritingProgressResponse> {
-  const res = await fetch(`${API_BASE_URL}/tcf/writing/save-progress`, {
+  const res = await apiFetch(`${API_BASE_URL}/tcf/writing/save-progress`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
@@ -287,7 +324,7 @@ export async function saveTcfWritingProgress(
 export async function submitTcfWriting(
   payload: TcfWritingSubmitRequest
 ): Promise<TcfWritingSubmitResponse> {
-  const res = await fetch(`${API_BASE_URL}/tcf/writing/submit`, {
+  const res = await apiFetch(`${API_BASE_URL}/tcf/writing/submit`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
@@ -299,7 +336,7 @@ export async function submitTcfWriting(
 export async function sendTcfWritingAssistant(
   payload: TcfWritingAssistantRequest
 ): Promise<TcfWritingAssistantResponse> {
-  const res = await fetch(`${API_BASE_URL}/tcf/writing/assistant`, {
+  const res = await apiFetch(`${API_BASE_URL}/tcf/writing/assistant`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
@@ -311,7 +348,7 @@ export async function sendTcfWritingAssistant(
 export async function analyzeLearnContent(
   payload: LearnAnalyzeRequest
 ): Promise<LearnContentResponse> {
-  const res = await fetch(`${API_BASE_URL}/learn/analyze`, {
+  const res = await apiFetch(`${API_BASE_URL}/learn/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
@@ -323,7 +360,7 @@ export async function analyzeLearnContent(
 export async function uploadLearnFile(file: File): Promise<{ text: string; source_type: string }> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${API_BASE_URL}/learn/upload`, {
+  const res = await apiFetch(`${API_BASE_URL}/learn/upload`, {
     method: "POST",
     headers: { ...authHeaders() },
     body: form,
@@ -335,7 +372,7 @@ export async function uploadLearnFile(file: File): Promise<{ text: string; sourc
 export async function evaluateLearnAnswer(
   payload: LearnEvaluateRequest
 ): Promise<LearnEvaluationResponse> {
-  const res = await fetch(`${API_BASE_URL}/learn/evaluate`, {
+  const res = await apiFetch(`${API_BASE_URL}/learn/evaluate`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
@@ -347,7 +384,7 @@ export async function evaluateLearnAnswer(
 export async function generateMoreExercises(
   payload: LearnMoreExercisesRequest
 ): Promise<LearnExercise[]> {
-  const res = await fetch(`${API_BASE_URL}/learn/more-exercises`, {
+  const res = await apiFetch(`${API_BASE_URL}/learn/more-exercises`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
@@ -359,7 +396,7 @@ export async function generateMoreExercises(
 export async function saveLearnSession(
   payload: LearnSaveSessionRequest
 ): Promise<LearnSessionSummary> {
-  const res = await fetch(`${API_BASE_URL}/learn/session/save`, {
+  const res = await apiFetch(`${API_BASE_URL}/learn/session/save`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
@@ -369,7 +406,7 @@ export async function saveLearnSession(
 }
 
 export async function getTtsLanguages(): Promise<TtsLanguage[]> {
-  const res = await fetch(`${API_BASE_URL}/api/tts/languages`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/tts/languages`, {
     method: "GET",
     headers: { ...authHeaders() },
     cache: "no-store"
@@ -379,7 +416,7 @@ export async function getTtsLanguages(): Promise<TtsLanguage[]> {
 
 export async function getTtsVoices(language?: string): Promise<TtsVoice[]> {
   const query = language ? `?language=${encodeURIComponent(language)}` : "";
-  const res = await fetch(`${API_BASE_URL}/api/tts/voices${query}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/tts/voices${query}`, {
     method: "GET",
     headers: { ...authHeaders() },
     cache: "no-store"
@@ -388,7 +425,7 @@ export async function getTtsVoices(language?: string): Promise<TtsVoice[]> {
 }
 
 export async function getTtsHistory(): Promise<TtsHistoryItem[]> {
-  const res = await fetch(`${API_BASE_URL}/api/tts/history`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/tts/history`, {
     method: "GET",
     headers: { ...authHeaders() },
     cache: "no-store",
@@ -397,7 +434,7 @@ export async function getTtsHistory(): Promise<TtsHistoryItem[]> {
 }
 
 export async function deleteTtsHistoryItem(id: number): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/api/tts/history/${id}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/tts/history/${id}`, {
     method: "DELETE",
     headers: { ...authHeaders() },
     cache: "no-store",
@@ -410,7 +447,7 @@ export async function deleteTtsHistoryItem(id: number): Promise<void> {
 export async function startTtsJob(
   payload: TtsGenerateRequest
 ): Promise<{ job_id: string; status: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/tts/generate`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/tts/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
@@ -420,7 +457,7 @@ export async function startTtsJob(
 }
 
 export async function pollTtsJob(jobId: string): Promise<TtsJobResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/tts/job/${jobId}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/tts/job/${jobId}`, {
     headers: { ...authHeaders() },
     cache: "no-store"
   });
@@ -439,18 +476,18 @@ async function mcpError(res: Response, fallback: string): Promise<never> {
 }
 
 export async function getMcpInfo(): Promise<McpInfo> {
-  const res = await fetch(`${API_BASE_URL}/api/mcp/info`, { headers: { ...authHeaders() }, cache: "no-store" });
+  const res = await apiFetch(`${API_BASE_URL}/api/mcp/info`, { headers: { ...authHeaders() }, cache: "no-store" });
   return parseResponse<McpInfo>(res);
 }
 
 export async function listMcpTokens(): Promise<McpTokenRecord[]> {
-  const res = await fetch(`${API_BASE_URL}/api/mcp/tokens`, { headers: { ...authHeaders() }, cache: "no-store" });
+  const res = await apiFetch(`${API_BASE_URL}/api/mcp/tokens`, { headers: { ...authHeaders() }, cache: "no-store" });
   const body = await parseResponse<{ tokens: McpTokenRecord[] }>(res);
   return body.tokens;
 }
 
 export async function createMcpToken(name: string): Promise<McpCreatedToken> {
-  const res = await fetch(`${API_BASE_URL}/api/mcp/tokens`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/mcp/tokens`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ name }),
@@ -461,7 +498,7 @@ export async function createMcpToken(name: string): Promise<McpCreatedToken> {
 }
 
 export async function revokeMcpToken(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/api/mcp/tokens/${encodeURIComponent(id)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/mcp/tokens/${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers: { ...authHeaders() },
     cache: "no-store"

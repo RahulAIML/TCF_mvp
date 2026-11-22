@@ -10,7 +10,11 @@ connect_args = {}
 if DATABASE_URL.startswith("sqlite"):
   connect_args = {"check_same_thread": False, "timeout": 30}
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=connect_args)
+_engine_kwargs = {"pool_pre_ping": True, "connect_args": connect_args}
+if not DATABASE_URL.startswith("sqlite"):
+  # Drop connections the host has already closed, and don't wait forever for a slot.
+  _engine_kwargs.update(pool_size=5, max_overflow=10, pool_recycle=300, pool_timeout=30)
+engine = create_engine(DATABASE_URL, **_engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
