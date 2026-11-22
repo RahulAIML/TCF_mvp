@@ -87,6 +87,28 @@ def test_level_consistent_with_scores():
     assert result["level"] == "B1"
 
 
+def test_the_same_text_keeps_the_same_scores(monkeypatch):
+    """A second correction must not drift (the reported case was B1 6/6/6/5, then B2 8/8/8/7)."""
+    calls = []
+    answers = iter([GOOD_EVAL, GOOD_EVAL.replace("NIVEAU: B1", "NIVEAU: B2").replace("STRUCTURE: 6", "STRUCTURE: 8")])
+
+    def fake_generate(contents, stream=False, **kwargs):
+        calls.append(kwargs.get("temperature"))
+        text = next(answers)
+        return _chunks(text) if stream else SimpleNamespace(text=text)
+
+    monkeypatch.setattr(svc, "API_KEY", "test")
+    monkeypatch.setattr(svc, "_gemini_generate", fake_generate)
+    prompt = "Écrivez à un collègue au sujet d'un événement local."
+    response = " ".join(["phrase"] * 130)
+    first = svc.evaluate_tcf_writing_task("task2", prompt, response)
+    second = svc.evaluate_tcf_writing_task("task2", prompt, response)
+    assert first == second
+    assert first["level"] == "B1"
+    assert calls == [0.0]
+    assert svc._WRITING_EVAL_TEMPERATURE == 0.0
+
+
 def test_evaluate_streams_then_parses(monkeypatch):
     calls = []
 

@@ -22,6 +22,7 @@ from routers.tcf_writing_routes import router as tcf_writing_router
 from routers.pronunciation_routes import router as pronunciation_router
 from routers.ai_chat_routes import router as ai_chat_router
 from routers.tts_routes import router as tts_router
+from learner import LearnerMiddleware
 from routers.mcp_routes import McpOpenCorsMiddleware, router as mcp_router
 
 load_dotenv()
@@ -56,6 +57,7 @@ app.add_middleware(
 )
 # Added after CORSMiddleware, so it runs first: /mcp is open to any origin (bearer token only, no cookies).
 app.add_middleware(McpOpenCorsMiddleware)
+app.add_middleware(LearnerMiddleware)
 
 app.include_router(dictionary_router)
 app.include_router(passage_router)
@@ -83,9 +85,19 @@ def pregen_stats() -> dict:
   return pregen_pool.all_stats()
 
 
+def _deploy_commit() -> str:
+  """Render sets RENDER_GIT_COMMIT. Local and other hosts fall back to dev."""
+  return os.getenv("RENDER_GIT_COMMIT") or os.getenv("GIT_COMMIT") or "dev"
+
+
 @app.get("/")
 async def root() -> dict[str, str]:
-  return {"status": "ok", "service": "tcf-backend"}
+  return {"status": "ok", "service": "tcf-backend", "commit": _deploy_commit()}
+
+
+@app.get("/api/version")
+def version() -> dict[str, str]:
+  return {"service": "tcf-backend", "commit": _deploy_commit()}
 
 
 _HEALTH_PROBE_TTL_SECONDS = 60
@@ -124,4 +136,5 @@ def health() -> dict:
     "ELEVENLABS_API_KEY": "set" if os.getenv("ELEVENLABS_API_KEY") else "MISSING",
     "gemini_chat_test": _gemini_probe(),
     "pregen": pregen_pool.all_stats(),
+    "commit": _deploy_commit(),
   }

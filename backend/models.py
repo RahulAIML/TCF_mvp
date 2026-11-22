@@ -1,6 +1,6 @@
 ﻿from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 
 from database import Base
 
@@ -222,3 +222,76 @@ class McpToken(Base):
   created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
   last_used_at = Column(DateTime, nullable=True)
   revoked_at = Column(DateTime, nullable=True)
+
+
+class SeenItem(Base):
+  """One practice item a learner has already been served. No expiry and no cap."""
+  __tablename__ = "seen_items"
+  __table_args__ = (
+    UniqueConstraint("learner_key", "module", "fingerprint", name="uq_seen_learner_item"),
+    Index("ix_seen_learner_module", "learner_key", "module"),
+  )
+
+  id = Column(Integer, primary_key=True)
+  learner_key = Column(String(80), nullable=False)
+  module = Column(String(40), nullable=False)
+  fingerprint = Column(String(64), nullable=False)
+  simhash = Column(String(16), nullable=True)
+  label = Column(String(240), nullable=True)
+  created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class ContentRegistry(Base):
+  """Every text ever generated, so a restarted pool does not recreate a known item."""
+  __tablename__ = "content_registry"
+
+  fingerprint = Column(String(64), primary_key=True)
+  module = Column(String(40), nullable=False, index=True)
+  simhash = Column(String(16), nullable=True)
+  created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class PregenItem(Base):
+  """A ready-to-serve item. claimed_at is set by the worker that hands it out."""
+  __tablename__ = "pregen_items"
+  __table_args__ = (
+    Index("ix_pregen_unclaimed", "pool", "pool_key", "claimed_at"),
+    UniqueConstraint("pool", "fingerprint", name="uq_pregen_fingerprint"),
+  )
+
+  id = Column(Integer, primary_key=True)
+  pool = Column(String(40), nullable=False)
+  pool_key = Column(String(120), nullable=False)
+  fingerprint = Column(String(64), nullable=False, index=True)
+  simhash = Column(String(16), nullable=True)
+  payload = Column(Text, nullable=False)
+  created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+  claimed_at = Column(DateTime, nullable=True)
+  claim_token = Column(String(40), nullable=True)
+
+
+class ExamSlot(Base):
+  """The question a learner already received for one exam slot, so a resume shows the same item."""
+  __tablename__ = "exam_slots"
+  __table_args__ = (
+    UniqueConstraint("learner_key", "exam_session_id", "module", "slot", name="uq_exam_slot"),
+  )
+
+  id = Column(Integer, primary_key=True)
+  learner_key = Column(String(80), nullable=False)
+  exam_session_id = Column(String(80), nullable=False)
+  module = Column(String(40), nullable=False)
+  slot = Column(String(40), nullable=False)
+  fingerprint = Column(String(64), nullable=False)
+  payload = Column(Text, nullable=False)
+  created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class WritingEvalCache(Base):
+  """Same task, prompt and response always return the first score, even after a restart."""
+  __tablename__ = "writing_eval_cache"
+
+  cache_key = Column(String(64), primary_key=True)
+  raw_text = Column(Text, nullable=False)
+  result_json = Column(Text, nullable=False)
+  created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

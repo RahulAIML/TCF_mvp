@@ -20,7 +20,7 @@ def post_generate_passage(
 ) -> PassageResponse:
   try:
     return generate_passage(payload.level if payload else None)
-  except RuntimeError as error:
+  except Exception as error:
     logger.warning("Passage generation failed: %s", error)
     raise HTTPException(status_code=503, detail=_UNAVAILABLE) from error
 
@@ -32,6 +32,6 @@ def post_generate_passage_quiz(
 ) -> PassageQuizResponse:
   try:
     return get_passage_quiz(payload.level if payload else None, payload.session_id if payload else None)
-  except RuntimeError as error:
+  except Exception as error:
     logger.warning("Passage quiz generation failed: %s", error)
     raise HTTPException(status_code=503, detail=_UNAVAILABLE) from error
