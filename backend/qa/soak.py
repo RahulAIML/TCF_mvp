@@ -23,7 +23,10 @@ def _request(method: str, url: str, body: dict | None = None, timeout: float = 6
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
+            content_type = response.headers.get("Content-Type", "")
             raw = response.read()
+            if "json" not in content_type:
+                return response.status, {"bytes": len(raw)}
             try:
                 return response.status, json.loads(raw.decode() or "{}")
             except json.JSONDecodeError:
@@ -56,9 +59,9 @@ def _audio(base: str, script: str, speakers: list[str]) -> tuple[bool, str]:
                 return False, "audio job failed"
     if not url:
         return False, "audio never ready"
-    file_status, _body = _request("GET", base + url, timeout=30)
-    if file_status >= 400:
-        return False, f"audio file {file_status}"
+    file_status, file_body = _request("GET", base + url, timeout=30)
+    if file_status >= 400 or not isinstance(file_body, dict) or file_body.get("bytes", 0) < 500:
+        return False, f"audio file {file_status} {file_body}"
     return True, url
 
 
