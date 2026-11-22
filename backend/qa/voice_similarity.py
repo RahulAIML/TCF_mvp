@@ -41,23 +41,22 @@ def _decode(mp3: bytes, rate: int = 24000) -> np.ndarray:
     return np.frombuffer(decoded.samples, dtype="<i2").astype(np.float32) / 32768.0
 
 
-def speech_segments(samples: np.ndarray, rate: int = 24000) -> list[np.ndarray]:
-    """Pieces of speech separated by the pause between turns.
+def split_into_turns(samples: np.ndarray, turn_count: int, rate: int = 24000) -> list[np.ndarray]:
+    """Cut the file at the longest silences so there is one piece per synthesised turn.
 
-    The inserted pause is 650 ms, so a real turn gap is longer than a stop inside a sentence.
+    A sentence can contain a short stop. The pause we insert between speakers is longer, so the
+    longest gaps are the turn boundaries even when a turn itself is not one continuous phrase.
     """
-    frame = int(rate * 0.02)
-    if len(samples) < frame * 10:
+    if turn_count < 2:
         return [samples]
+    frame = int(rate * 0.02)
     rms = np.array([
         np.sqrt(np.mean(samples[i:i + frame] ** 2))
-        for i in range(0, len(samples) - frame, frame)
+        for i in range(0, max(frame, len(samples) - frame), frame)
     ])
-    speech = float(np.percentile(rms, 75))
-    quiet = rms < max(0.015, speech * 0.22)
-    gap_frames = 20  # 0.40 s
-    segments: list[np.ndarray] = []
-    start = 0
+    speech = float(np.percentile(rms, 75)) if len(rms) else 0.0
+    quiet = rms < max(0.012, speech * 0.25)
+    runs: list[tuple[int, int]] = []
     i = 0
     while i < len(quiet):
         if not quiet[i]:
@@ -66,31 +65,33 @@ def speech_segments(samples: np.ndarray, rate: int = 24000) -> list[np.ndarray]:
         j = i
         while j < len(quiet) and quiet[j]:
             j += 1
-        if j - i >= gap_frames and i > start:
-            piece = samples[start * frame:i * frame]
-            if len(piece) > int(rate * 0.55):
-                segments.append(piece)
-            start = j
+        # Ignore the fade at the very start and the tail after the last word.
+        if j - i >= 8 and i > 2 and j < len(quiet) - 2:
+            runs.append((j - i, i))
         i = j
-    tail = samples[start * frame:]
-    if len(tail) > int(rate * 0.55):
-        segments.append(tail)
-    return segments or [samples]
+    runs.sort(reverse=True)
+    chosen = sorted(runs[:turn_count - 1], key=lambda run: run[1])
+    if len(chosen) < turn_count - 1:
+        raise ValueError(f"only {len(chosen)} pauses for {turn_count} turns")
+    cuts = [((start + length // 2) * frame) for length, start in chosen]
+    bounds = [0, *cuts, len(samples)]
+    pieces = [samples[bounds[k]:bounds[k + 1]] for k in range(turn_count)]
+    if any(len(piece) < int(rate * 0.25) for piece in pieces):
+        raise ValueError(f"a turn was too short after splitting {turn_count} turns")
+    return pieces
 
 
 def sides_for_speakers(samples: np.ndarray, turns: list[dict], rate: int = 24000) -> tuple[np.ndarray, np.ndarray]:
     """One waveform per speaker. A mid-file cut mixes both people when a dialogue has more than two turns."""
-    segments = speech_segments(samples, rate)
-    speakers = [turn.get("speaker") or turn.get("voice_id") or str(index) for index, turn in enumerate(turns)]
-    if len(segments) == len(speakers) and len(set(speakers)) >= 2:
-        grouped: dict[str, list[np.ndarray]] = {}
-        for segment, speaker in zip(segments, speakers):
-            grouped.setdefault(str(speaker), []).append(segment)
-        names = list(grouped)
-        return np.concatenate(grouped[names[0]]), np.concatenate(grouped[names[1]])
-    # Only trust a score when each turn was separated. Averaging leftover pieces makes two different
-    # voices look like one person.
-    raise ValueError(f"could not isolate the two speakers ({len(segments)} segments for {len(speakers) or 'unknown'} turns)")
+    speakers = [str(turn.get("speaker") or turn.get("voice_id") or index) for index, turn in enumerate(turns)]
+    if len(set(speakers)) < 2:
+        raise ValueError("the file does not name two speakers")
+    pieces = split_into_turns(samples, len(speakers), rate)
+    grouped: dict[str, list[np.ndarray]] = {}
+    for piece, speaker in zip(pieces, speakers):
+        grouped.setdefault(speaker, []).append(piece)
+    names = list(grouped)
+    return np.concatenate(grouped[names[0]]), np.concatenate(grouped[names[1]])
 
 
 def _encoder():

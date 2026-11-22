@@ -145,6 +145,21 @@ def test_two_male_names_get_two_different_male_voices():
         assert second["pitch_semitones"] == 4
 
 
+def test_cached_dialogue_reports_every_turn(monkeypatch, tmp_path):
+    def fake(text, voice, polish=True):
+        return {"data": _tone(660 if voice.endswith("2") else 440), "extension": "mp3", "mime_type": "audio/mpeg", "provider": "test", "provider_voice": voice}
+
+    monkeypatch.setattr(ls.tts_service, "synthesize_elevenlabs", fake)
+    monkeypatch.setattr(ls, "_audio_dir", lambda: str(tmp_path))
+    script = "François : Bonjour tout le monde. Paul : Bonsoir à vous deux. François : À demain."
+    ls.synthesize_listening_audio(script)
+    report: list = []
+    ls.synthesize_listening_audio(script, report=report)
+    assert [row["speaker"] for row in report] == ["François", "Paul", "François"]
+    assert report[0]["provider"] == "cached"
+    assert report[0]["voice_id"] != report[1]["voice_id"]
+
+
 def test_dialogue_audio_has_one_segment_per_speaker(monkeypatch, tmp_path):
     calls = []
 

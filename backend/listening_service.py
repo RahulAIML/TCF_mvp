@@ -440,22 +440,25 @@ def _synthesize_segments(jobs: List[Tuple[str, str]], synth) -> List[Dict[str, A
 
 def _record_voice_plan(
     report: Optional[List[Dict[str, Any]]],
+    script: str,
     names: List[str],
     planned: Dict[Optional[str], str],
     *,
     provider: str | None = None,
 ) -> None:
-    """Voice assigned to each speaker. Used when a finished file is served from the cache."""
+    """One row per turn. A cache hit must still say which voice spoke which line."""
     if report is None:
         return
     report.clear()
-    for name in names:
-        voice_id = planned.get(name)
+    for speaker, text in dialogue_segments(script, names):
+        if not _spoken_turn(text, names):
+            continue
+        voice_id = planned.get(speaker) or planned.get(None)
         if not voice_id:
             continue
         cfg = tts_service.get_voice(voice_id)
         report.append({
-            "speaker": name,
+            "speaker": speaker,
             "voice_id": voice_id,
             "provider": provider,
             "provider_voice": cfg["elevenlabs_voice_id"],
@@ -486,7 +489,7 @@ def synthesize_listening_audio(
     script_key = hashlib.sha256(f"v5|{voice_key}|650|{script.strip()}".encode("utf-8")).hexdigest()
     cached = audio_store.find_by_script(script_key)
     if cached and audio_store.available(cached):
-        _record_voice_plan(report, names_for_key, planned, provider="cached")
+        _record_voice_plan(report, script, names_for_key, planned, provider="cached")
         return cached
     names = names_for_key
     if not names:
