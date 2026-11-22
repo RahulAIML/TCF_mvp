@@ -39,6 +39,9 @@ _TRANSIENT = (
 
 def is_transient(error: BaseException) -> bool:
     text = f"{type(error).__name__} {error}".lower()
+    # A 400/401/403/404 is the request, not a blip, even if the body mentions "500 characters" or "quota".
+    if any(code in text for code in ("http 400", "http 401", "http 403", "http 404", "http 422")):
+        return False
     return any(marker in text for marker in _TRANSIENT)
 
 

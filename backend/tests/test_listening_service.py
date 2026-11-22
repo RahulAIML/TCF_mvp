@@ -512,6 +512,34 @@ def test_monologue_uses_a_random_registry_voice(monkeypatch):
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 
+def test_rejected_voice_still_returns_audio_for_the_exact_payload(client, monkeypatch):
+    """A provider 400 for one voice must not 503 the dialogue. The other voice of that gender is used."""
+    calls = []
+
+    def el(text, voice, polish=True):
+        calls.append(voice)
+        if voice == "fr-FR-male-1":
+            raise RuntimeError("ElevenLabs HTTP 400: voice_id is not valid")
+        return {"data": _mp3(0.2), "extension": "mp3", "mime_type": "audio/mpeg", "provider": "elevenlabs", "provider_voice": voice}
+
+    def gemini(text, voice, polish=True):
+        raise RuntimeError("Gemini TTS failed immediately")
+
+    monkeypatch.setattr(ls.tts_service, "synthesize_elevenlabs", el)
+    monkeypatch.setattr(ls.tts_service, "synthesize_gemini", gemini)
+    response = client.post("/tcf/generate-listening-audio", json={
+        "script": "Maxime : Bonjour Mélanie, quel est le sujet ?\nMélanie : Je vous explique le piège.",
+        "speakers": ["Maxime", "Mélanie"],
+        "question_id": "1afe39b7bc5c9db4",
+        "format_type": "un entretien approfondi d'un expert par un journaliste",
+    })
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["audio_url"].startswith("/audio/")
+    assert "fr-FR-male-2" in calls
+    assert "Gemini" not in response.text
+
+
 def test_question_route_returns_friendly_503(client, monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("Gemini generate_content failed: quota")

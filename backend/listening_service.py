@@ -441,9 +441,56 @@ def _synth_turn(synth, text: str, voice: str) -> Dict[str, Any]:
     return resilience.retry(once, attempts=3, base=0.3)
 
 
-def _synthesize_segments(jobs: List[Tuple[str, str]], synth) -> List[Dict[str, Any]]:
+def _voice_rejected(error: BaseException) -> bool:
+    """The provider refused this voice id. A 429 or a timeout is the account, not this voice."""
+    text = str(error).lower()
+    if any(code in text for code in ("http 429", "http 500", "http 502", "http 503", "timeout")):
+        return False
+    return any(code in text for code in ("http 400", "http 401", "http 403", "http 404", "voice"))
+
+
+def _voice_fallbacks(voice_id: str) -> List[str]:
+    """Assigned voice first, then the other voice of the same gender, then any French voice."""
+    ordered = [voice_id]
+    try:
+        gender = tts_service.get_voice(voice_id)["gender"]
+    except Exception:
+        gender = None
+    french = [voice["id"] for voice in tts_service.list_active_voices("fr")]
+    for vid in french:
+        if vid not in ordered and gender and tts_service.get_voice(vid)["gender"] == gender:
+            ordered.append(vid)
+    for vid in french:
+        if vid not in ordered:
+            ordered.append(vid)
+    return ordered[:4]
+
+
+def _speak_with(synth, text: str, voice_id: str) -> Dict[str, Any]:
+    """One turn. A rejected voice id is replaced with another real voice. Other errors propagate."""
+    last: BaseException | None = None
+    for vid in _voice_fallbacks(voice_id):
+        try:
+            result = dict(_synth_turn(synth, text, vid))
+            if vid != voice_id:
+                logger.warning("Listening turn voice %s was rejected; used %s instead.", voice_id, vid)
+            result["voice_id_used"] = vid
+            return result
+        except Exception as error:
+            last = error
+            logger.exception("Listening turn failed voice=%s provider=%s", vid, getattr(synth, "__name__", synth))
+            if not _voice_rejected(error):
+                raise
+    assert last is not None
+    raise last
+
+
+def _synthesize_dialogue(jobs: List[Tuple[str, str]], synth) -> List[Dict[str, Any]]:
+    def one(text: str, voice_id: str) -> Dict[str, Any]:
+        return _speak_with(synth, text, voice_id)
+
     with ThreadPoolExecutor(max_workers=min(3, max(1, len(jobs)))) as pool:
-        return list(pool.map(lambda job: synth(job[0], job[1]), jobs))
+        return list(pool.map(lambda job: one(job[0], job[1]), jobs))
 
 
 def _record_voice_plan(
@@ -552,10 +599,16 @@ def _synthesize_listening_audio(
             cfg.get("gemini_style"), len(text),
         )
     try:
-        results = _synthesize_segments(jobs, lambda text, voice: _synth_turn(tts_service.synthesize_elevenlabs, text, voice))
+        results = _synthesize_dialogue(jobs, tts_service.synthesize_elevenlabs)
     except Exception as el_error:
-        logger.warning("Dialogue ElevenLabs synthesis failed (%s); regenerating with Gemini voices.", el_error)
-        results = _synthesize_segments(jobs, lambda text, voice: _synth_turn(tts_service.synthesize_gemini, text, voice))
+        logger.exception("Dialogue ElevenLabs synthesis failed (%s); regenerating with Gemini voices.", el_error)
+        try:
+            results = _synthesize_dialogue(jobs, tts_service.synthesize_gemini)
+        except Exception as gemini_error:
+            logger.exception("Dialogue Gemini synthesis failed (%s); one voice will read the whole script.", gemini_error)
+            spoken = _monologue_text(script) or script
+            single = tts_service.synthesize(spoken, voices.get(names[0]) or "fr-FR-female-2")
+            results = [single]
     ext = results[0]["extension"]
     if ext == "mp3":
         data = _mix_turns([r["data"] for r in results])
@@ -577,12 +630,17 @@ def _synthesize_listening_audio(
     if report is not None:
         report.clear()
         for (_text, voice_id, speaker), result in zip(labelled, results):
+            used = result.get("voice_id_used") or voice_id
+            try:
+                pitch = tts_service.get_voice(used).get("pitch_semitones")
+            except Exception:
+                pitch = None
             report.append({
                 "speaker": speaker,
-                "voice_id": voice_id,
+                "voice_id": used,
                 "provider": result.get("provider"),
                 "provider_voice": result.get("provider_voice"),
-                "pitch_semitones": tts_service.get_voice(voice_id).get("pitch_semitones"),
+                "pitch_semitones": pitch,
             })
     return _save(data, ext, script_key)
 
