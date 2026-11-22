@@ -115,6 +115,24 @@ def test_cors_is_open_for_mcp_only(client):
   assert other.headers.get("access-control-allow-origin") != "*"
 
 
+def test_frontend_preflight_and_errors_carry_acao(client):
+  origin = "https://tcf-trainer.onrender.com"
+  pre = client.options(
+    "/tcf/generate-listening-question",
+    headers={
+      "Origin": origin,
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "content-type,x-learner-id",
+    },
+  )
+  assert pre.status_code == 204
+  assert pre.headers["access-control-allow-origin"] == origin
+  assert "X-Learner-Id" in pre.headers["access-control-allow-headers"]
+  missing = client.get("/api/does-not-exist", headers={"Origin": origin})
+  assert missing.status_code == 404
+  assert missing.headers["access-control-allow-origin"] == origin
+
+
 # ----------------------------------- auth -----------------------------------
 
 def test_no_token_or_wrong_token_is_401_with_the_bearer_challenge(client):

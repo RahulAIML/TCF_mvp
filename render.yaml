@@ -11,7 +11,7 @@ services:
     buildCommand: pip install -r requirements.txt
     # One process. Audio jobs live in memory, so a second worker would lose them.
     # Heavy TTS/ffmpeg is capped inside the process (HEAVY_WORKERS, FFMPEG_CONCURRENCY).
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --timeout-keep-alive 5
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-keep-alive 5
     healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
@@ -33,11 +33,17 @@ services:
         fromDatabase:
           name: tcf-postgres
           property: connectionString
-      # One or two background generators. More than that runs several ffmpeg jobs at boot and the
-      # instance is killed (instant 502s). Missing this variable is safe: the code defaults to 2.
+      # Background generation on this 512 MB instance was crash-looping the process
+      # (instant 502s from the proxy). Leave it off; a request still generates when asked.
+      - key: PREGEN_ENABLED
+        value: "0"
       - key: PREGEN_WORKERS
-        value: "2"
+        value: "1"
+      - key: HEAVY_WORKERS
+        value: "1"
       - key: FFMPEG_CONCURRENCY
+        value: "1"
+      - key: WEB_CONCURRENCY
         value: "1"
 
   - type: web

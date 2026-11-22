@@ -54,21 +54,85 @@ configured_origins = [
 ]
 frontend_origins = sorted(
   set(configured_origins).union({
+    "https://tcf-trainer.onrender.com",
     "http://localhost:3000",
     "http://localhost:3001",
-    "http://127.0.0.1:3000"
+    "http://127.0.0.1:3000",
   })
 )
+_ALLOWED_ORIGINS = set(frontend_origins)
+_CORS_ALLOW_HEADERS = "Authorization, Content-Type, X-Learner-Id, Accept"
+
+
+def _cors_headers(scope) -> list[tuple[bytes, bytes]]:
+  """Headers for the browser. /mcp stays open; the site only trusts its own origin."""
+  path = scope.get("path") or ""
+  if path == "/mcp" or path.startswith("/mcp/"):
+    return [
+      (b"access-control-allow-origin", b"*"),
+      (b"access-control-allow-methods", b"GET, POST, OPTIONS"),
+      (b"access-control-allow-headers", b"Authorization, Content-Type, Accept, Mcp-Protocol-Version, Mcp-Session-Id, Last-Event-ID"),
+      (b"access-control-max-age", b"86400"),
+    ]
+  headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers") or []}
+  origin = headers.get("origin", "")
+  if origin not in _ALLOWED_ORIGINS:
+    return []
+  return [
+    (b"access-control-allow-origin", origin.encode("latin-1")),
+    (b"access-control-allow-credentials", b"true"),
+    (b"access-control-allow-methods", b"GET, POST, PUT, PATCH, DELETE, OPTIONS"),
+    (b"access-control-allow-headers", _CORS_ALLOW_HEADERS.encode("latin-1")),
+    (b"access-control-max-age", b"86400"),
+    (b"vary", b"Origin"),
+  ]
+
+
+class EnsureCorsMiddleware:
+  """Outermost middleware. Every response, including errors, carries CORS, and OPTIONS never reaches the app."""
+
+  def __init__(self, app):
+    self.app = app
+
+  async def __call__(self, scope, receive, send):
+    if scope.get("type") != "http":
+      await self.app(scope, receive, send)
+      return
+    extra = _cors_headers(scope)
+    if scope.get("method") == "OPTIONS":
+      await send({"type": "http.response.start", "status": 204, "headers": extra})
+      await send({"type": "http.response.body", "body": b""})
+      return
+
+    async def send_with_cors(message):
+      if message["type"] == "http.response.start" and extra:
+        existing = list(message.get("headers") or [])
+        names = {name.lower() for name, _value in existing}
+        message["headers"] = existing + [item for item in extra if item[0] not in names]
+      await send(message)
+
+    try:
+      await self.app(scope, receive, send_with_cors)
+    except Exception:
+      import logging
+      logging.getLogger("tcf").exception("Unhandled error")
+      body = b'{"detail":"The service is temporarily unavailable. Please try again."}'
+      headers = [(b"content-type", b"application/json")] + extra
+      await send({"type": "http.response.start", "status": 500, "headers": headers})
+      await send({"type": "http.response.body", "body": body})
+
+
+# Learner first (innermost), then the MCP exception, then CORS so it wraps errors and preflight.
+app.add_middleware(LearnerMiddleware)
+app.add_middleware(McpOpenCorsMiddleware)
 app.add_middleware(
   CORSMiddleware,
   allow_origins=frontend_origins,
   allow_credentials=True,
   allow_methods=["*"],
-  allow_headers=["*"]
+  allow_headers=["Authorization", "Content-Type", "X-Learner-Id", "Accept"],
 )
-# Added after CORSMiddleware, so it runs first: /mcp is open to any origin (bearer token only, no cookies).
-app.add_middleware(McpOpenCorsMiddleware)
-app.add_middleware(LearnerMiddleware)
+app.add_middleware(EnsureCorsMiddleware)
 
 app.include_router(dictionary_router)
 app.include_router(passage_router)

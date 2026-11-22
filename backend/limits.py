@@ -10,7 +10,7 @@ import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-HEAVY_WORKERS = max(1, int(os.getenv("HEAVY_WORKERS", "3")))
+HEAVY_WORKERS = max(1, int(os.getenv("HEAVY_WORKERS", "1")))
 FFMPEG_SLOTS = max(1, int(os.getenv("FFMPEG_CONCURRENCY", "1")))
 # How many heavy jobs may be waiting. Past this, a new job fails immediately instead of queueing forever.
 MAX_HEAVY_WAITING = max(HEAVY_WORKERS, int(os.getenv("HEAVY_QUEUE", "6")))
