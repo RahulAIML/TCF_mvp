@@ -41,6 +41,13 @@ def test_francs_in_a_canadian_scene_are_rejected():
     assert q.anachronism_problems("Un roman du XIXe siècle parle de dix francs.") == []
 
 
+def test_letter_citations_are_scrubbed():
+    cleaned = q.scrub_letter_citations("La réponse B est correcte car le texte le dit.")
+    assert "réponse B" not in cleaned
+    assert "bonne réponse" in cleaned
+    assert q.explanation_problems(cleaned) == []
+
+
 def test_explanation_must_not_cite_a_letter():
     assert q.explanation_problems("L'option B est exacte.") == ["explanation cites an option letter"]
     assert q.explanation_problems("Le texte dit que le magasin ferme à six heures.") == []

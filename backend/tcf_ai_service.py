@@ -114,24 +114,27 @@ SCENARIO_CONTEXTS = [
 ]
 
 # Real examiner names used to avoid AI generating "[placeholder]" names
-TCF_EXAMINER_NAMES = [
-    ("Marie Dupont", "examinatrice"),
-    ("Sophie Martin", "examinatrice"),
-    ("Claire Lefebvre", "examinatrice"),
-    ("Isabelle Moreau", "examinatrice"),
-    ("Nathalie Petit", "examinatrice"),
-    ("Jean-Pierre Bernard", "examinateur"),
-    ("Thomas Rousseau", "examinateur"),
-    ("Michel Laurent", "examinateur"),
-]
+TCF_EXAMINER_NAMES = list(topic_bank.EXAMINERS)
 
 def _pick_examiner(session_id: str | None) -> tuple[str, str]:
-    """Return (name, title) deterministic per session, random otherwise."""
-    import hashlib
-    if session_id:
-        idx = int(hashlib.md5(session_id.encode()).hexdigest(), 16) % len(TCF_EXAMINER_NAMES)
-        return TCF_EXAMINER_NAMES[idx]
-    return random.choice(TCF_EXAMINER_NAMES)
+    """A name from the large pool. The same learner does not draw a name they just heard."""
+    avoid: list[str] = []
+    try:
+        from learner import current_learner
+        who = current_learner()
+        if who:
+            avoid = content_bank.recent_labels(who, "speaking_examiner", 12)
+    except Exception:
+        avoid = []
+    name, title = topic_bank.pick_examiner(avoid)
+    try:
+        from learner import current_learner
+        who = current_learner()
+        if who:
+            content_bank.remember(who, "speaking_examiner", dedupe.fingerprint(name), None, label=name)
+    except Exception:
+        pass
+    return name, title
 
 
 # TCF Canada expression orale, 3 tasks:
@@ -251,10 +254,10 @@ def _generate_tts_audio(script: str, question_number: int, session_id: str | Non
         result = tts_service.synthesize_gemini(script, "fr-FR-female-1")
         data, ext = result["data"], result["extension"]
 
+    import audio_store
     file_name = f"tcf_audio_{question_number}_{session_id or 'global'}_{uuid.uuid4().hex[:8]}.{ext}"
-    with open(os.path.join(AUDIO_STORAGE_PATH, file_name), "wb") as audio_file:
-        audio_file.write(data)
-    return f"/audio/{file_name}"
+    mime = "audio/wav" if ext == "wav" else "audio/mpeg"
+    return audio_store.save(file_name, data, mime)
 
 
 def _freshness_token() -> str:
@@ -1211,7 +1214,7 @@ def generate_tcf_speaking_opening(task_type: str, avoid_topics: list[str] | None
     A fresh session opening for the pre-generation pool: new topic + examiner's first line + audio,
     in one Gemini call. Falls back to the curated topic list when the model output is unusable.
     """
-    name, title = random.choice(TCF_EXAMINER_NAMES)
+    name, title = _pick_examiner(None)
     brief = _SPEAKING_TASK_BRIEFS.get(task_type, _SPEAKING_TASK_BRIEFS["opinion"])
     examples = "\n".join(f"- {topic_bank.speaking_topic(task_type)}" for _ in range(4))
     avoid = ""
@@ -1533,6 +1536,7 @@ _LEARN_RULES = """Règles STRICTES :
 - Tout le contenu est en français.
 - Pour le QCM, place la bonne réponse sur la lettre {letter} ; les 3 distracteurs doivent être plausibles.
 - Ne réutilise AUCUNE des questions déjà posées listées ci-dessous, ni une reformulation proche.
+- L'explication ne mentionne JAMAIS de lettre (A, B, C ou D). Elle dit « la bonne réponse ».
 - Sortie : JSON valide uniquement."""
 
 
@@ -1617,6 +1621,17 @@ Règles : tout en français ; 3 à 5 points clés ; 3 à 5 mots de vocabulaire a
     }
 
 
+def _scrub_learn_exercises(exercises: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    import quality_guard
+    cleaned: list[Dict[str, Any]] = []
+    for exercise in exercises:
+        item = dict(exercise)
+        if item.get("explanation"):
+            item["explanation"] = quality_guard.scrub_letter_citations(str(item["explanation"]))
+        cleaned.append(item)
+    return cleaned
+
+
 def generate_learn_exercises(text: str, exclude_questions=()) -> list[Dict[str, Any]]:
     """Second phase of the analysis: 5 exercises grounded in the source text."""
     prompt = f"""Tu es un tuteur TCF Canada. Génère exactement 5 exercices d'apprentissage basés sur ce texte.
@@ -1630,7 +1645,7 @@ Retourne un JSON : tableau de 5 exercices au format :
 {_LEARN_RULES.format(letter=random.choice("ABCD"))}
 {_exclusion_block(exclude_questions)}"""
     exercises = _order_learn_exercises(_extract_exercise_list(_generate_json(prompt, temperature=0.7)))
-    return _drop_repeated(exercises, exclude_questions)
+    return _scrub_learn_exercises(_drop_repeated(exercises, exclude_questions))
 
 
 def analyze_learn_content(text: str) -> Dict[str, Any]:
@@ -1659,7 +1674,7 @@ Retourne un JSON : tableau de 5 exercices au format :
 - Adapter la difficulté au niveau {level}.
 {_exclusion_block(exclude_questions)}"""
     exercises = _order_learn_exercises(_extract_exercise_list(_generate_json(prompt, temperature=0.8)))
-    return _drop_repeated(exercises, exclude_questions)
+    return _scrub_learn_exercises(_drop_repeated(exercises, exclude_questions))
 
 
 def _letter_of(answer: str) -> str:

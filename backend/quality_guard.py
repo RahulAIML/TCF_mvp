@@ -73,6 +73,12 @@ def explanation_problems(explanation: str) -> list[str]:
     return []
 
 
+def scrub_letter_citations(explanation: str) -> str:
+    """Replace 'la réponse B' with a phrase that does not name a letter."""
+    cleaned = _LETTER_CITE.sub("la bonne réponse", explanation or "")
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
 def anachronism_problems(text: str) -> list[str]:
     if _FRANCS.search(text or "") and _CANADA.search(text or ""):
         return ["francs used in a Canadian scene"]

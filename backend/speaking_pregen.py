@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import random
 import threading
 from collections import OrderedDict, deque
@@ -79,7 +80,7 @@ def _produce_opening(task_type: str) -> dict:
 opening_pool = DurablePool(
     "speaking_openings",
     _produce_opening,
-    target=5,
+    target=int(os.getenv("PREGEN_SPEAKING_TARGET", "2")),
     warm_keys=SPEAKING_TASK_TYPES,
     module="speaking_topic",
     fingerprint_of=lambda item: dedupe.fingerprint(str(item.get("session_topic", ""))),

@@ -1,6 +1,8 @@
 ﻿from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint,
+)
 
 from database import Base
 
@@ -284,6 +286,17 @@ class ExamSlot(Base):
   slot = Column(String(40), nullable=False)
   fingerprint = Column(String(64), nullable=False)
   payload = Column(Text, nullable=False)
+  created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class StoredAudio(Base):
+  """MP3/WAV bytes so a restart or a second instance can still serve the URL."""
+  __tablename__ = "stored_audio"
+
+  name = Column(String(200), primary_key=True)
+  script_key = Column(String(64), nullable=True, index=True)
+  mime = Column(String(40), nullable=False, default="audio/mpeg")
+  content = Column(LargeBinary, nullable=False)
   created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 

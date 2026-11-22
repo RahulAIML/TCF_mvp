@@ -242,14 +242,31 @@ export default function ListeningQuestionCard({
     if (audio.src !== effectiveSrc) {
       audio.src = effectiveSrc;
     }
-    if (audio.readyState < 3) {
+    const loadSrc = async (src: string) => {
+      if (audio.src !== src) audio.src = src;
+      if (audio.readyState >= 3) return true;
       setIsBuffering(true);
-      const ok = await waitUntilPlayable(audio);
-      if (!ok) {
-        setIsBuffering(false);
-        setAudioError("The audio could not be loaded.");
-        return;
+      return waitUntilPlayable(audio);
+    };
+
+    let ready = await loadSrc(effectiveSrc);
+    // A pooled URL can 404 after a restart. Ask the server to synthesize this script again.
+    if (!ready && onRequestAudio) {
+      try {
+        const fetched = await onRequestAudio(question);
+        if (fetched) {
+          effectiveSrc = resolveUrl(fetched);
+          setLocalAudioUrl(effectiveSrc);
+          ready = await loadSrc(effectiveSrc);
+        }
+      } catch {
+        ready = false;
       }
+    }
+    if (!ready) {
+      setIsBuffering(false);
+      setAudioError("The audio could not be loaded.");
+      return;
     }
 
     try {

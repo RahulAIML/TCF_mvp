@@ -297,16 +297,16 @@ def save_audio(result: AudioResult, voice_id: str, *, long_name: bool = False) -
     Write the audio under AUDIO_STORAGE_PATH. Returns (file_name, url_path), url_path being "/audio/<file_name>".
     long_name=True uses a full 128-bit random name (files shared outside the app, e.g. through the MCP server).
     """
-    os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
+    import audio_store
     safe_id = voice_id.replace("/", "_")
     token = uuid.uuid4().hex if long_name else uuid.uuid4().hex[:8]
     file_name = f"tts_{safe_id}_{token}.{result['extension']}"
-    with open(os.path.join(AUDIO_STORAGE_PATH, file_name), "wb") as f:
-        f.write(result["data"])
-    return file_name, f"/audio/{file_name}"
+    mime = result.get("mime_type") or "audio/mpeg"
+    url = audio_store.save(file_name, result["data"], mime)
+    return file_name, url
 
 
-def _generate_via_elevenlabs(text: str, voice: VoiceConfig) -> AudioResult:
+def _generate_via_elevenlabs(text: str, voice: VoiceConfig, polish: bool = True) -> AudioResult:
     if not _ELEVENLABS_API_KEY:
         raise RuntimeError("ELEVENLABS_API_KEY not configured.")
     el_voice_id = voice["elevenlabs_voice_id"]
@@ -322,7 +322,8 @@ def _generate_via_elevenlabs(text: str, voice: VoiceConfig) -> AudioResult:
     headers = {"xi-api-key": _ELEVENLABS_API_KEY, "Content-Type": "application/json"}
     logger.info("ElevenLabs TTS: voice=%s chars=%s", voice["id"], len(text))
     resp = elevenlabs_post(url, headers, payload, timeout=(5, 120))
-    return {"data": polish_mp3(resp.content), "extension": "mp3", "mime_type": "audio/mpeg", "provider": "elevenlabs"}
+    data = polish_mp3(resp.content) if polish else resp.content
+    return {"data": data, "extension": "mp3", "mime_type": "audio/mpeg", "provider": "elevenlabs"}
 
 
 def _clean_edges(pcm_bytes: bytes, voice_id: str) -> bytes:
@@ -365,7 +366,7 @@ def _get_gemini_tts_client():
         return _gemini_tts_client[1]
 
 
-def _generate_via_gemini(text: str, voice: VoiceConfig) -> AudioResult:
+def _generate_via_gemini(text: str, voice: VoiceConfig, polish: bool = True) -> AudioResult:
     if not _GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY not configured.")
     try:
@@ -393,11 +394,12 @@ def _generate_via_gemini(text: str, voice: VoiceConfig) -> AudioResult:
     pcm_bytes = _clean_edges(pcm_bytes, voice["id"])
     mp3 = _pcm_to_mp3(pcm_bytes)
     if mp3:
-        return {"data": polish_mp3(mp3), "extension": "mp3", "mime_type": "audio/mpeg", "provider": "gemini"}
+        data = polish_mp3(mp3) if polish else mp3
+        return {"data": data, "extension": "mp3", "mime_type": "audio/mpeg", "provider": "gemini"}
     return {"data": _pcm_to_wav(pcm_bytes), "extension": "wav", "mime_type": "audio/wav", "provider": "gemini"}
 
 
-def synthesize_elevenlabs(text: str, voice_id: str) -> AudioResult:
+def synthesize_elevenlabs(text: str, voice_id: str, polish: bool = True) -> AudioResult:
     """
     Generate audio via ElevenLabs only — no Gemini fallback.
     Use for cases where a real human-sounding distinct voice is required (e.g. dialogue TTS).
@@ -407,17 +409,17 @@ def synthesize_elevenlabs(text: str, voice_id: str) -> AudioResult:
         raise ValueError("Text must not be empty.")
     if len(text) > MAX_TEXT_LENGTH:
         raise ValueError(f"Text exceeds maximum length of {MAX_TEXT_LENGTH} characters.")
-    return _generate_via_elevenlabs(text, get_voice(voice_id))
+    return _generate_via_elevenlabs(text, get_voice(voice_id), polish=polish)
 
 
-def synthesize_gemini(text: str, voice_id: str) -> AudioResult:
+def synthesize_gemini(text: str, voice_id: str, polish: bool = True) -> AudioResult:
     """Generate audio via Gemini only (no ElevenLabs fallback) with the voice's Gemini counterpart."""
     text = text.strip()
     if not text:
         raise ValueError("Text must not be empty.")
     if len(text) > MAX_TEXT_LENGTH:
         raise ValueError(f"Text exceeds maximum length of {MAX_TEXT_LENGTH} characters.")
-    return _generate_via_gemini(text, get_voice(voice_id))
+    return _generate_via_gemini(text, get_voice(voice_id), polish=polish)
 
 
 def synthesize(text: str, voice_id: str) -> AudioResult:

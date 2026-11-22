@@ -1,5 +1,6 @@
 """Listening generation: calibration bands, answer/explanation agreement, dialogue parsing, uniqueness, pool, audio."""
 import itertools
+import os
 import random
 from collections import Counter
 
@@ -129,16 +130,17 @@ def test_two_speakers_on_one_line_are_both_heard():
 
 
 def test_two_male_names_get_two_different_male_voices():
-    voices = ls.assign_voices(["François", "Paul"])
-    assert voices["François"].startswith("fr-FR-male")
-    assert voices["Paul"].startswith("fr-FR-male")
-    assert voices["François"] != voices["Paul"]
+    for names in (["François", "Paul"], ["Antoine", "Simon"]):
+        voices = ls.assign_voices(names)
+        assert voices[names[0]].startswith("fr-FR-male")
+        assert voices[names[1]].startswith("fr-FR-male")
+        assert voices[names[0]] != voices[names[1]]
 
 
 def test_dialogue_audio_has_one_segment_per_speaker(monkeypatch, tmp_path):
     calls = []
 
-    def fake(text, voice):
+    def fake(text, voice, polish=True):
         calls.append((text, voice))
         # A real MP3 so the turn mixer can decode it. Pitch differs per voice.
         rate = 660 if voice.endswith("2") else 440
@@ -146,15 +148,44 @@ def test_dialogue_audio_has_one_segment_per_speaker(monkeypatch, tmp_path):
 
     monkeypatch.setattr(ls.tts_service, "synthesize_elevenlabs", fake)
     monkeypatch.setattr(ls, "_audio_dir", lambda: str(tmp_path))
-    url = ls.synthesize_listening_audio("François : Bonjour. Paul : Bonsoir.")
+    url = ls.synthesize_listening_audio("François : Bonjour tout le monde. Paul : Bonsoir à vous deux.")
     assert len(calls) == 2
     assert calls[0][1] != calls[1][1]
     assert all(call[1].startswith("fr-FR-male") for call in calls)
     assert all(":" not in call[0] for call in calls)
-    data = (tmp_path / url.rsplit("/", 1)[-1]).read_bytes()
-    decoded = _decode_mp3(data)
+    import audio_store
+    loaded = audio_store.load(url)
+    assert loaded is not None
+    decoded = _decode_mp3(loaded[0])
     # Two tones plus the pause between them: longer than either turn alone.
     assert len(decoded) > 24000 * 0.5
+
+
+def test_a_missing_audio_file_is_served_from_the_database(client):
+    import audio_store
+    url = audio_store.save("tcf_listening_persist.mp3", b"ID3" + b"\x11" * 80, "audio/mpeg")
+    os.remove(audio_store._path("tcf_listening_persist.mp3"))
+    response = client.get(url)
+    assert response.status_code == 200
+    assert response.content.startswith(b"ID3")
+    assert client.get("/audio/does-not-exist.mp3").status_code == 404
+
+
+def test_a_dead_audio_url_is_never_returned(monkeypatch):
+    import audio_store
+    item = ls.ListeningQuestionResponse(
+        question_id="dead", level="B1", script="François : Bonjour. Paul : Salut.",
+        audio_url="/audio/tcf_listening_gone.mp3", question="Qui parle ?",
+        options=["A. a", "B. b", "C. c", "D. d"], correct_answer="A", explanation="ok",
+        speakers=["François", "Paul"],
+    )
+    fresh = audio_store.save("tcf_listening_replaced.mp3", b"ID3fresh", "audio/mpeg")
+    monkeypatch.setattr(ls, "synthesize_listening_audio", lambda script, speakers=None: fresh)
+    deferred = ls._deliver(item, defer_audio=True)
+    assert deferred.audio_url is None
+    ready = ls._deliver(item, defer_audio=False)
+    assert ready.audio_url == fresh
+    assert audio_store.available(ready.audio_url)
 
 
 def test_a_monologue_stays_one_voice_and_drops_a_lone_label(monkeypatch, tmp_path):
@@ -439,7 +470,7 @@ def test_dialogue_falls_back_entirely_to_gemini_without_mixing(monkeypatch):
 
     monkeypatch.setattr(ls.tts_service, "synthesize_elevenlabs", flaky_el)
     monkeypatch.setattr(ls.tts_service, "synthesize_gemini", gemini)
-    ls.synthesize_listening_audio("Marc : Bonjour.\nSophie : Salut.\nMarc : Ça va ?", ["Marc", "Sophie"])
+    ls.synthesize_listening_audio("Marc : Bonjour à la bibliothèque.\nSophie : Salut Marc.\nMarc : Ça va ce matin ?", ["Marc", "Sophie"])
     assert providers.count("gemini") == 3
 
 
@@ -451,8 +482,8 @@ def test_monologue_uses_a_random_registry_voice(monkeypatch):
         return {"data": _mp3(0.1), "extension": "mp3", "mime_type": "audio/mpeg", "provider": "gemini"}
 
     monkeypatch.setattr(ls.tts_service, "synthesize", fake_synth)
-    for _ in range(40):
-        ls.synthesize_listening_audio("Attention : la piscine ferme à 17 heures aujourd'hui.")
+    for i in range(40):
+        ls.synthesize_listening_audio(f"Attention : la piscine numéro {i} ferme à 17 heures aujourd'hui.")
     assert len(voices) >= 3 and all(v.startswith("fr-FR-") for v in voices)
 
 

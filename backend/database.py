@@ -28,7 +28,7 @@ def init_db() -> None:
     ExamAttempt, ListeningAttempt, User, WritingSession, TcfWritingSession,
     SpeakingSession, UserAudioResponse, QuestionValidation, LearnSession,
     PronunciationEvaluation, VocabularyWord, TtsAudioHistory, McpToken,
-    SeenItem, ContentRegistry, PregenItem, ExamSlot, WritingEvalCache,
+    SeenItem, ContentRegistry, PregenItem, ExamSlot, WritingEvalCache, StoredAudio,
   )
 
   Base.metadata.create_all(bind=engine)
