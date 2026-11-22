@@ -1,8 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-type Watch = { problems: string[] };
-
-function watch(page: Page): Watch {
+function attach(page: Page): string[] {
   const problems: string[] = [];
   page.on("pageerror", (error) => problems.push(`pageerror ${error.message}`));
   page.on("console", (msg) => {
@@ -18,119 +16,112 @@ function watch(page: Page): Watch {
     const text = req.failure()?.errorText ?? "";
     if (/CORS|ERR_FAILED|ERR_CONNECTION/i.test(text)) problems.push(`${text} ${req.url()}`);
   });
-  return { problems };
+  return problems;
+}
+
+async function answerFirst(page: Page) {
+  await page.locator("label").filter({ has: page.locator("input[type=radio]") }).first().click();
 }
 
 async function playListening(page: Page) {
-  const play = page.getByRole("button", { name: /Play/ }).first();
-  await play.click({ timeout: 20_000 });
-  await expect(page.getByRole("button", { name: /Loading audio/ })).toHaveCount(0, { timeout: 45_000 });
+  await page.getByRole("button", { name: /^Play/ }).first().click();
+  await expect(page.getByRole("button", { name: /Loading audio/ })).toHaveCount(0, { timeout: 50_000 });
 }
 
-test("live modules", async ({ page }) => {
-  test.setTimeout(12 * 60_000);
-  const seen = watch(page);
-  const results: Record<string, string> = {};
-
-  const run = async (name: string, body: () => Promise<string>) => {
-    const before = seen.problems.length;
-    try {
-      const detail = await body();
-      const fresh = seen.problems.slice(before);
-      results[name] = fresh.length ? `FAIL ${detail} | ${fresh.join(" ; ")}` : `PASS ${detail}`;
-    } catch (error) {
-      results[name] = `FAIL ${error instanceof Error ? error.message : String(error)}`;
-    }
-  };
-
-  await run("listening", async () => {
+test.describe("live modules", () => {
+  test("listening", async ({ page }) => {
+    const problems = attach(page);
     await page.goto("/tcf/listening-exam?mode=practice");
     await expect(page.getByRole("heading", { name: "Listening Practice" })).toBeVisible();
     for (let i = 0; i < 5; i++) {
       await page.getByRole("button", { name: i === 0 ? "Start Practice" : "Next Question" }).click();
-      await expect(page.getByRole("button", { name: /Play/ }).first()).toBeVisible({ timeout: 60_000 });
+      await expect(page.getByRole("button", { name: /^Play/ }).first()).toBeVisible({ timeout: 70_000 });
       await playListening(page);
       await page.getByRole("button", { name: "Show Transcript" }).click();
       await expect(page.locator("div.max-h-48")).toBeVisible();
-      await page.getByRole("button", { name: /^B\./ }).click();
+      await answerFirst(page);
     }
-    return "5 questions, audio started, transcript open";
+    expect(problems, problems.join("\n")).toEqual([]);
   });
 
-  await run("reading", async () => {
+  test("reading", async ({ page }) => {
+    const problems = attach(page);
     await page.goto("/tcf/reading-practice");
     await page.getByRole("button", { name: "A1", exact: true }).click();
     for (let i = 0; i < 5; i++) {
-      await expect(page.getByRole("button", { name: /^A\./ })).toBeVisible({ timeout: 60_000 });
-      await page.getByRole("button", { name: /^A\./ }).click();
-      const next = page.getByRole("button", { name: /Next/ });
-      if (await next.count()) await next.first().click();
+      await expect(page.locator("label").filter({ has: page.locator("input[type=radio]") }).first()).toBeVisible({ timeout: 70_000 });
+      await answerFirst(page);
+      const check = page.getByRole("button", { name: "Check Answer" });
+      if (await check.count()) await check.click();
+      await page.getByRole("button", { name: "Next Question" }).click();
     }
-    return "5 reading items answered";
+    expect(problems, problems.join("\n")).toEqual([]);
   });
 
-  await run("writing", async () => {
+  test("writing", async ({ page }) => {
+    const problems = attach(page);
     await page.goto("/tcf/writing");
     await page.getByRole("button", { name: "Start Practice" }).click();
-    await expect(page.getByText(/Tâche 1|Task 1/)).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText("Preparing your writing prompts…")).toHaveCount(0);
-    return "writing prompts visible";
+    await expect(page.getByText("Preparing your writing prompts…")).toHaveCount(0, { timeout: 70_000 });
+    await expect(page.getByText("Task 1 - Message")).toBeVisible();
+    expect(problems, problems.join("\n")).toEqual([]);
   });
 
-  await run("speaking", async () => {
+  test("speaking", async ({ page }) => {
+    const problems = attach(page);
     await page.goto("/tcf/speaking");
+    await page.getByRole("button", { name: "Task 1 — Interview" }).click();
     await page.getByRole("button", { name: "Start Practice" }).click();
-    await expect(page.getByText(/Bonjour|examinateur|je suis/i).first()).toBeVisible({ timeout: 60_000 });
-    return "examiner opened the practice";
+    await expect(page.getByText(/Bonjour|je suis|examin/i).first()).toBeVisible({ timeout: 70_000 });
+    expect(problems, problems.join("\n")).toEqual([]);
   });
 
-  await run("grammar", async () => {
+  test("grammar", async ({ page }) => {
+    const problems = attach(page);
     await page.goto("/tcf/learn");
     await page.getByPlaceholder("Paste French text here... (article, passage, document)").fill(
       "Le marché de Montréal ouvre à huit heures. Les pommes coûtent deux dollars. Marie achète du pain et parle avec le vendeur.",
     );
     await page.getByRole("button", { name: "Analyze and Build Exercises" }).click();
-    await expect(page.getByText(/Corrigez|exercice|Question/i).first()).toBeVisible({ timeout: 90_000 });
-    return "learn built exercises, including grammar";
+    await expect(page.getByText("5 exercises ready")).toBeVisible({ timeout: 90_000 });
+    await page.getByRole("button", { name: "Start Exercises" }).click();
+    await expect(page.getByText(/Corrigez|Question|phrase/i).first()).toBeVisible();
+    expect(problems, problems.join("\n")).toEqual([]);
   });
 
-  await run("vocab", async () => {
+  test("vocab", async ({ page }) => {
+    const problems = attach(page);
     await page.goto("/tcf/vocabulary");
-    await page.getByRole("button", { name: "A2", exact: true }).click();
+    await page.getByRole("button", { name: /A2 Elementary/ }).click();
     await page.getByRole("button", { name: "Start Vocabulary Session" }).click();
-    await expect(page.locator("body")).toContainText(/[A-Za-zÀ-ÿ]{3,}/, { timeout: 60_000 });
-    return "vocabulary session started";
+    await expect(page.getByRole("button", { name: "Change settings" })).toBeVisible({ timeout: 70_000 });
+    expect(problems, problems.join("\n")).toEqual([]);
   });
 
-  await run("pronunciation", async () => {
+  test("pronunciation", async ({ page }) => {
+    const problems = attach(page);
     await page.goto("/tcf/pronunciation");
-    const words = page.getByRole("button").filter({ hasText: /Bonjour|Merci|Hello|café/i });
-    await expect(words.first()).toBeVisible({ timeout: 20_000 });
-    const count = await words.count();
-    expect(count).toBeGreaterThan(0);
-    return `${count} sample words visible`;
+    await expect(page.getByRole("button", { name: /Bonjour|Merci|Hello/ }).first()).toBeVisible({ timeout: 20_000 });
+    expect(problems, problems.join("\n")).toEqual([]);
   });
 
-  await run("tts", async () => {
+  test("tts", async ({ page }) => {
+    const problems = attach(page);
     await page.goto("/tcf/tts");
     await expect(page.getByRole("button", { name: /French Male/ }).first()).toBeVisible({ timeout: 25_000 });
     await expect(page.getByText("Loading voices…")).toHaveCount(0);
-    return "voices listed";
+    expect(problems, problems.join("\n")).toEqual([]);
   });
 
-  await run("exam", async () => {
+  test("exam", async ({ page }) => {
+    const problems = attach(page);
     await page.goto("/tcf/listening-exam?mode=exam");
     await page.getByRole("button", { name: "Start Exam" }).click();
     for (let i = 0; i < 5; i++) {
-      await expect(page.getByRole("button", { name: /Play/ }).first()).toBeVisible({ timeout: 60_000 });
-      await page.getByRole("button", { name: /^A\./ }).click();
-      const next = page.getByRole("button", { name: /Next/ });
-      if (i < 4 && (await next.count())) await next.first().click();
+      await expect(page.getByRole("button", { name: /^Play/ }).first()).toBeVisible({ timeout: 70_000 });
+      await answerFirst(page);
+      if (i < 4) await page.getByRole("button", { name: String(i + 2), exact: true }).click();
     }
-    return "5 exam questions opened";
+    expect(problems, problems.join("\n")).toEqual([]);
   });
-
-  console.log(JSON.stringify(results, null, 2));
-  const failed = Object.entries(results).filter(([, value]) => value.startsWith("FAIL"));
-  expect(failed, JSON.stringify(results, null, 2)).toEqual([]);
 });

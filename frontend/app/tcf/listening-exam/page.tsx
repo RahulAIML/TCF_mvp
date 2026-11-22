@@ -241,7 +241,7 @@ export default function ListeningExamPage() {
 
   // ── Exam ─────────────────────────────────────────────────────────────────────────────────────────
 
-  const ensureQuestion = async (position: number, showLoader = true) => {
+  const ensureQuestion = async (position: number, showLoader = true, withAudio = true) => {
     const existing = questionsRef.current[position];
     if (existing) return existing;
 
@@ -266,7 +266,7 @@ export default function ListeningExamPage() {
           const updated = { ...questionsRef.current, [position]: normalized };
           questionsRef.current = updated;
           setQuestions(updated);
-          void fetchAudio(normalized);
+          if (withAudio) void fetchAudio(normalized);
           return normalized;
         });
         inFlightRef.current[position] = request;
@@ -287,7 +287,8 @@ export default function ListeningExamPage() {
       const position = fromPosition + offset;
       if (position > examSize) break;
       if (questionsRef.current[position] || inFlightRef.current[position]) continue;
-      void ensureQuestion(position, false).catch(() => undefined);
+      // Only the next item fetches audio. The rest wait, so five clips are not synthesized at once.
+      void ensureQuestion(position, false, offset === 1).catch(() => undefined);
     }
   };
 
@@ -505,8 +506,11 @@ export default function ListeningExamPage() {
   };
 
   // Keep questions ready for the selected level as soon as practice is open.
+  // The first render is practice even when the URL says exam, so read the URL before starting audio.
   useEffect(() => {
-    if (mode === "practice") topUpPracticeQueue(practiceLevel);
+    const urlMode = new URLSearchParams(window.location.search).get("mode");
+    if (urlMode === "exam" || mode !== "practice") return;
+    topUpPracticeQueue(practiceLevel);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, practiceLevel]);
 
