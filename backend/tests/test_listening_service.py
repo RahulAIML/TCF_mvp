@@ -130,11 +130,17 @@ def test_two_speakers_on_one_line_are_both_heard():
 
 
 def test_two_male_names_get_two_different_male_voices():
+    import tts_service
     for names in (["François", "Paul"], ["Antoine", "Simon"]):
         voices = ls.assign_voices(names)
         assert voices[names[0]].startswith("fr-FR-male")
         assert voices[names[1]].startswith("fr-FR-male")
         assert voices[names[0]] != voices[names[1]]
+        first = tts_service.get_voice(voices[names[0]])
+        second = tts_service.get_voice(voices[names[1]])
+        assert first["gemini_voice_name"] != second["gemini_voice_name"]
+        assert first["elevenlabs_voice_id"] != second["elevenlabs_voice_id"]
+        assert {first["gemini_voice_name"], second["gemini_voice_name"]} == {"Charon", "Puck"}
 
 
 def test_dialogue_audio_has_one_segment_per_speaker(monkeypatch, tmp_path):

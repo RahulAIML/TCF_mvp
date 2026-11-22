@@ -113,6 +113,9 @@ export default function ListeningResults({ score, total, attempted, accuracy, re
         <span>Attempted: <strong>{attempted}</strong></span>
         <span>Correct: <strong>{score}</strong></span>
         <span>Accuracy: <strong>{accuracy.toFixed(1)}%</strong></span>
+        <p className="basis-full text-xs text-slate-500">
+          Practice count only. The official test reports a score from 100 to 699, which IRCC converts to NCLC. This is not that score.
+        </p>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         {results.map((item) => (

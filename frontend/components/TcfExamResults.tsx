@@ -42,6 +42,9 @@ export default function TcfExamResults({ results, questions }: TcfExamResultsPro
             </p>
           </div>
         </div>
+        <p className="mt-3 text-xs text-slate-500">
+          Practice count only. The official reading test reports 100–699 and IRCC converts that to NCLC. This count is not that score.
+        </p>
       </div>
 
       {/* Per-question review */}

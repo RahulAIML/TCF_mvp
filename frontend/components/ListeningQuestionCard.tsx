@@ -479,6 +479,16 @@ export default function ListeningQuestionCard({
                 onPointerDown={() => setAutoScroll(false)}
                 onTouchMove={() => setAutoScroll(false)}
               >
+                {question.speakers && question.speakers.length > 0 && (
+                  <p className="mb-2 text-xs font-medium text-indigo-700">
+                    {question.speakers.map((name, i) => (
+                      <span key={name}>
+                        {i > 0 && <span className="text-slate-300"> · </span>}
+                        <span className={i % 2 === 0 ? "text-indigo-700" : "text-teal-700"}>{name}</span>
+                      </span>
+                    ))}
+                  </p>
+                )}
                 {words.map((word, index) => (
                   <span
                     key={`word-${index}`}

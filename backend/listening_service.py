@@ -274,28 +274,36 @@ def dialogue_segments(script: str, speakers: List[str]) -> List[Tuple[Optional[s
     return [(s, t.strip()) for s, t in segments if t.strip()]
 
 
+# Far ends of each gender. male-1 is the deep voice, male-2 the bright one; same for female.
+_DEEP = {"male": "fr-FR-male-1", "female": "fr-FR-female-1"}
+_BRIGHT = {"male": "fr-FR-male-2", "female": "fr-FR-female-2"}
+
+
 def assign_voices(speakers: List[str]) -> Dict[Optional[str], str]:
-    """A distinct voice per speaker that matches the name's gender when known; the narrator gets an unused one."""
-    pools = {g: random.sample(v, len(v)) for g, v in VOICES.items()}
-    all_voices = [v for vs in VOICES.values() for v in vs]
-    used: List[str] = []
+    """Distinct voices. Mixed genders get deep-male + bright-female. Same gender gets deep vs bright, never two similar voices."""
     mapping: Dict[Optional[str], str] = {}
-
-    def take(gender: Optional[str]) -> str:
-        if gender in pools:
-            for v in pools[gender]:
-                if v not in used:
-                    return v
-        for v in random.sample(all_voices, len(all_voices)):
-            if v not in used:
-                return v
-        return random.choice(all_voices)
-
+    genders = [_NAME_GENDER.get(name) for name in speakers]
+    if len(speakers) >= 2 and genders[0] and genders[1] and genders[0] != genders[1]:
+        for name, gender in zip(speakers[:2], genders[:2]):
+            mapping[name] = _DEEP["male"] if gender == "male" else _BRIGHT["female"]
+    elif len(speakers) >= 2 and genders[0] == genders[1] and genders[0] in _DEEP:
+        mapping[speakers[0]] = _DEEP[genders[0]]
+        mapping[speakers[1]] = _BRIGHT[genders[0]]
+    else:
+        # Unknown names: still force the widest contrast (deep male, bright female).
+        if speakers:
+            mapping[speakers[0]] = _DEEP["male"]
+        if len(speakers) > 1:
+            mapping[speakers[1]] = _BRIGHT["female"]
+    used = set(mapping.values())
+    spare = [v for vs in VOICES.values() for v in vs if v not in used]
     for name in speakers:
-        voice = take(_NAME_GENDER.get(name))
-        used.append(voice)
-        mapping[name] = voice
-    mapping[None] = take(None)
+        if name not in mapping:
+            mapping[name] = spare.pop(0) if spare else _BRIGHT["male"]
+            used.add(mapping[name])
+    mapping[None] = spare[0] if spare else _BRIGHT["female"]
+    if len(speakers) >= 2 and mapping.get(speakers[0]) == mapping.get(speakers[1]):
+        mapping[speakers[1]] = _BRIGHT["female"] if mapping[speakers[0]] != _BRIGHT["female"] else _DEEP["male"]
     return mapping
 
 
@@ -438,11 +446,15 @@ def synthesize_listening_audio(script: str, speakers: Optional[List[str]] = None
     """
     import audio_store
     import hashlib
-    script_key = hashlib.sha256(script.strip().encode("utf-8")).hexdigest()
+    names_for_key = detect_speakers(script, speakers or None) if speakers else detect_speakers(script)
+    planned = assign_voices(names_for_key) if names_for_key else {}
+    voice_key = ",".join(f"{name}:{planned[name]}" for name in names_for_key)
+    # v3 drops every file made before voices were actually sent to the provider.
+    script_key = "v3|" + voice_key + "|" + hashlib.sha256(script.strip().encode("utf-8")).hexdigest()
     cached = audio_store.find_by_script(script_key)
     if cached and audio_store.available(cached):
         return cached
-    names = detect_speakers(script, speakers or None) if speakers else detect_speakers(script)
+    names = names_for_key
     if not names:
         voice = random.choice([v for vs in VOICES.values() for v in vs])
         spoken = _monologue_text(script)
@@ -456,6 +468,12 @@ def synthesize_listening_audio(script: str, speakers: Optional[List[str]] = None
     jobs = [(text, voice) for text, voice in jobs if text]
     if len({voice for _text, voice in jobs}) < 2 and len(names) >= 2:
         logger.warning("Dialogue voices collapsed to one id: %s", voices)
+    for text, voice_id in jobs:
+        cfg = tts_service.get_voice(voice_id)
+        logger.info(
+            "Listening turn assigned voice_id=%s gemini=%s elevenlabs=%s style=%s chars=%d",
+            voice_id, cfg["gemini_voice_name"], cfg["elevenlabs_voice_id"], cfg.get("gemini_style"), len(text),
+        )
     try:
         results = _synthesize_segments(jobs, lambda text, voice: _synth_turn(tts_service.synthesize_elevenlabs, text, voice))
     except Exception as el_error:
