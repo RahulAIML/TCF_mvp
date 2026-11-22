@@ -171,3 +171,45 @@ def find_by_script(script_key: str) -> str | None:
 
 def _mime_for(name: str) -> str:
     return "audio/wav" if name.endswith(".wav") else "audio/mpeg"
+
+
+def forget_pitched_audio() -> None:
+    """Delete cached clips made with the ±4 semitone shift. User rows are left in place.
+
+    The script key is a hash, so old files cannot be told apart from new ones. This runs once,
+    recorded in content_registry, and then leaves every later recording alone.
+    """
+    marker = hashlib.sha256(b"adult-natural-v1").hexdigest()
+    ensure_schema()
+    db = SessionLocal()
+    names: list[str] = []
+    try:
+        already = db.execute(
+            text("SELECT 1 FROM content_registry WHERE fingerprint = :fp"),
+            {"fp": marker},
+        ).first()
+        if already:
+            return
+        names = [row[0] for row in db.execute(text("SELECT name FROM stored_audio")).fetchall()]
+        db.execute(text("DELETE FROM stored_audio"))
+        db.execute(
+            text(
+                "INSERT INTO content_registry (fingerprint, module, simhash, created_at) "
+                "VALUES (:fp, 'system', NULL, :now)"
+            ),
+            {"fp": marker, "now": datetime.utcnow()},
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Could not drop the pitched audio cache")
+        return
+    finally:
+        db.close()
+    folder = _dir()
+    for name in names:
+        try:
+            os.remove(os.path.join(folder, name))
+        except OSError:
+            pass
+    logger.info("Dropped %d pitched audio files", len(names))

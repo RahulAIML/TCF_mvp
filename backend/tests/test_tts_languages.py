@@ -12,21 +12,34 @@ def test_four_languages_each_with_four_voices():
   assert [langs[c]["name"] for c in ("fr", "en", "es", "pt")] == ["French", "English", "Spanish", "Portuguese"]
   for code in langs:
     voices = tts.list_active_voices(code)
-    assert len(voices) == 4
     assert {v["gender"] for v in voices} == {"male", "female"}
     assert all(v["language"] == code for v in voices)
+    assert len(voices) >= 12 if code == "fr" else len(voices) == 4
+    assert all(tts.get_voice(v["id"])["pitch_semitones"] == 0 for v in voices)
 
 
-def test_existing_french_voice_ids_are_unchanged():
-  ids = {v["id"] for v in tts.list_active_voices("fr")}
-  assert ids == {"fr-FR-male-1", "fr-FR-male-2", "fr-FR-female-1", "fr-FR-female-2"}
-  assert tts.get_voice("fr-FR-male-1")["label"] == "French Male"
+def test_french_adult_pool_is_balanced_and_unshifted():
+  voices = tts.list_active_voices("fr")
+  males = [v for v in voices if v["gender"] == "male"]
+  females = [v for v in voices if v["gender"] == "female"]
+  assert len(voices) >= 12
+  assert len(males) >= 6 and len(females) >= 6
+  names = [tts.get_voice(v["id"])["gemini_voice_name"] for v in voices]
+  assert len(names) == len(set(names))
+  assert "Charon" in names and "Kore" in names
+  assert "Leda" not in names and "Fenrir" not in names
+  assert "Puck" not in names and "Gacrux" not in names
+  assert tts.get_voice("fr-FR-male-1")["gemini_voice_name"] == "Charon"
+  assert tts.get_voice("fr-FR-male-2")["gemini_voice_name"] == "Orus"
+  assert tts.get_voice("fr-FR-male-1")["pitch_semitones"] == 0
+  assert "neutral standard French" in tts.get_voice("fr-FR-female-1")["gemini_style"]
+  assert "30 and 50" in tts.get_voice("fr-FR-male-1")["gemini_style"]
 
 
-def test_all_voices_have_unique_ids_and_provider_voices():
+def test_all_voices_have_unique_ids_and_a_gemini_voice():
   voices = list(tts.VOICE_REGISTRY.values())
-  assert len({v["id"] for v in voices}) == len(voices) == 16
-  assert all(v["elevenlabs_voice_id"] and v["gemini_voice_name"] for v in voices)
+  assert len({v["id"] for v in voices}) == len(voices) == 28
+  assert all(v["gemini_voice_name"] and v["pitch_semitones"] == 0 for v in voices)
 
 
 @pytest.mark.parametrize("raw,code", [
@@ -123,8 +136,8 @@ def test_gemini_output_is_saved_as_mp3(monkeypatch):
 
   result = tts.synthesize("Hola", "es-ES-female-1")
   assert result["extension"] == "mp3" and result["mime_type"] == "audio/mpeg" and result["provider"] == "gemini"
-  assert result["provider_voice"] == "Gacrux"
-  assert calls[0]["generation_config"]["speech_config"] == [{"voice": "Gacrux"}]
+  assert result["provider_voice"] == "Kore"
+  assert calls[0]["generation_config"]["speech_config"] == [{"voice": "Kore"}]
   assert calls[0]["response_format"] == {"type": "audio"}
 
 
@@ -150,28 +163,22 @@ def test_empty_and_too_long_text_are_refused():
     tts.synthesize("x" * (tts.MAX_TEXT_LENGTH + 1), "fr-FR-male-1")
 
 
-def test_same_gender_voices_are_pitched_in_opposite_directions():
+def test_voices_stay_at_natural_pitch():
   deep = tts.get_voice("fr-FR-male-1")
   bright = tts.get_voice("fr-FR-male-2")
-  assert deep["pitch_semitones"] < 0 < bright["pitch_semitones"]
+  assert deep["pitch_semitones"] == bright["pitch_semitones"] == 0
   assert deep["gemini_voice_name"] != bright["gemini_voice_name"]
-  assert "France" in deep["gemini_style"] and "Quebec" in bright["gemini_style"]
   women = (tts.get_voice("fr-FR-female-1"), tts.get_voice("fr-FR-female-2"))
-  assert women[0]["pitch_semitones"] < 0 < women[1]["pitch_semitones"]
+  assert women[0]["pitch_semitones"] == women[1]["pitch_semitones"] == 0
+  assert women[0]["gemini_voice_name"] != women[1]["gemini_voice_name"]
 
 
-def test_pitch_shift_raises_a_tone_by_about_an_octave():
+def test_pitch_shift_is_not_applied():
   import math
   import struct
-  import numpy as np
   rate = 8000
-  freq = 200.0
   pcm = b"".join(
-    struct.pack("<h", int(6000 * math.sin(2 * math.pi * freq * i / rate)))
+    struct.pack("<h", int(6000 * math.sin(2 * math.pi * 200.0 * i / rate)))
     for i in range(rate)
   )
-  shifted = tts.shift_pitch_pcm(pcm, 12, sample_rate=rate)
-  samples = np.frombuffer(shifted, dtype="<i2").astype(np.float64)
-  spectrum = np.abs(np.fft.rfft(samples * np.hanning(len(samples))))
-  peak = int(np.argmax(spectrum)) * rate / len(samples)
-  assert 340 < peak < 460
+  assert tts.shift_pitch_pcm(pcm, 12, sample_rate=rate) == pcm

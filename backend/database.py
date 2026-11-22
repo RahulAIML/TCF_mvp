@@ -69,3 +69,5 @@ def init_db() -> None:
         conn.execute(text(sql))
       except Exception:
         pass  # SQLite / syntax difference — skip gracefully
+  import audio_store
+  audio_store.forget_pitched_audio()

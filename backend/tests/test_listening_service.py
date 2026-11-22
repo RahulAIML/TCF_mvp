@@ -139,10 +139,9 @@ def test_two_male_names_get_two_different_male_voices():
         first = tts_service.get_voice(voices[names[0]])
         second = tts_service.get_voice(voices[names[1]])
         assert first["gemini_voice_name"] != second["gemini_voice_name"]
-        assert first["elevenlabs_voice_id"] != second["elevenlabs_voice_id"]
-        assert {first["gemini_voice_name"], second["gemini_voice_name"]} == {"Charon", "Puck"}
-        assert first["pitch_semitones"] == -4
-        assert second["pitch_semitones"] == 4
+        assert {first["gemini_voice_name"], second["gemini_voice_name"]} == {"Charon", "Orus"}
+        assert first["pitch_semitones"] == 0
+        assert second["pitch_semitones"] == 0
 
 
 def test_cached_dialogue_reports_every_turn(monkeypatch, tmp_path):
@@ -497,17 +496,30 @@ def test_dialogue_falls_back_entirely_to_gemini_without_mixing(monkeypatch):
     assert providers.count("gemini") == 3
 
 
-def test_monologue_uses_a_random_registry_voice(monkeypatch):
-    voices = set()
+def test_monologue_rotates_adult_voices_and_keeps_one_per_script(monkeypatch):
+    voices = []
 
     def fake_synth(text, voice):
-        voices.add(voice)
+        voices.append(voice)
         return {"data": _mp3(0.1), "extension": "mp3", "mime_type": "audio/mpeg", "provider": "gemini"}
 
     monkeypatch.setattr(ls.tts_service, "synthesize", fake_synth)
-    for i in range(40):
-        ls.synthesize_listening_audio(f"Attention : la piscine numéro {i} ferme à 17 heures aujourd'hui.")
-    assert len(voices) >= 3 and all(v.startswith("fr-FR-") for v in voices)
+    from learner import push_learner
+    with push_learner("guest:monologue-adult"):
+        for i in range(16):
+            ls.synthesize_listening_audio(f"Attention : la piscine numéro {i} ferme à 17 heures aujourd'hui.")
+        again = []
+        def capture(text, voice):
+            again.append(voice)
+            return fake_synth(text, voice)
+        monkeypatch.setattr(ls.tts_service, "synthesize", capture)
+        ls.synthesize_listening_audio("Attention : la piscine numéro 0 ferme à 17 heures aujourd'hui.")
+    import tts_service
+    adult = {v["id"] for v in tts_service.list_active_voices("fr")}
+    assert set(voices) <= adult
+    assert len(set(voices)) >= 6
+    assert all(voices[i] != voices[i + 1] for i in range(len(voices) - 1))
+    assert again == []  # the repeated script is served from the cache, not spoken again
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────

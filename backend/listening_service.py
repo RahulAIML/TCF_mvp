@@ -168,8 +168,8 @@ FEMALE_NAMES = [
 _NAME_GENDER = {**{n: "male" for n in MALE_NAMES}, **{n: "female" for n in FEMALE_NAMES}}
 
 VOICES = {
-    "male": ["fr-FR-male-1", "fr-FR-male-2"],
-    "female": ["fr-FR-female-1", "fr-FR-female-2"],
+    "male": [f"fr-FR-male-{i}" for i in range(1, 9)],
+    "female": [f"fr-FR-female-{i}" for i in range(1, 9)],
 }
 
 BANNED_WORDS = (
@@ -306,7 +306,11 @@ def assign_voices(speakers: List[str], learner: Optional[str] = None) -> Dict[Op
         import variety
         same = bool(genders[0] and genders[1] and genders[0] == genders[1])
         mixed = bool(genders[0] and genders[1] and genders[0] != genders[1])
-        left, right = variety.listening_pair(True if same else False if mixed else None, learner)
+        left, right = variety.listening_pair(
+            True if same else False if mixed else None,
+            learner,
+            genders[0] if same else None,
+        )
         if mixed:
             # Keep the voice gender aligned with the name, using the two chosen voices.
             male_voice = left if variety._voice_gender(left) == "male" else right
@@ -541,7 +545,7 @@ def _record_voice_plan(
             "speaker": speaker,
             "voice_id": voice_id,
             "provider": provider,
-            "provider_voice": cfg["elevenlabs_voice_id"],
+            "provider_voice": cfg["gemini_voice_name"],
             "pitch_semitones": cfg.get("pitch_semitones"),
         })
 
@@ -551,6 +555,29 @@ _SCRIPT_LOCKS_GUARD = threading.Lock()
 _AUDIO_WARM = threading.BoundedSemaphore(1)
 # Same script for the same learner keeps the voice pair picked on the first call (prefetch, then play).
 _VOICE_PLANS: Dict[str, Dict[Optional[str], str]] = {}
+
+
+def _monologue_voice(script: str) -> str:
+    """One adult French voice for an announcement, voicemail or radio piece.
+
+    The same script keeps the voice picked the first time (prefetch, then play). The next
+    different script for this learner uses another adult, so the child and the elder are
+    not the only two voices on the exam.
+    """
+    import hashlib
+    import variety
+    from learner import current_learner
+    learner = current_learner()
+    digest = hashlib.sha256(f"mono|{learner or ''}|{script.strip()}".encode("utf-8")).hexdigest()
+    hit = _VOICE_PLANS.get(digest)
+    if hit and hit.get(None):
+        return str(hit[None])
+    pool = [v["id"] for v in tts_service.list_active_voices("fr")]
+    voice = variety.choose("listening_monologue", pool, learner)
+    _VOICE_PLANS[digest] = {None: voice}
+    if len(_VOICE_PLANS) > 200:
+        _VOICE_PLANS.pop(next(iter(_VOICE_PLANS)))
+    return voice
 
 
 def _planned_voices(script: str, names: List[str]) -> Dict[Optional[str], str]:
@@ -597,31 +624,39 @@ def _synthesize_listening_audio(
     report: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """
-    Audio for a listening script. Dialogues: one voice per speaker, synthesised per segment with ElevenLabs; if any
-    segment fails, the whole dialogue is redone with Gemini voices of the same genders (providers are never mixed in
-    one file — their MP3 sample rates differ). Monologues: one random French voice (Gemini, ElevenLabs fallback).
+    Audio for a listening script, used by practice and the exam alike.
+
+    Dialogues and monologues (announcements, voicemail, radio) are spoken by the adult French
+    pool at natural pitch: neutral standard French, studio pace, one voice per speaker.
+    Gemini is first. ElevenLabs is only a fallback and is not pitch-shifted.
     """
     import audio_store
     import hashlib
     names_for_key = detect_speakers(script, speakers or None) if speakers else detect_speakers(script)
-    planned = _planned_voices(script, names_for_key) if names_for_key else {}
-    voice_key = ",".join(
-        f"{name}:{planned[name]}@{tts_service.get_voice(planned[name]).get('pitch_semitones', 0)}"
-        for name in names_for_key
-    )
+    monologue_voice = ""
+    if names_for_key:
+        planned = _planned_voices(script, names_for_key)
+        voice_key = ",".join(
+            f"{name}:{planned[name]}"
+            for name in names_for_key
+        )
+    else:
+        planned = {}
+        monologue_voice = _monologue_voice(script)
+        voice_key = monologue_voice
     # Hash stays 64 characters (the column width). v5 drops files made with the short pause,
     # which could not be split back into turns, and files made before the pitch offset.
     # v6 drops files made when Gemini ignored the voice. The stored value is always a 64-char hash.
-    script_key = hashlib.sha256(f"v6|{voice_key}|650|{script.strip()}".encode("utf-8")).hexdigest()
+    # v7 drops every file made with the ±4 semitone pitch shift.
+    script_key = hashlib.sha256(f"v7|{voice_key}|650|{script.strip()}".encode("utf-8")).hexdigest()
     cached = audio_store.find_by_script(script_key)
     if cached and audio_store.available(cached):
         _record_voice_plan(report, script, names_for_key, planned, provider="cached")
         return cached
     names = names_for_key
     if not names:
-        voice = random.choice([v for vs in VOICES.values() for v in vs])
         spoken = _monologue_text(script)
-        result = tts_service.synthesize(spoken or script, voice)
+        result = tts_service.synthesize(spoken or script, monologue_voice)
         return _save(result["data"], result["extension"], script_key)
 
     voices = planned or _planned_voices(script, names)
@@ -642,13 +677,15 @@ def _synthesize_listening_audio(
             cfg.get("gemini_style"), len(text),
         )
     try:
-        results = _synthesize_dialogue(jobs, tts_service.synthesize_elevenlabs)
-    except Exception as el_error:
-        logger.exception("Dialogue ElevenLabs synthesis failed (%s); regenerating with Gemini voices.", el_error)
+        # Gemini prebuilt voices, one per speaker. ElevenLabs is only the fallback, and it is not
+        # pitched: the old ±4 semitone shift is what made speakers sound like a child or an elder.
+        results = _synthesize_dialogue(jobs, tts_service.synthesize_gemini)
+    except Exception as gemini_error:
+        logger.exception("Dialogue Gemini synthesis failed (%s); trying ElevenLabs at natural pitch.", gemini_error)
         try:
-            results = _synthesize_dialogue(jobs, tts_service.synthesize_gemini)
-        except Exception as gemini_error:
-            logger.exception("Dialogue Gemini synthesis failed (%s); one voice will read the whole script.", gemini_error)
+            results = _synthesize_dialogue(jobs, tts_service.synthesize_elevenlabs)
+        except Exception as el_error:
+            logger.exception("Dialogue ElevenLabs synthesis failed (%s); one voice will read the whole script.", el_error)
             spoken = _monologue_text(script) or script
             single = tts_service.synthesize(spoken, voices.get(names[0]) or "fr-FR-female-2")
             results = [single]
