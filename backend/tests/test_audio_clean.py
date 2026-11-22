@@ -199,34 +199,31 @@ def test_the_switch_turns_it_off(monkeypatch):
 # ------------------------------- through the real pipeline -------------------------------
 
 def _fake_gemini(monkeypatch, pcm_bytes):
-  class _Inline:
+  class _Audio:
     data = pcm_bytes
 
-  class _Part:
-    inline_data = _Inline()
+  class _Interaction:
+    output_audio = _Audio()
 
-  class _Resp:
-    candidates = [type("C", (), {"content": type("K", (), {"parts": [_Part()]})()})()]
-
-  class _Models:
-    def generate_content(self, **kw):
-      return _Resp()
+  class _Interactions:
+    def create(self, **kw):
+      return _Interaction()
 
   class _Client:
     def __init__(self, **kw):
-      self.models = _Models()
+      self.interactions = _Interactions()
 
   fake_genai = types.ModuleType("google.genai")
   fake_genai.Client = _Client
   fake_types = types.ModuleType("google.genai.types")
-  for n in ("GenerateContentConfig", "SpeechConfig", "VoiceConfig", "PrebuiltVoiceConfig"):
-    setattr(fake_types, n, lambda **kw: kw)
+  fake_types.HttpOptions = lambda **kw: kw
   fake_genai.types = fake_types
   monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
   monkeypatch.setitem(sys.modules, "google.genai.types", fake_types)
   import google
   monkeypatch.setattr(google, "genai", fake_genai, raising=False)
   monkeypatch.setattr(tts, "_GEMINI_API_KEY", "x")
+  monkeypatch.setattr(tts, "_gemini_tts_client", None)
 
 
 def _decode(mp3):

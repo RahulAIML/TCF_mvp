@@ -7,6 +7,7 @@ URL whose bytes are not stored.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -49,12 +50,26 @@ def _path(name: str) -> str:
     return os.path.join(_dir(), name)
 
 
+def stored_script_key(script_key: str | None) -> str | None:
+    """A cache key that always fits VARCHAR(64). Longer keys are their sha256 hex digest."""
+    if not script_key:
+        return None
+    if len(script_key) <= 64:
+        return script_key
+    return hashlib.sha256(script_key.encode("utf-8")).hexdigest()
+
+
 def save(name: str, data: bytes, mime: str = "audio/mpeg", script_key: str | None = None) -> str:
-    """Write `data` to the database and the local cache. Returns `/audio/<name>`."""
+    """Write `data` to the local cache and the database. Returns `/audio/<name>`.
+
+    A database error is logged and does not fail the request: the file is already on disk,
+    and the player can still be given the URL.
+    """
     clean = safe_name(name)
     if clean is None or not data:
         raise ValueError("Invalid audio name or empty audio.")
     ensure_schema()
+    key = stored_script_key(script_key)
     path = _path(clean)
     with open(path, "wb") as handle:
         handle.write(data)
@@ -65,19 +80,26 @@ def save(name: str, data: bytes, mime: str = "audio/mpeg", script_key: str | Non
                 "INSERT INTO stored_audio (name, script_key, mime, content, created_at) "
                 "VALUES (:name, :key, :mime, :content, :now)"
             ),
-            {"name": clean, "key": script_key, "mime": mime, "content": data, "now": datetime.utcnow()},
+            {"name": clean, "key": key, "mime": mime, "content": data, "now": datetime.utcnow()},
         )
         db.commit()
     except IntegrityError:
         db.rollback()
-        db.execute(
-            text(
-                "UPDATE stored_audio SET content = :content, mime = :mime, script_key = COALESCE(:key, script_key) "
-                "WHERE name = :name"
-            ),
-            {"name": clean, "key": script_key, "mime": mime, "content": data},
-        )
-        db.commit()
+        try:
+            db.execute(
+                text(
+                    "UPDATE stored_audio SET content = :content, mime = :mime, script_key = COALESCE(:key, script_key) "
+                    "WHERE name = :name"
+                ),
+                {"name": clean, "key": key, "mime": mime, "content": data},
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Could not update cached audio %s; the file is still being returned.", clean)
+    except Exception:
+        db.rollback()
+        logger.exception("Could not store audio %s in the database; the file is still being returned.", clean)
     finally:
         db.close()
     return f"/audio/{clean}"
@@ -130,6 +152,7 @@ def load(url_or_name: str) -> tuple[bytes, str] | None:
 
 
 def find_by_script(script_key: str) -> str | None:
+    script_key = stored_script_key(script_key)
     if not script_key:
         return None
     ensure_schema()
