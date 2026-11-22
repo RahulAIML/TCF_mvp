@@ -61,11 +61,14 @@ export default function PronunciationPage() {
     setServed([]);
     setPromptNote("");
     const level = levelFilter === "all" ? "A2" : levelFilter;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 20000);
     fetch(`${API_BASE_URL}/api/pronunciation/prompts`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ language, level, count: 8 }),
       cache: "no-store",
+      signal: controller.signal,
     })
       .then(async (res) => {
         if (!res.ok) throw new Error(await res.text());
@@ -81,7 +84,7 @@ export default function PronunciationPage() {
           (item) => levelFilter === "all" || item.level === levelFilter,
         );
         setServed(fallback);
-        setPromptNote("Showing the offline list. These phrases are recorded when the server is reachable.");
+        setPromptNote("Showing saved sample words.");
         fallback.forEach((item) => {
           fetch(`${API_BASE_URL}/api/pronunciation/prompts/seen`, {
             method: "POST",
@@ -90,9 +93,11 @@ export default function PronunciationPage() {
             cache: "no-store",
           }).catch(() => undefined);
         });
-      });
+      })
+      .finally(() => window.clearTimeout(timer));
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [language, levelFilter]);
 

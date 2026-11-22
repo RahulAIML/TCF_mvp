@@ -90,19 +90,24 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Fetch with silent retries. A 429, 5xx, or a dropped connection is tried again before the caller sees it. */
-export async function apiFetch(input: string, init: RequestInit = {}, attempts = 4): Promise<Response> {
+/** Fetch with a hard timeout and one silent retry. A hung server must not leave the page spinning. */
+export async function apiFetch(input: string, init: RequestInit = {}, attempts = 2): Promise<Response> {
   const retryable = !input.includes("/submit");
   let lastError: unknown;
   const tries = retryable ? attempts : 1;
   for (let attempt = 0; attempt < tries; attempt++) {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 25000);
     try {
-      const res = await fetch(input, init);
+      const res = await fetch(input, { ...init, signal: init.signal ?? controller.signal });
       const again = retryable && [408, 429, 500, 502, 503, 504].includes(res.status) && attempt < tries - 1;
       if (!again) return res;
     } catch (error) {
-      lastError = error;
-      if (attempt === tries - 1) throw friendlyNetworkError(error);
+      const aborted = error instanceof DOMException && error.name === "AbortError";
+      lastError = aborted ? new Error("This is taking too long. Please try again.") : error;
+      if (attempt === tries - 1) throw lastError instanceof Error ? lastError : friendlyNetworkError(error);
+    } finally {
+      window.clearTimeout(timer);
     }
     await sleep(350 * 2 ** attempt + Math.random() * 250);
   }

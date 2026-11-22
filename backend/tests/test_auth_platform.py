@@ -118,12 +118,8 @@ def test_dashboard_reads_tcf_writing_sessions(client, signup):
   assert len(body["writing"]["recent_submissions"]) == 1
 
 
-def test_health_caches_probe_and_reports_pregen(client, monkeypatch):
-  import main
-
-  monkeypatch.setenv("GEMINI_API_KEY", "fake")
+def test_health_and_version_do_not_call_providers(client, monkeypatch):
   calls = []
-  monkeypatch.setattr(main, "_health_probe", {"checked_at": 0.0, "result": "untested"})
 
   class FakeModels:
     def generate_content(self, **_kw):
@@ -136,8 +132,11 @@ def test_health_caches_probe_and_reports_pregen(client, monkeypatch):
 
   import google.genai
   monkeypatch.setattr(google.genai, "Client", FakeClient)
-  first = client.get("/api/health").json()
-  second = client.get("/api/health").json()
-  assert first["gemini_chat_test"] == "ok" and second["gemini_chat_test"] == "ok"
-  assert len(calls) == 1, "the live Gemini probe must be cached"
-  assert "pregen" in first
+  health = client.get("/api/health")
+  version = client.get("/api/version")
+  live = client.get("/healthz")
+  assert health.status_code == version.status_code == live.status_code == 200
+  assert health.json()["status"] == "ok" and health.json()["commit"]
+  assert version.json()["service"] == "tcf-backend"
+  assert live.json()["status"] == "ok"
+  assert calls == [], "liveness must not call Gemini"
