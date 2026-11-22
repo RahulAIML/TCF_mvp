@@ -362,7 +362,7 @@ def join_mp3(parts: List[bytes]) -> bytes:
     return b"".join(strip_mp3_metadata(p) for p in parts)
 
 
-def _mix_turns(parts: List[bytes], pause_ms: int = 280) -> bytes:
+def _mix_turns(parts: List[bytes], pause_ms: int = 650) -> bytes:
     """One MP3: each turn, then a short silence, so the browser plays every voice and the joins do not click.
 
     Decoding to PCM and encoding once avoids a second MP3 header that some players treat as the end of the file
@@ -438,6 +438,31 @@ def _synthesize_segments(jobs: List[Tuple[str, str]], synth) -> List[Dict[str, A
         return list(pool.map(lambda job: synth(job[0], job[1]), jobs))
 
 
+def _record_voice_plan(
+    report: Optional[List[Dict[str, Any]]],
+    names: List[str],
+    planned: Dict[Optional[str], str],
+    *,
+    provider: str | None = None,
+) -> None:
+    """Voice assigned to each speaker. Used when a finished file is served from the cache."""
+    if report is None:
+        return
+    report.clear()
+    for name in names:
+        voice_id = planned.get(name)
+        if not voice_id:
+            continue
+        cfg = tts_service.get_voice(voice_id)
+        report.append({
+            "speaker": name,
+            "voice_id": voice_id,
+            "provider": provider,
+            "provider_voice": cfg["elevenlabs_voice_id"],
+            "pitch_semitones": cfg.get("pitch_semitones"),
+        })
+
+
 def synthesize_listening_audio(
     script: str,
     speakers: Optional[List[str]] = None,
@@ -456,10 +481,12 @@ def synthesize_listening_audio(
         f"{name}:{planned[name]}@{tts_service.get_voice(planned[name]).get('pitch_semitones', 0)}"
         for name in names_for_key
     )
-    # Hash stays 64 characters (the column width). v4 drops files made before the pitch offset.
-    script_key = hashlib.sha256(f"v4|{voice_key}|{script.strip()}".encode("utf-8")).hexdigest()
+    # Hash stays 64 characters (the column width). v5 drops files made with the short pause,
+    # which could not be split back into turns, and files made before the pitch offset.
+    script_key = hashlib.sha256(f"v5|{voice_key}|650|{script.strip()}".encode("utf-8")).hexdigest()
     cached = audio_store.find_by_script(script_key)
     if cached and audio_store.available(cached):
+        _record_voice_plan(report, names_for_key, planned, provider="cached")
         return cached
     names = names_for_key
     if not names:

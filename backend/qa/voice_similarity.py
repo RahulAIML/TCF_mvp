@@ -41,28 +41,56 @@ def _decode(mp3: bytes, rate: int = 24000) -> np.ndarray:
     return np.frombuffer(decoded.samples, dtype="<i2").astype(np.float32) / 32768.0
 
 
-def split_on_silence(samples: np.ndarray, rate: int = 24000) -> tuple[np.ndarray, np.ndarray]:
-    """Cut at the longest quiet stretch in the middle of the file (the pause between speakers)."""
+def speech_segments(samples: np.ndarray, rate: int = 24000) -> list[np.ndarray]:
+    """Pieces of speech separated by the pause between turns.
+
+    The inserted pause is 650 ms, so a real turn gap is longer than a stop inside a sentence.
+    """
     frame = int(rate * 0.02)
     if len(samples) < frame * 10:
-        mid = len(samples) // 2
-        return samples[:mid], samples[mid:]
+        return [samples]
     rms = np.array([
         np.sqrt(np.mean(samples[i:i + frame] ** 2))
         for i in range(0, len(samples) - frame, frame)
     ])
-    quiet = rms < max(0.01, np.percentile(rms, 20))
-    best_start, best_len, run = 0, 0, 0
-    lo, hi = int(len(quiet) * 0.2), int(len(quiet) * 0.8)
-    for i in range(lo, hi):
-        run = run + 1 if quiet[i] else 0
-        if run > best_len:
-            best_len, best_start = run, i - run + 1
-    if best_len < 3:
-        mid = len(samples) // 2
-        return samples[:mid], samples[mid:]
-    cut = (best_start + best_len // 2) * frame
-    return samples[:cut], samples[cut:]
+    speech = float(np.percentile(rms, 75))
+    quiet = rms < max(0.015, speech * 0.22)
+    gap_frames = 20  # 0.40 s
+    segments: list[np.ndarray] = []
+    start = 0
+    i = 0
+    while i < len(quiet):
+        if not quiet[i]:
+            i += 1
+            continue
+        j = i
+        while j < len(quiet) and quiet[j]:
+            j += 1
+        if j - i >= gap_frames and i > start:
+            piece = samples[start * frame:i * frame]
+            if len(piece) > int(rate * 0.55):
+                segments.append(piece)
+            start = j
+        i = j
+    tail = samples[start * frame:]
+    if len(tail) > int(rate * 0.55):
+        segments.append(tail)
+    return segments or [samples]
+
+
+def sides_for_speakers(samples: np.ndarray, turns: list[dict], rate: int = 24000) -> tuple[np.ndarray, np.ndarray]:
+    """One waveform per speaker. A mid-file cut mixes both people when a dialogue has more than two turns."""
+    segments = speech_segments(samples, rate)
+    speakers = [turn.get("speaker") or turn.get("voice_id") or str(index) for index, turn in enumerate(turns)]
+    if len(segments) == len(speakers) and len(set(speakers)) >= 2:
+        grouped: dict[str, list[np.ndarray]] = {}
+        for segment, speaker in zip(segments, speakers):
+            grouped.setdefault(str(speaker), []).append(segment)
+        names = list(grouped)
+        return np.concatenate(grouped[names[0]]), np.concatenate(grouped[names[1]])
+    # Only trust a score when each turn was separated. Averaging leftover pieces makes two different
+    # voices look like one person.
+    raise ValueError(f"could not isolate the two speakers ({len(segments)} segments for {len(speakers) or 'unknown'} turns)")
 
 
 def _encoder():
@@ -116,8 +144,8 @@ def main() -> int:
             a, b, _kind = same_gender[i % len(same_gender)]
             speakers = [a, b]
             script = (
-                f"{a} : Bonjour, comment allez-vous aujourd'hui à Montréal ?\n"
-                f"{b} : Très bien merci, je vais prendre le métro vers le centre-ville."
+                f"{a} : Bonjour, c'est l'appel numéro {i}, comment allez-vous aujourd'hui à Montréal ?\n"
+                f"{b} : Très bien merci, je vais prendre le métro vers le centre-ville à {8 + (i % 5)} heures."
             )
             print(f"{i:02d} {level} crafted {speakers}", flush=True)
         try:
@@ -125,7 +153,7 @@ def main() -> int:
                 "script": script, "speakers": speakers,
             })
             raw = _get(args.base.rstrip("/") + audio["audio_url"])
-            left, right = split_on_silence(_decode(raw))
+            left, right = sides_for_speakers(_decode(raw), audio.get("voices") or [])
             score = cosine(embed(encoder, left), embed(encoder, right))
         except Exception as error:
             print(f"{i:02d} {level} AUDIO FAIL {error}")
