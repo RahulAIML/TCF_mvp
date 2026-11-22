@@ -11,6 +11,7 @@ Reading comprehension (compréhension écrite) generation for TCF Canada.
 from __future__ import annotations
 
 import logging
+import os
 import random
 import re
 import threading
@@ -605,8 +606,8 @@ def produce_passage_quiz(level: str) -> PassageQuizResponse:
 _QUIZ_POOL = content_bank.DurablePool(
     "passage_quiz",
     lambda level: produce_passage_quiz(str(level)),
-    target=2,
-    warm_keys=("B1", "B2"),
+    target=int(os.getenv("PREGEN_QUIZ_TARGET", "2")),
+    warm_keys=tuple(PASSAGE_LEVELS),
     module="passage_quiz",
     fingerprint_of=lambda item: dedupe.fingerprint(item.passage),
     simhash_of=lambda item: dedupe.simhash_of(item.passage),

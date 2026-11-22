@@ -15,7 +15,7 @@ T = TypeVar("T")
 
 _ENABLED = os.getenv("PREGEN_ENABLED", "1") != "0"
 _EXECUTOR = ThreadPoolExecutor(
-    max_workers=max(1, int(os.getenv("PREGEN_WORKERS", "6"))),
+    max_workers=max(1, int(os.getenv("PREGEN_WORKERS", "2"))),
     thread_name_prefix="pregen",
 )
 

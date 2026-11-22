@@ -6,7 +6,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi import HTTPException
+from fastapi.responses import Response
 
 import pregen_pool
 from database import init_db
@@ -31,7 +32,17 @@ app = FastAPI(title="TCF Canada API", version="0.1.0")
 
 AUDIO_DIR = Path(__file__).resolve().parent / "data" / "audio"
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/audio", StaticFiles(directory=str(AUDIO_DIR)), name="audio")
+
+
+@app.get("/audio/{file_name}")
+def serve_audio(file_name: str) -> Response:
+  """Serve a stored recording. If this instance's disk lost the file, the database copy is used."""
+  import audio_store
+  loaded = audio_store.load(file_name)
+  if loaded is None:
+    raise HTTPException(status_code=404, detail="This audio is no longer on the server. Please generate it again.")
+  data, mime = loaded
+  return Response(content=data, media_type=mime, headers={"Cache-Control": "public, max-age=86400"})
 
 configured_origins = [
   origin.strip()
@@ -74,10 +85,22 @@ app.include_router(tts_router)
 app.include_router(mcp_router)
 
 
+def _warm_in_background() -> None:
+  """Fill pools after the process is already accepting health checks, so warmup cannot fail the deploy."""
+  time.sleep(float(os.getenv("PREGEN_WARM_DELAY_SECONDS", "3")))
+  try:
+    pregen_pool.warm_all()
+  except Exception:
+    import logging
+    logging.getLogger("tcf").exception("Background pool warm-up failed")
+
+
 @app.on_event("startup")
 async def on_startup() -> None:
   init_db()
-  pregen_pool.warm_all()
+  # Do not generate questions on the startup thread. A burst of model and ffmpeg work at boot
+  # has been restarting the instance (instant 502s from the proxy).
+  threading.Thread(target=_warm_in_background, name="pregen-warm", daemon=True).start()
 
 
 @app.get("/api/pregen/stats")

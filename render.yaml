@@ -30,6 +30,12 @@ services:
         fromDatabase:
           name: tcf-postgres
           property: connectionString
+      # One or two background generators. More than that runs several ffmpeg jobs at boot and the
+      # instance is killed (instant 502s). Missing this variable is safe: the code defaults to 2.
+      - key: PREGEN_WORKERS
+        value: "2"
+      - key: FFMPEG_CONCURRENCY
+        value: "1"
 
   - type: web
     name: tcf-trainer

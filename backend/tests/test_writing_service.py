@@ -87,6 +87,27 @@ def test_level_consistent_with_scores():
     assert result["level"] == "B1"
 
 
+def test_learn_explanations_do_not_cite_a_letter(monkeypatch):
+    monkeypatch.setattr(svc, "_generate_json", lambda *a, **k: [{
+        "type": "mcq",
+        "question": "Pourquoi le marché ouvre-t-il tôt ?",
+        "options": ["A. le soir", "B. le matin", "C. jamais", "D. le lundi"],
+        "correct_answer": "B",
+        "explanation": "La réponse B est correcte car le texte dit samedi matin.",
+    }])
+    exercises = svc.generate_more_exercises("le marché", "A2", "Le marché ouvre le samedi matin.")
+    assert exercises
+    assert "réponse B" not in exercises[0]["explanation"]
+    assert "bonne réponse" in exercises[0]["explanation"]
+
+
+def test_examiner_pool_is_large():
+    import topic_bank
+    assert len(topic_bank.EXAMINERS) >= 30
+    drawn = {topic_bank.pick_examiner()[0] for _ in range(60)}
+    assert len(drawn) >= 15
+
+
 def test_the_same_text_keeps_the_same_scores(monkeypatch):
     """A second correction must not drift (the reported case was B1 6/6/6/5, then B2 8/8/8/7)."""
     calls = []

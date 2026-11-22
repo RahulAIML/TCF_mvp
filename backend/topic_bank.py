@@ -146,6 +146,33 @@ def speaking_topic(task_type: str, avoid: Iterable[str] = ()) -> str:
     return topic + f" ({random.randint(1000, 9999)})"
 
 
+# Large enough that a run of twenty sessions does not keep drawing the same examiner.
+EXAMINERS = [
+    ("Marie Dupont", "examinatrice"), ("Sophie Martin", "examinatrice"), ("Claire Lefebvre", "examinatrice"),
+    ("Isabelle Moreau", "examinatrice"), ("Nathalie Petit", "examinatrice"), ("Camille Bernard", "examinatrice"),
+    ("Léa Rousseau", "examinatrice"), ("Chloé Garnier", "examinatrice"), ("Émilie Caron", "examinatrice"),
+    ("Audrey Pelletier", "examinatrice"), ("Julie Gagnon", "examinatrice"), ("Sarah Tremblay", "examinatrice"),
+    ("Amélie Bouchard", "examinatrice"), ("Valérie Côté", "examinatrice"), ("Noémie Lavoie", "examinatrice"),
+    ("Catherine Roy", "examinatrice"), ("Sandrine Gauthier", "examinatrice"), ("Mélanie Fortin", "examinatrice"),
+    ("Geneviève Bergeron", "examinatrice"), ("Caroline Beaulieu", "examinatrice"), ("Élise Marchand", "examinatrice"),
+    ("Jean-Pierre Bernard", "examinateur"), ("Thomas Rousseau", "examinateur"), ("Michel Laurent", "examinateur"),
+    ("Nicolas Gagnon", "examinateur"), ("Antoine Lefebvre", "examinateur"), ("Olivier Caron", "examinateur"),
+    ("Sébastien Moreau", "examinateur"), ("François Pelletier", "examinateur"), ("Marc Tremblay", "examinateur"),
+    ("Luc Bouchard", "examinateur"), ("Simon Côté", "examinateur"), ("David Lavoie", "examinateur"),
+    ("Éric Roy", "examinateur"), ("Julien Gauthier", "examinateur"), ("Mathieu Fortin", "examinateur"),
+    ("Gabriel Bergeron", "examinateur"), ("Paul Beaulieu", "examinateur"), ("Maxime Marchand", "examinateur"),
+    ("Samuel Dupont", "examinateur"), ("Alexandre Martin", "examinateur"),
+]
+
+
+def pick_examiner(avoid: Iterable[str] = ()) -> tuple[str, str]:
+    blocked = {name.strip().lower() for name in avoid if name}
+    choices = [pair for pair in EXAMINERS if pair[0].lower() not in blocked]
+    if not choices:
+        choices = list(EXAMINERS)
+    return random.choice(choices)
+
+
 def place() -> str:
     return random.choice(PLACES)
 

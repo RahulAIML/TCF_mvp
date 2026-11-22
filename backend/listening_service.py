@@ -176,7 +176,7 @@ BANNED_WORDS = (
     "rupture de ban", "rhodanien", "colloque singulier",
 )
 
-POOL_TARGET = int(os.getenv("LISTENING_POOL_TARGET", "5"))
+POOL_TARGET = int(os.getenv("LISTENING_POOL_TARGET", "3"))
 MAX_ATTEMPTS = 4
 
 # ── Speaker labels ──────────────────────────────────────────────────────────────
@@ -410,11 +410,19 @@ def _audio_dir() -> str:
     return AUDIO_STORAGE_PATH
 
 
-def _save(data: bytes, ext: str) -> str:
-    file_name = f"tcf_listening_{uuid.uuid4().hex[:12]}.{ext}"
-    with open(os.path.join(_audio_dir(), file_name), "wb") as f:
-        f.write(data)
-    return f"/audio/{file_name}"
+def _save(data: bytes, ext: str, script_key: str | None = None) -> str:
+    import audio_store
+    mime = "audio/wav" if ext == "wav" else "audio/mpeg"
+    name = f"tcf_listening_{uuid.uuid4().hex[:12]}.{ext}"
+    return audio_store.save(name, data, mime, script_key)
+
+
+def _synth_turn(synth, text: str, voice: str) -> Dict[str, Any]:
+    """Skip the per-turn MP3 re-encode; the turns are mixed once at the end. Older fakes omit `polish`."""
+    try:
+        return synth(text, voice, polish=False)
+    except TypeError:
+        return synth(text, voice)
 
 
 def _synthesize_segments(jobs: List[Tuple[str, str]], synth) -> List[Dict[str, Any]]:
@@ -428,12 +436,18 @@ def synthesize_listening_audio(script: str, speakers: Optional[List[str]] = None
     segment fails, the whole dialogue is redone with Gemini voices of the same genders (providers are never mixed in
     one file — their MP3 sample rates differ). Monologues: one random French voice (Gemini, ElevenLabs fallback).
     """
+    import audio_store
+    import hashlib
+    script_key = hashlib.sha256(script.strip().encode("utf-8")).hexdigest()
+    cached = audio_store.find_by_script(script_key)
+    if cached and audio_store.available(cached):
+        return cached
     names = detect_speakers(script, speakers or None) if speakers else detect_speakers(script)
     if not names:
         voice = random.choice([v for vs in VOICES.values() for v in vs])
         spoken = _monologue_text(script)
         result = tts_service.synthesize(spoken or script, voice)
-        return _save(result["data"], result["extension"])
+        return _save(result["data"], result["extension"], script_key)
 
     voices = assign_voices(names)
     segments = dialogue_segments(script, names)
@@ -443,10 +457,10 @@ def synthesize_listening_audio(script: str, speakers: Optional[List[str]] = None
     if len({voice for _text, voice in jobs}) < 2 and len(names) >= 2:
         logger.warning("Dialogue voices collapsed to one id: %s", voices)
     try:
-        results = _synthesize_segments(jobs, tts_service.synthesize_elevenlabs)
+        results = _synthesize_segments(jobs, lambda text, voice: _synth_turn(tts_service.synthesize_elevenlabs, text, voice))
     except Exception as el_error:
         logger.warning("Dialogue ElevenLabs synthesis failed (%s); regenerating with Gemini voices.", el_error)
-        results = _synthesize_segments(jobs, tts_service.synthesize_gemini)
+        results = _synthesize_segments(jobs, lambda text, voice: _synth_turn(tts_service.synthesize_gemini, text, voice))
     ext = results[0]["extension"]
     if ext == "mp3":
         data = _mix_turns([r["data"] for r in results])
@@ -465,7 +479,7 @@ def synthesize_listening_audio(script: str, speakers: Optional[List[str]] = None
             out.writeframes(frames)
         data = buf.getvalue()
     logger.info("Dialogue audio: %d segments, voices=%s", len(jobs), voices)
-    return _save(data, ext)
+    return _save(data, ext, script_key)
 
 
 # ── Uniqueness ──────────────────────────────────────────────────────────────────
@@ -772,7 +786,9 @@ def _listening_fp(item: ListeningQuestionResponse) -> tuple[str, Optional[str]]:
 
 POOL: content_bank.DurablePool = content_bank.DurablePool(
     "listening",
-    producer=lambda level: build_question(str(level), with_audio=True),
+    # Questions are pooled without audio. Audio is synthesized on demand and stored in the database,
+    # so a restart cannot hand out a URL whose file has disappeared, and startup does not run ffmpeg.
+    producer=lambda level: build_question(str(level), with_audio=False),
     target=POOL_TARGET,
     warm_keys=LEVELS,
     module="listening",
@@ -793,6 +809,18 @@ def _listening_remember(learner: str, session_id: Optional[str], item: Listening
     content_bank.remember(learner, "listening", fp, sim, label=item.question[:180])
 
 
+def _deliver(item: ListeningQuestionResponse, defer_audio: bool) -> ListeningQuestionResponse:
+    """Return a URL only when the bytes are stored. Otherwise synthesize now, or omit the URL."""
+    import audio_store
+    url = item.audio_url if item.audio_url and audio_store.available(item.audio_url) else None
+    if url:
+        return item if url == item.audio_url else item.model_copy(update={"audio_url": url})
+    if defer_audio:
+        return item.model_copy(update={"audio_url": None})
+    fresh = synthesize_listening_audio(item.script, item.speakers or None)
+    return item.model_copy(update={"audio_url": fresh})
+
+
 def get_question(question_number: int, session_id: Optional[str] = None, defer_audio: bool = True,
                  target_level: Optional[str] = None) -> ListeningQuestionResponse:
     """Serve a question from the durable pool when one is ready, otherwise generate one. Never repeats for this learner."""
@@ -805,7 +833,7 @@ def get_question(question_number: int, session_id: Optional[str] = None, defer_a
         if _listening_blocked(learner, session_id, item):
             continue
         _listening_remember(learner, session_id, item)
-        return item
+        return _deliver(item, defer_audio)
     last_error: Exception | None = None
     for _ in range(3):
         try:
@@ -817,5 +845,5 @@ def get_question(question_number: int, session_id: Optional[str] = None, defer_a
             last_error = RuntimeError("listening item already served to this learner")
             continue
         _listening_remember(learner, session_id, item)
-        return item
+        return _deliver(item, defer_audio)
     raise RuntimeError(f"No new listening question for {level}: {last_error}")
