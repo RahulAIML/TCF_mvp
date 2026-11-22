@@ -449,8 +449,9 @@ def synthesize_listening_audio(script: str, speakers: Optional[List[str]] = None
     names_for_key = detect_speakers(script, speakers or None) if speakers else detect_speakers(script)
     planned = assign_voices(names_for_key) if names_for_key else {}
     voice_key = ",".join(f"{name}:{planned[name]}" for name in names_for_key)
-    # v3 drops every file made before voices were actually sent to the provider.
-    script_key = "v3|" + voice_key + "|" + hashlib.sha256(script.strip().encode("utf-8")).hexdigest()
+    # Hash stays 64 characters (the column width). The v3 prefix keeps files made when every
+    # turn used the default voice from being served again.
+    script_key = hashlib.sha256(f"v3|{voice_key}|{script.strip()}".encode("utf-8")).hexdigest()
     cached = audio_store.find_by_script(script_key)
     if cached and audio_store.available(cached):
         return cached
