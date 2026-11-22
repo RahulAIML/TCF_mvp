@@ -365,7 +365,9 @@ def build_reading_prompt(level: str, question_number: int, target_letter: str, a
     token = ai._freshness_token()
     place, context = topic_bank.place(), random.choice(ai.SCENARIO_CONTEXTS)
     domain = topic_bank.domain()
-    document = random.choice(spec["documents"])
+    import variety
+    from learner import current_learner
+    document = variety.choose(f"reading_document:{level}", list(spec["documents"]), current_learner())
     avoid = "; ".join(avoid_topics) if avoid_topics else "aucun"
     return f"""Tu es concepteur d'épreuves officielles du TCF Canada (compréhension écrite).
 Rédige UNE question de niveau {level} du CECR, STRICTEMENT à ce niveau (ni plus facile, ni plus difficile).

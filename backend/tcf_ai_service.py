@@ -504,16 +504,21 @@ def _pick_writing_themes(count: int = 3) -> list[str]:
 
 
 def _writing_tasks_prompt(themes: list[str]) -> str:
+    import variety
+    from learner import current_learner
+    who = current_learner()
+    form1 = variety.choose("writing_task1", variety.WRITING_TASK1_FORMS, who)
+    form2 = variety.choose("writing_task2", variety.WRITING_TASK2_FORMS, who)
     return f"""Tu es concepteur officiel d'épreuves d'expression écrite du TCF Canada (France Éducation international).
 Rédige UNE série complète de trois tâches, en français, au format officiel. Contexte canadien bienvenu.
 
 Thèmes imposés (un par tâche, dans cet ordre) : 1) {themes[0]} ; 2) {themes[1]} ; 3) {themes[2]}.
 
 Format officiel à respecter :
-- Tâche 1 (60 à 120 mots) : rédiger un MESSAGE (courriel, mot, invitation…) adressé à un ou plusieurs destinataires
+- Tâche 1 (60 à 120 mots) : rédiger {form1} adressé à un ou plusieurs destinataires
   nommés, pour décrire, raconter ou expliquer quelque chose. La consigne précise le destinataire et 2 ou 3 éléments
   à inclure.
-- Tâche 2 (120 à 150 mots) : rédiger un ARTICLE, un COURRIER ou une NOTE pour un lecteur précis (journal local,
+- Tâche 2 (120 à 150 mots) : rédiger {form2} pour un lecteur précis (journal local,
   blogue, association…) qui rend compte d'un événement ou d'une expérience ET donne une opinion argumentée.
 - Tâche 3 (120 à 180 mots) : deux courts documents (60 à 90 mots chacun) présentent deux points de vue OPPOSÉS sur
   le thème. La consigne demande : comparer les deux points de vue (40 à 60 mots), puis donner son opinion
@@ -1228,6 +1233,13 @@ def generate_tcf_speaking_opening(task_type: str, avoid_topics: list[str] | None
     """
     name, title = _pick_examiner(None)
     brief = _SPEAKING_TASK_BRIEFS.get(task_type, _SPEAKING_TASK_BRIEFS["opinion"])
+    import variety
+    from learner import current_learner
+    situation = variety.choose(
+        f"speaking:{task_type}",
+        variety.SPEAKING_SITUATIONS.get(task_type, variety.SPEAKING_SITUATIONS["opinion"]),
+        current_learner(),
+    )
     examples = "\n".join(f"- {topic_bank.speaking_topic(task_type)}" for _ in range(4))
     avoid = ""
     if avoid_topics:
@@ -1244,7 +1256,8 @@ def generate_tcf_speaking_opening(task_type: str, avoid_topics: list[str] | None
         )
     prompt = f"""Tu es {name}, {title} TCF Canada. {brief}
 
-Crée une NOUVELLE situation d'examen réaliste (contexte canadien ou francophone, vie courante, niveau B1-B2),
+Crée une NOUVELLE situation d'examen réaliste (contexte canadien ou francophone, vie courante, niveau B1-B2).
+Forme à privilégier cette fois : {situation}.
 dans le même style que ces exemples :
 {examples}{avoid}
 
@@ -1644,6 +1657,12 @@ def _scrub_learn_exercises(exercises: list[Dict[str, Any]]) -> list[Dict[str, An
     return cleaned
 
 
+def _grammar_focus() -> str:
+    import variety
+    from learner import current_learner
+    return variety.choose("grammar", variety.GRAMMAR_FOCI, current_learner())
+
+
 def generate_learn_exercises(text: str, exclude_questions=()) -> list[Dict[str, Any]]:
     """Second phase of the analysis: 5 exercises grounded in the source text."""
     prompt = f"""Tu es un tuteur TCF Canada. Génère exactement 5 exercices d'apprentissage basés sur ce texte.
@@ -1654,6 +1673,7 @@ Texte :
 Retourne un JSON : tableau de 5 exercices au format :
 {_LEARN_EXERCISES_TEMPLATE.format(about="sur le texte")}
 
+La phrase à corriger porte sur { _grammar_focus() }.
 {_LEARN_RULES.format(letter=random.choice("ABCD"))}
 {_exclusion_block(exclude_questions)}"""
     exercises = _order_learn_exercises(_extract_exercise_list(_generate_json(prompt, temperature=0.7)))

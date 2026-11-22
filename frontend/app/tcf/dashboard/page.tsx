@@ -365,7 +365,7 @@ export default function DashboardPage() {
                         score={summary.reading.average_accuracy}
                         max={100}
                         sessions={summary.reading.recent_exams.length}
-                        href="/tcf/reading"
+                        href="/tcf/reading-practice"
                         icon={BookOpen}
                         barColor="bg-indigo-500"
                         dotGradient="bg-gradient-to-br from-indigo-500 to-indigo-600"
@@ -375,7 +375,7 @@ export default function DashboardPage() {
                         score={summary.listening.average_accuracy}
                         max={100}
                         sessions={summary.listening.recent_exams.length}
-                        href="/tcf/listening-exam"
+                        href="/tcf/listening-exam?mode=practice"
                         icon={Headphones}
                         barColor="bg-teal-500"
                         dotGradient="bg-gradient-to-br from-teal-500 to-teal-600"
@@ -476,8 +476,8 @@ export default function DashboardPage() {
                 {/* Quick access cards */}
                 <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                   {[
-                    { href: "/tcf/reading",        label: "Practice Reading",   icon: BookOpen,   gradient: "from-indigo-500 to-indigo-600",  sub: "Mock exam + Passage Analyzer" },
-                    { href: "/tcf/listening-exam", label: "Practice Listening", icon: Headphones, gradient: "from-teal-500 to-teal-600",     sub: "Audio MCQ, A1-C2 levels"       },
+                    { href: "/tcf/reading-practice", label: "Practice Reading",   icon: BookOpen,   gradient: "from-indigo-500 to-indigo-600",  sub: "One question at a time, A1–C2" },
+                    { href: "/tcf/listening-exam?mode=practice", label: "Practice Listening", icon: Headphones, gradient: "from-teal-500 to-teal-600",     sub: "Audio MCQ, A1-C2 levels"       },
                     { href: "/tcf/speaking",       label: "Practice Speaking",  icon: Mic,        gradient: "from-amber-500 to-amber-600",   sub: "Live examiner conversation"    },
                     { href: "/tcf/writing",        label: "Practice Writing",   icon: PenSquare,  gradient: "from-lime-500 to-lime-600",     sub: "3 guided writing tasks"        },
                   ].map((item) => {
