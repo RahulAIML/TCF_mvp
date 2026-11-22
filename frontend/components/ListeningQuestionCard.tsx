@@ -179,6 +179,24 @@ export default function ListeningQuestionCard({
   }, [isPlaying, showTranscript, words.length]);
 
   useEffect(() => {
+    if (!audioError || !onRequestAudio) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void onRequestAudio(question)
+        .then((fetched) => {
+          if (cancelled || !fetched) return;
+          setLocalAudioUrl(resolveUrl(fetched));
+          setAudioError("");
+        })
+        .catch(() => undefined);
+    }, 6000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [audioError, onRequestAudio, question]);
+
+  useEffect(() => {
     if (!showTranscript || !autoScroll) return;
     const currentWord = wordRefs.current[currentWordIndex];
     if (currentWord && transcriptRef.current) {
@@ -217,15 +235,24 @@ export default function ListeningQuestionCard({
     }
     if (remainingPlays !== null && remainingPlays <= 0) return;
 
+    const pullAudio = async (): Promise<string | undefined> => {
+      if (!onRequestAudio) return undefined;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const fetched = await onRequestAudio(question);
+          if (fetched) return fetched;
+        } catch {
+          // The API helper already retried the network call. Try the whole request once more.
+        }
+        if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 800));
+      }
+      return undefined;
+    };
+
     let effectiveSrc = audioSrc;
     if (!effectiveSrc && onRequestAudio) {
       setIsBuffering(true);
-      let fetched: string | undefined;
-      try {
-        fetched = await onRequestAudio(question);
-      } catch {
-        fetched = undefined;
-      }
+      const fetched = await pullAudio();
       if (!fetched) {
         setIsBuffering(false);
         setAudioError("The audio is not available right now.");
@@ -252,15 +279,11 @@ export default function ListeningQuestionCard({
     let ready = await loadSrc(effectiveSrc);
     // A pooled URL can 404 after a restart. Ask the server to synthesize this script again.
     if (!ready && onRequestAudio) {
-      try {
-        const fetched = await onRequestAudio(question);
-        if (fetched) {
-          effectiveSrc = resolveUrl(fetched);
-          setLocalAudioUrl(effectiveSrc);
-          ready = await loadSrc(effectiveSrc);
-        }
-      } catch {
-        ready = false;
+      const fetched = await pullAudio();
+      if (fetched) {
+        effectiveSrc = resolveUrl(fetched);
+        setLocalAudioUrl(effectiveSrc);
+        ready = await loadSrc(effectiveSrc);
       }
     }
     if (!ready) {

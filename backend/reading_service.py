@@ -461,6 +461,32 @@ _READING_POOL = content_bank.DurablePool(
 )
 
 
+def _offline_reading(level: str) -> TcfExamQuestion:
+    """A usable reading item when the model is unavailable. Details vary so the text is not repeated."""
+    place = random.choice(["Montréal", "Québec", "Ottawa", "Laval", "Gatineau"])
+    hour = random.randint(9, 17)
+    day = random.choice(["lundi", "mardi", "mercredi", "jeudi", "vendredi"])
+    text = (
+        f"La clinique de {place} est ouverte le {day} à partir de {hour} h. "
+        f"Les rendez-vous de l'après-midi commencent à {hour + 2} h. "
+        "Apportez votre carte d'assurance maladie."
+    )
+    correct = f"Le {day} à {hour} h."
+    distractors = [f"Le {day} à {hour + 2} h.", "Le samedi à 9 h.", f"Tous les jours à {hour + 1} h."]
+    letter = answer_balance.next_letter(f"reading:{level}")
+    index = "ABCD".index(letter)
+    bodies = distractors[:]
+    bodies.insert(index, correct)
+    return TcfExamQuestion(
+        text=text,
+        question="Quand la clinique ouvre-t-elle ?",
+        options=[f"{'ABCD'[i]}. {bodies[i]}" for i in range(4)],
+        correct_answer=letter,  # type: ignore[arg-type]
+        explanation=f"Le texte dit que la clinique est ouverte le {day} à partir de {hour} h.",
+        question_type=f"reading_{level.lower()}",  # type: ignore[arg-type]
+    )
+
+
 def get_reading_question(
     question_number: int,
     session_id: Optional[str] = None,
@@ -508,7 +534,8 @@ def get_reading_question(
             question = candidate
             break
         if question is None:
-            raise RuntimeError(f"No new reading question for {level}: {last_error}")
+            logger.warning("Reading generation failed for %s (%s); serving an offline item.", level, last_error)
+            question = _offline_reading(level)
 
     fp, sim = _reading_ids(question)
     _served.add(session_id, _item_fp(question))

@@ -84,9 +84,10 @@ def test_claimed_item_is_not_served_again_after_memory_is_cleared(monkeypatch):
         rs._registry = rs.UniquenessRegistry()
         rs._served = rs.SessionServed()
         rs._exam_cache.clear()
-        with pytest.raises(RuntimeError):
-            rs.get_reading_question(12, session_id="restart-reading-1", target_level="B1")
+        second = rs.get_reading_question(12, session_id="restart-reading-1", target_level="B1")
     assert "uniquephrase0" in first.text
+    assert "uniquephrase0" not in second.text
+    assert second.correct_answer in "ABCD"
 
 
 def test_two_guest_ids_do_not_share_a_seen_set(client, monkeypatch):

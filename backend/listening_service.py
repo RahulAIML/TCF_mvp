@@ -426,11 +426,19 @@ def _save(data: bytes, ext: str, script_key: str | None = None) -> str:
 
 
 def _synth_turn(synth, text: str, voice: str) -> Dict[str, Any]:
-    """Skip the per-turn MP3 re-encode; the turns are mixed once at the end. Older fakes omit `polish`."""
-    try:
-        return synth(text, voice, polish=False)
-    except TypeError:
-        return synth(text, voice)
+    """Skip the per-turn MP3 re-encode; the turns are mixed once at the end. Older fakes omit `polish`.
+
+    A 429 or a timeout on one turn is retried. The other provider is only used when this one gives up.
+    """
+    import resilience
+
+    def once() -> Dict[str, Any]:
+        try:
+            return synth(text, voice, polish=False)
+        except TypeError:
+            return synth(text, voice)
+
+    return resilience.retry(once, attempts=3, base=0.3)
 
 
 def _synthesize_segments(jobs: List[Tuple[str, str]], synth) -> List[Dict[str, Any]]:
@@ -466,7 +474,35 @@ def _record_voice_plan(
         })
 
 
+_SCRIPT_LOCKS: Dict[str, threading.Lock] = {}
+_SCRIPT_LOCKS_GUARD = threading.Lock()
+_AUDIO_WARM = threading.BoundedSemaphore(1)
+
+
+def _script_lock(key: str) -> threading.Lock:
+    with _SCRIPT_LOCKS_GUARD:
+        lock = _SCRIPT_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _SCRIPT_LOCKS[key] = lock
+            if len(_SCRIPT_LOCKS) > 400:
+                _SCRIPT_LOCKS.pop(next(iter(_SCRIPT_LOCKS)))
+        return lock
+
+
 def synthesize_listening_audio(
+    script: str,
+    speakers: Optional[List[str]] = None,
+    report: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    """One synthesis per script at a time, so a prefetch and a play click do not both call the provider."""
+    import hashlib
+    gate = _script_lock(hashlib.sha256(script.strip().encode("utf-8")).hexdigest())
+    with gate:
+        return _synthesize_listening_audio(script, speakers, report)
+
+
+def _synthesize_listening_audio(
     script: str,
     speakers: Optional[List[str]] = None,
     report: Optional[List[Dict[str, Any]]] = None,
@@ -878,6 +914,73 @@ def _listening_remember(learner: str, session_id: Optional[str], item: Listening
     content_bank.remember(learner, "listening", fp, sim, label=item.question[:180])
 
 
+def _offline_listening(level: str, question_number: int) -> ListeningQuestionResponse:
+    """A real question when the model is down. The details change so two learners are not handed the same text."""
+    place = random.choice(["Montréal", "Québec", "Laval", "Gatineau", "Ottawa", "Sherbrooke"])
+    hour = random.randint(9, 18)
+    minute = random.choice([0, 15, 30, 45])
+    room = random.randint(1, 12)
+    when = f"{hour} h {minute:02d}"
+    script = (
+        f"Annonce : la bibliothèque de {place} ferme aujourd'hui à {when}. "
+        f"Le groupe d'étude de la salle {room} se réunit quand même à l'entrée."
+    )
+    if level in ("B1", "B2", "C1", "C2"):
+        script += (
+            " L'équipe demande aux visiteurs de terminer leurs emprunts quinze minutes avant la fermeture, "
+            "parce que le personnel doit aussi ranger les retours du matin."
+        )
+    if level in ("C1", "C2"):
+        script += (
+            " La direction précise que cette fermeture anticipée ne change pas les horaires du samedi, "
+            "et que les usagers qui ont réservé une salle après cette heure seront contactés un par un."
+        )
+    correct = f"À {when}."
+    distractors = [f"À {hour + 1} h.", f"À {max(8, hour - 1)} h {minute:02d}.", "Le lendemain matin."]
+    letter = answer_balance.next_letter(f"listening:{level}")
+    index = LETTERS.index(letter)
+    bodies = distractors[:]
+    bodies.insert(index, correct)
+    bodies = bodies[:4]
+    return ListeningQuestionResponse(
+        question_id=uuid.uuid4().hex,
+        level=level,
+        script=script,
+        audio_url=None,
+        question="À quelle heure la bibliothèque ferme-t-elle aujourd'hui ?",
+        options=[f"{LETTERS[i]}. {bodies[i]}" for i in range(4)],
+        correct_answer=letter,
+        explanation=f"L'annonce dit que la bibliothèque ferme à {when}.",
+        format_type="une annonce courte",
+        speakers=[],
+    )
+
+
+def _schedule_audio_warm(item: ListeningQuestionResponse) -> None:
+    """Start synthesis before the learner presses play. One warm job at a time, so ffmpeg stays bounded."""
+    if item.audio_url or not item.script:
+        return
+    if not _AUDIO_WARM.acquire(blocking=False):
+        return
+
+    def run() -> None:
+        try:
+            synthesize_listening_audio(item.script, item.speakers or None)
+        except Exception as error:
+            logger.warning("Background listening audio failed: %s", error)
+        finally:
+            _AUDIO_WARM.release()
+
+    threading.Thread(target=run, name="listening-audio-warm", daemon=True).start()
+
+
+def _finish(item: ListeningQuestionResponse, defer_audio: bool) -> ListeningQuestionResponse:
+    delivered = _deliver(item, defer_audio)
+    if defer_audio and not delivered.audio_url:
+        _schedule_audio_warm(delivered)
+    return delivered
+
+
 def _deliver(item: ListeningQuestionResponse, defer_audio: bool) -> ListeningQuestionResponse:
     """Return a URL only when the bytes are stored. Otherwise synthesize now, or omit the URL."""
     import audio_store
@@ -902,7 +1005,7 @@ def get_question(question_number: int, session_id: Optional[str] = None, defer_a
         if _listening_blocked(learner, session_id, item):
             continue
         _listening_remember(learner, session_id, item)
-        return _deliver(item, defer_audio)
+        return _finish(item, defer_audio)
     last_error: Exception | None = None
     for _ in range(3):
         try:
@@ -914,5 +1017,12 @@ def get_question(question_number: int, session_id: Optional[str] = None, defer_a
             last_error = RuntimeError("listening item already served to this learner")
             continue
         _listening_remember(learner, session_id, item)
-        return _deliver(item, defer_audio)
+        return _finish(item, defer_audio)
+    logger.warning("Listening generation failed for %s (%s); serving an offline item.", level, last_error)
+    for _ in range(5):
+        item = _offline_listening(level, question_number)
+        if _listening_blocked(learner, session_id, item):
+            continue
+        _listening_remember(learner, session_id, item)
+        return _finish(item, defer_audio)
     raise RuntimeError(f"No new listening question for {level}: {last_error}")

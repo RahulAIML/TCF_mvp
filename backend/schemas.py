@@ -276,6 +276,8 @@ class ListeningVoiceTurn(BaseModel):
 class GenerateListeningAudioResponse(BaseModel):
   audio_url: str | None = None
   voices: List[ListeningVoiceTurn] = Field(default_factory=list)
+  job_id: str | None = None
+  status: str = "ready"
 
 
 class SubmitListeningExamRequest(BaseModel):

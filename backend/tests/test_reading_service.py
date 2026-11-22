@@ -263,9 +263,11 @@ def test_route_hides_generator_errors(client, monkeypatch):
         raise RuntimeError("Gemini generate_content failed: secret stack")
 
     monkeypatch.setattr(rs, "produce_reading_question", boom)
-    r = client.post("/tcf/generate-question", json={"question_number": 3})
-    assert r.status_code == 503
-    assert "Gemini" not in r.text and "Réessayez" in r.text.replace("réessayer", "Réessayez")
+    monkeypatch.setattr(rs._READING_POOL, "take", lambda level: None)
+    r = client.post("/tcf/generate-question", json={"question_number": 3, "session_id": "hide-errors"})
+    assert r.status_code == 200, r.text
+    assert "Gemini" not in r.text and "secret" not in r.text
+    assert r.json()["correct_answer"] in "ABCD"
 
 
 def test_passage_quiz_route_accepts_level_and_empty_body(client):

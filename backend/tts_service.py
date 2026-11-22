@@ -209,20 +209,21 @@ ELEVENLABS_SLOTS = threading.BoundedSemaphore(max(1, int(os.getenv("ELEVENLABS_M
 
 
 def elevenlabs_post(url: str, headers: dict, payload: dict, timeout) -> requests.Response:
-    """POST to ElevenLabs within the shared concurrency cap, retrying 429/5xx with backoff."""
-    delay = 1.0
-    for attempt in range(4):
-        with ELEVENLABS_SLOTS:
-            resp = _SESSION.post(url, headers=headers, json=payload, timeout=timeout)
-        if resp.status_code != 429 and resp.status_code < 500:
-            resp.raise_for_status()
-            return resp
-        if attempt == 3:
-            resp.raise_for_status()
-        logger.warning("ElevenLabs HTTP %s, retrying in %.0fs", resp.status_code, delay)
-        time.sleep(delay)
-        delay *= 2
-    raise RuntimeError("unreachable")
+    """POST to ElevenLabs within the shared concurrency cap, retrying timeouts, 429s and 5xx."""
+    import resilience
+
+    def once() -> requests.Response:
+        try:
+            with ELEVENLABS_SLOTS:
+                resp = _SESSION.post(url, headers=headers, json=payload, timeout=timeout)
+        except (requests.Timeout, requests.ConnectionError) as error:
+            raise RuntimeError(f"ElevenLabs timeout: {error}") from error
+        if resp.status_code == 429 or resp.status_code >= 500:
+            raise RuntimeError(f"ElevenLabs HTTP {resp.status_code}")
+        resp.raise_for_status()
+        return resp
+
+    return resilience.retry(once, attempts=6, base=0.5, cap=8.0)
 
 
 class AudioResult(TypedDict, total=False):
