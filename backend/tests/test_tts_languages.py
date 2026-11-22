@@ -144,3 +144,30 @@ def test_empty_and_too_long_text_are_refused():
     tts.synthesize("   ", "fr-FR-male-1")
   with pytest.raises(ValueError, match="maximum"):
     tts.synthesize("x" * (tts.MAX_TEXT_LENGTH + 1), "fr-FR-male-1")
+
+
+def test_same_gender_voices_are_pitched_in_opposite_directions():
+  deep = tts.get_voice("fr-FR-male-1")
+  bright = tts.get_voice("fr-FR-male-2")
+  assert deep["pitch_semitones"] < 0 < bright["pitch_semitones"]
+  assert deep["gemini_voice_name"] != bright["gemini_voice_name"]
+  assert "France" in deep["gemini_style"] and "Quebec" in bright["gemini_style"]
+  women = (tts.get_voice("fr-FR-female-1"), tts.get_voice("fr-FR-female-2"))
+  assert women[0]["pitch_semitones"] < 0 < women[1]["pitch_semitones"]
+
+
+def test_pitch_shift_raises_a_tone_by_about_an_octave():
+  import math
+  import struct
+  import numpy as np
+  rate = 8000
+  freq = 200.0
+  pcm = b"".join(
+    struct.pack("<h", int(6000 * math.sin(2 * math.pi * freq * i / rate)))
+    for i in range(rate)
+  )
+  shifted = tts.shift_pitch_pcm(pcm, 12, sample_rate=rate)
+  samples = np.frombuffer(shifted, dtype="<i2").astype(np.float64)
+  spectrum = np.abs(np.fft.rfft(samples * np.hanning(len(samples))))
+  peak = int(np.argmax(spectrum)) * rate / len(samples)
+  assert 340 < peak < 460

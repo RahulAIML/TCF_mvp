@@ -489,15 +489,25 @@ export default function ListeningQuestionCard({
                     ))}
                   </p>
                 )}
-                {words.map((word, index) => (
+                {words.map((word, index) => {
+                  const speakerName = word.replace(/:$/, "");
+                  const isSpeaker = (question.speakers ?? []).includes(speakerName);
+                  return (
                   <span
                     key={`word-${index}`}
                     ref={(el) => { wordRefs.current[index] = el; }}
-                    className={index === currentWordIndex ? "rounded bg-yellow-200 px-1" : ""}
+                    className={
+                      isSpeaker
+                        ? "font-semibold text-indigo-700"
+                        : index === currentWordIndex
+                          ? "rounded bg-yellow-200 px-1"
+                          : ""
+                    }
                   >
                     {word}{" "}
                   </span>
-                ))}
+                  );
+                })}
               </div>
               {showTranslation && translationText && (
                 <div className="border-l border-indigo-100 pl-3">

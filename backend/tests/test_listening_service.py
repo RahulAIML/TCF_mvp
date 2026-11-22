@@ -141,6 +141,8 @@ def test_two_male_names_get_two_different_male_voices():
         assert first["gemini_voice_name"] != second["gemini_voice_name"]
         assert first["elevenlabs_voice_id"] != second["elevenlabs_voice_id"]
         assert {first["gemini_voice_name"], second["gemini_voice_name"]} == {"Charon", "Puck"}
+        assert first["pitch_semitones"] == -4
+        assert second["pitch_semitones"] == 4
 
 
 def test_dialogue_audio_has_one_segment_per_speaker(monkeypatch, tmp_path):
@@ -507,13 +509,16 @@ def test_question_route_returns_friendly_503(client, monkeypatch):
 def test_audio_route_passes_speakers(client, monkeypatch):
     seen = {}
 
-    def fake(script, speakers):
+    def fake(script, speakers, report=None):
         seen["speakers"] = speakers
+        if report is not None:
+            report.append({"speaker": "Marc", "voice_id": "fr-FR-male-1", "provider": "test", "provider_voice": "Charon", "pitch_semitones": -4})
         return "/audio/x.mp3"
     monkeypatch.setattr(ls, "synthesize_listening_audio", fake)
     r = client.post("/tcf/generate-listening-audio", json={"script": "Marc : a\nSophie : b", "speakers": ["Marc", "Sophie"]})
     assert r.status_code == 200 and r.json()["audio_url"] == "/audio/x.mp3"
     assert seen["speakers"] == ["Marc", "Sophie"]
+    assert r.json()["voices"][0]["provider_voice"] == "Charon"
 
 
 def test_question_route_serves_pool_item(client, monkeypatch):

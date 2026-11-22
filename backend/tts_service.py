@@ -60,6 +60,7 @@ class VoiceConfig(TypedDict):
     elevenlabs_voice_id: str
     gemini_voice_name: str
     gemini_style: str
+    pitch_semitones: float
 
 
 # code -> (locale used in voice ids, name shown to people)
@@ -71,25 +72,30 @@ LANGUAGES: dict[str, tuple[str, str]] = {
 }
 DEFAULT_LANGUAGE = "fr"
 
-# (gender, number, env var, ElevenLabs voice id, Gemini prebuilt voice, delivery style)
-# The two voices of one gender are the far ends of the range (deep/slow vs bright/quick).
-# Fenrir and Puck are both young mid-pitch voices and sound like one person in French.
-_BASE_VOICES: list[tuple[str, int, str, str, str, str]] = [
-    # Arnold: deep American male. Gemini Charon: low, informative.
-    ("male", 1, "ELEVENLABS_VOICE_ID_TTS_M1", "VR6AewLTigWG4xSOukaG", "Charon", "low pitch, slow, calm, resonant"),
-    # Antoni: lighter male. Gemini Puck: upbeat and higher.
-    ("male", 2, "ELEVENLABS_VOICE_ID_TTS_M2", "ErXwobaYiN019PkySvjV", "Puck", "high pitch, bright, quick, youthful"),
-    # Dorothy: mature British woman. Gemini Gacrux: mature, lower.
-    ("female", 1, "ELEVENLABS_VOICE_ID_TTS_F1", "ThT5KcBeYPX3keUQqHPh", "Gacrux", "low pitch, measured, mature"),
-    # Charlotte: brighter woman. Gemini Zephyr: bright.
-    ("female", 2, "ELEVENLABS_VOICE_ID_TTS_F2", "XB0fDUnXU5powFXDhCwa", "Zephyr", "high pitch, bright, lively"),
+# (gender, number, env var, ElevenLabs voice id, Gemini prebuilt voice, delivery style, pitch in semitones)
+# Gemini Charon and Puck are both mid-range in French (measured cosine ~0.87 on the same sentence pair).
+# The pitch offset is applied after synthesis so the two speakers stay apart even when a provider
+# ignores the voice name. Deep voices use a France accent; bright voices use a Quebec accent.
+_BASE_VOICES: list[tuple[str, int, str, str, str, str, float]] = [
+    # Clyde: deep, gravelly. Gemini Charon: low. Pitched down.
+    ("male", 1, "ELEVENLABS_VOICE_ID_TTS_M1", "2EiwWnXFnvU5JabPnv8n", "Charon",
+     "low pitch, slow, calm, resonant, metropolitan French accent from France", -4.0),
+    # Harry: young and higher. Gemini Puck: upbeat. Pitched up.
+    ("male", 2, "ELEVENLABS_VOICE_ID_TTS_M2", "SOYHLrjzK2X1ezoPC6cr", "Puck",
+     "high pitch, bright, quick, youthful, Canadian French accent from Quebec", 4.0),
+    # Dorothy: mature. Gemini Gacrux: lower. Pitched down.
+    ("female", 1, "ELEVENLABS_VOICE_ID_TTS_F1", "ThT5KcBeYPX3keUQqHPh", "Gacrux",
+     "low pitch, measured, mature, metropolitan French accent from France", -4.0),
+    # Charlotte: brighter. Gemini Zephyr: bright. Pitched up, Quebec accent.
+    ("female", 2, "ELEVENLABS_VOICE_ID_TTS_F2", "XB0fDUnXU5powFXDhCwa", "Zephyr",
+     "high pitch, bright, lively, Canadian French accent from Quebec", 4.0),
 ]
 
 
 def _build_registry() -> dict[str, VoiceConfig]:
     registry: dict[str, VoiceConfig] = {}
     for code, (locale, language_name) in LANGUAGES.items():
-        for gender, number, env_var, el_default, gemini_name, style in _BASE_VOICES:
+        for gender, number, env_var, el_default, gemini_name, style, pitch in _BASE_VOICES:
             voice_id = f"{locale}-{gender}-{number}"
             suffix = "" if number == 1 else f" {number}"
             registry[voice_id] = {
@@ -101,6 +107,7 @@ def _build_registry() -> dict[str, VoiceConfig]:
                 "elevenlabs_voice_id": os.getenv(env_var, el_default),
                 "gemini_voice_name": gemini_name,
                 "gemini_style": style,
+                "pitch_semitones": pitch,
             }
     return registry
 
@@ -311,6 +318,58 @@ def save_audio(result: AudioResult, voice_id: str, *, long_name: bool = False) -
     return file_name, url
 
 
+def shift_pitch_pcm(pcm: bytes, semitones: float, sample_rate: int = GEMINI_SAMPLE_RATE) -> bytes:
+    """Raise or lower pitch without changing the length. No-op when ffmpeg is missing."""
+    if abs(semitones) < 0.05 or not pcm:
+        return pcm
+    import shutil
+    import subprocess
+    if shutil.which("ffmpeg") is None:
+        logger.warning("ffmpeg is missing; leaving voice %s unshifted.", semitones)
+        return pcm
+    factor = 2 ** (semitones / 12.0)
+    tempo = 1.0 / factor
+    if not 0.5 <= tempo <= 2.0:
+        return pcm
+    af = f"asetrate={sample_rate}*{factor:.6f},aresample={sample_rate},atempo={tempo:.6f}"
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-v", "error", "-f", "s16le", "-ar", str(sample_rate), "-ac", "1", "-i", "pipe:0",
+             "-af", af, "-f", "s16le", "-ar", str(sample_rate), "-ac", "1", "pipe:1"],
+            input=pcm, capture_output=True, timeout=60,
+        )
+    except Exception as error:
+        logger.warning("Pitch shift failed (%s); using the original audio.", error)
+        return pcm
+    if proc.returncode != 0 or len(proc.stdout) < 100:
+        logger.warning("Pitch shift ffmpeg failed; using the original audio.")
+        return pcm
+    return proc.stdout
+
+
+def _mp3_to_pcm(data: bytes, sample_rate: int = GEMINI_SAMPLE_RATE) -> bytes:
+    import subprocess
+    proc = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", "pipe:0", "-f", "s16le", "-ac", "1", "-ar", str(sample_rate), "pipe:1"],
+        input=data, capture_output=True, timeout=60,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        raise RuntimeError("Could not decode MP3 for pitch shift.")
+    return proc.stdout
+
+
+def _with_pitch(data: bytes, extension: str, voice: VoiceConfig) -> tuple[bytes, str]:
+    semitones = float(voice.get("pitch_semitones") or 0)
+    if abs(semitones) < 0.05:
+        return data, extension
+    logger.info("Pitch shift: registry=%s semitones=%s", voice["id"], semitones)
+    if extension == "mp3":
+        pcm = shift_pitch_pcm(_mp3_to_pcm(data), semitones)
+        mp3 = _pcm_to_mp3(pcm)
+        return (mp3, "mp3") if mp3 else (data, extension)
+    return shift_pitch_pcm(data, semitones), extension
+
+
 def _generate_via_elevenlabs(text: str, voice: VoiceConfig, polish: bool = True) -> AudioResult:
     if not _ELEVENLABS_API_KEY:
         raise RuntimeError("ELEVENLABS_API_KEY not configured.")
@@ -331,7 +390,10 @@ def _generate_via_elevenlabs(text: str, voice: VoiceConfig, polish: bool = True)
         voice["id"], el_voice_id, len(text),
     )
     resp = elevenlabs_post(url, headers, payload, timeout=(5, 120))
-    data = polish_mp3(resp.content) if polish else resp.content
+    raw = resp.content
+    data, _ext = _with_pitch(raw, "mp3", voice)
+    if polish:
+        data = polish_mp3(data)
     return {
         "data": data, "extension": "mp3", "mime_type": "audio/mpeg",
         "provider": "elevenlabs", "provider_voice": el_voice_id,
@@ -470,6 +532,7 @@ def _generate_via_gemini(text: str, voice: VoiceConfig, polish: bool = True) -> 
         logger.warning("Gemini interactions TTS failed (%s); trying the legacy call.", modern_error)
         pcm_bytes = _legacy_gemini_pcm(voice, text)
     pcm_bytes = _clean_edges(pcm_bytes, voice["id"])
+    pcm_bytes = shift_pitch_pcm(pcm_bytes, float(voice.get("pitch_semitones") or 0))
     mp3 = _pcm_to_mp3(pcm_bytes)
     provider_voice = voice["gemini_voice_name"]
     if mp3:

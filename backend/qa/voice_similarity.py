@@ -91,25 +91,38 @@ def main() -> int:
     args = parser.parse_args()
     encoder = _encoder()
     levels = ["A1", "A2", "B1", "B2", "C1", "C2"]
+    same_gender = [
+        ("Antoine", "Simon", "male"),
+        ("Marie", "Sophie", "female"),
+        ("François", "Paul", "male"),
+        ("Claire", "Léa", "female"),
+    ]
     rows = []
     for i in range(args.count):
         level = levels[i % len(levels)]
         number = {"A1": 2, "A2": 7, "B1": 15, "B2": 24, "C1": 32, "C2": 37}[level]
+        speakers: list[str] = []
+        script = ""
         try:
             question = _post(args.base, "/tcf/generate-listening-question", {
                 "question_number": number, "target_level": level, "defer_audio": True,
                 "session_id": f"voice-qa-{i}",
             })
+            speakers = question.get("speakers") or []
+            script = question.get("script") or ""
         except Exception as error:
-            print(f"{i:02d} {level} QUESTION FAIL {error}")
-            continue
-        speakers = question.get("speakers") or []
+            print(f"{i:02d} {level} QUESTION FAIL {error}", flush=True)
         if len(speakers) < 2:
-            print(f"{i:02d} {level} skip monologue")
-            continue
+            a, b, _kind = same_gender[i % len(same_gender)]
+            speakers = [a, b]
+            script = (
+                f"{a} : Bonjour, comment allez-vous aujourd'hui à Montréal ?\n"
+                f"{b} : Très bien merci, je vais prendre le métro vers le centre-ville."
+            )
+            print(f"{i:02d} {level} crafted {speakers}", flush=True)
         try:
             audio = _post(args.base, "/tcf/generate-listening-audio", {
-                "script": question["script"], "speakers": speakers,
+                "script": script, "speakers": speakers,
             })
             raw = _get(args.base.rstrip("/") + audio["audio_url"])
             left, right = split_on_silence(_decode(raw))
@@ -117,8 +130,11 @@ def main() -> int:
         except Exception as error:
             print(f"{i:02d} {level} AUDIO FAIL {error}")
             continue
-        same_gender = speakers[0][-1:] and speakers
-        print(f"{i:02d} {level} speakers={speakers} similarity={score:.3f}", flush=True)
+        heard = ",".join(
+            f"{turn.get('speaker')}:{turn.get('provider_voice')}@{turn.get('pitch_semitones')}"
+            for turn in (audio.get("voices") or [])
+        )
+        print(f"{i:02d} {level} speakers={speakers} voices={heard} similarity={score:.3f}", flush=True)
         rows.append((level, speakers, score))
     if not rows:
         print("no dialogues measured")

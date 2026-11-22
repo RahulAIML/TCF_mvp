@@ -438,7 +438,11 @@ def _synthesize_segments(jobs: List[Tuple[str, str]], synth) -> List[Dict[str, A
         return list(pool.map(lambda job: synth(job[0], job[1]), jobs))
 
 
-def synthesize_listening_audio(script: str, speakers: Optional[List[str]] = None) -> str:
+def synthesize_listening_audio(
+    script: str,
+    speakers: Optional[List[str]] = None,
+    report: Optional[List[Dict[str, Any]]] = None,
+) -> str:
     """
     Audio for a listening script. Dialogues: one voice per speaker, synthesised per segment with ElevenLabs; if any
     segment fails, the whole dialogue is redone with Gemini voices of the same genders (providers are never mixed in
@@ -448,10 +452,12 @@ def synthesize_listening_audio(script: str, speakers: Optional[List[str]] = None
     import hashlib
     names_for_key = detect_speakers(script, speakers or None) if speakers else detect_speakers(script)
     planned = assign_voices(names_for_key) if names_for_key else {}
-    voice_key = ",".join(f"{name}:{planned[name]}" for name in names_for_key)
-    # Hash stays 64 characters (the column width). The v3 prefix keeps files made when every
-    # turn used the default voice from being served again.
-    script_key = hashlib.sha256(f"v3|{voice_key}|{script.strip()}".encode("utf-8")).hexdigest()
+    voice_key = ",".join(
+        f"{name}:{planned[name]}@{tts_service.get_voice(planned[name]).get('pitch_semitones', 0)}"
+        for name in names_for_key
+    )
+    # Hash stays 64 characters (the column width). v4 drops files made before the pitch offset.
+    script_key = hashlib.sha256(f"v4|{voice_key}|{script.strip()}".encode("utf-8")).hexdigest()
     cached = audio_store.find_by_script(script_key)
     if cached and audio_store.available(cached):
         return cached
@@ -465,15 +471,19 @@ def synthesize_listening_audio(script: str, speakers: Optional[List[str]] = None
     voices = assign_voices(names)
     segments = dialogue_segments(script, names)
     # Never send the "Name :" label to the synthesizer.
-    jobs = [(_spoken_turn(text, names), voices.get(speaker) or voices[None]) for speaker, text in segments]
-    jobs = [(text, voice) for text, voice in jobs if text]
+    labelled = [
+        (_spoken_turn(text, names), voices.get(speaker) or voices[None], speaker) for speaker, text in segments
+    ]
+    labelled = [(text, voice, speaker) for text, voice, speaker in labelled if text]
+    jobs = [(text, voice) for text, voice, _speaker in labelled]
     if len({voice for _text, voice in jobs}) < 2 and len(names) >= 2:
         logger.warning("Dialogue voices collapsed to one id: %s", voices)
     for text, voice_id in jobs:
         cfg = tts_service.get_voice(voice_id)
         logger.info(
-            "Listening turn assigned voice_id=%s gemini=%s elevenlabs=%s style=%s chars=%d",
-            voice_id, cfg["gemini_voice_name"], cfg["elevenlabs_voice_id"], cfg.get("gemini_style"), len(text),
+            "Listening turn assigned voice_id=%s gemini=%s elevenlabs=%s pitch=%s style=%s chars=%d",
+            voice_id, cfg["gemini_voice_name"], cfg["elevenlabs_voice_id"], cfg.get("pitch_semitones"),
+            cfg.get("gemini_style"), len(text),
         )
     try:
         results = _synthesize_segments(jobs, lambda text, voice: _synth_turn(tts_service.synthesize_elevenlabs, text, voice))
@@ -498,6 +508,16 @@ def synthesize_listening_audio(script: str, speakers: Optional[List[str]] = None
             out.writeframes(frames)
         data = buf.getvalue()
     logger.info("Dialogue audio: %d segments, voices=%s", len(jobs), voices)
+    if report is not None:
+        report.clear()
+        for (_text, voice_id, speaker), result in zip(labelled, results):
+            report.append({
+                "speaker": speaker,
+                "voice_id": voice_id,
+                "provider": result.get("provider"),
+                "provider_voice": result.get("provider_voice"),
+                "pitch_semitones": tts_service.get_voice(voice_id).get("pitch_semitones"),
+            })
     return _save(data, ext, script_key)
 
 

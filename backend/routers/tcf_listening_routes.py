@@ -43,11 +43,12 @@ def post_generate_listening_audio(
   _user: User = Depends(get_optional_user)
 ) -> GenerateListeningAudioResponse:
   try:
-    audio_url = listening_service.synthesize_listening_audio(payload.script, payload.speakers or None)
+    turns: list = []
+    audio_url = listening_service.synthesize_listening_audio(payload.script, payload.speakers or None, report=turns)
   except Exception as error:
     logger.error("Listening audio failed: %s", error)
     raise HTTPException(status_code=503, detail="The audio could not be generated right now. Please try again.") from error
-  return GenerateListeningAudioResponse(audio_url=audio_url)
+  return GenerateListeningAudioResponse(audio_url=audio_url, voices=turns)
 
 
 @router.post("/submit-listening-exam", response_model=SubmitListeningExamResponse)
