@@ -30,7 +30,7 @@ const groups = [
     label: "TCF Modules",
     items: [
       { href: "/tcf/reading",        label: "Reading",   icon: BookOpen,        color: "text-indigo-400"  },
-      { href: "/tcf/listening-exam", label: "Listening", icon: Headphones,      color: "text-teal-400"    },
+      { href: "/tcf/listening-exam?mode=practice", label: "Listening", icon: Headphones,      color: "text-teal-400"    },
       { href: "/tcf/speaking",       label: "Speaking",  icon: Mic,             color: "text-amber-400"   },
       { href: "/tcf/writing",        label: "Writing",   icon: PenSquare,       color: "text-lime-400"    },
     ],

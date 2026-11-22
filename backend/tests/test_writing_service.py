@@ -6,6 +6,14 @@ from types import SimpleNamespace
 import pytest
 
 import tcf_ai_service as svc
+
+
+def _clear_eval_cache():
+    from sqlalchemy import text
+    import content_bank
+    content_bank.ensure_schema()
+    with content_bank.engine.begin() as conn:
+        conn.execute(text("DELETE FROM writing_eval_cache"))
 from pregen_pool import PregenPool
 
 
@@ -13,10 +21,10 @@ from pregen_pool import PregenPool
 def _fresh_writing_history():
     svc._writing_prompt_history.clear()
     svc._writing_recent_themes.clear()
-    svc._writing_eval_cache.clear()
+    _clear_eval_cache()
     yield
     svc._writing_prompt_history.clear()
-    svc._writing_eval_cache.clear()
+    _clear_eval_cache()
 
 
 def _chunks(text: str, size: int = 7):
@@ -87,6 +95,49 @@ def test_level_consistent_with_scores():
     parsed = svc.parse_writing_evaluation_text(GOOD_EVAL.replace("NIVEAU: B1", "NIVEAU: C2"))
     result = svc._apply_writing_guards(parsed, "task1", " ".join(["mot"] * 80))
     assert result["level"] == "B1"
+
+
+def test_learn_explanations_do_not_cite_a_letter(monkeypatch):
+    monkeypatch.setattr(svc, "_generate_json", lambda *a, **k: [{
+        "type": "mcq",
+        "question": "Pourquoi le marché ouvre-t-il tôt ?",
+        "options": ["A. le soir", "B. le matin", "C. jamais", "D. le lundi"],
+        "correct_answer": "B",
+        "explanation": "La réponse B est correcte car le texte dit samedi matin.",
+    }])
+    exercises = svc.generate_more_exercises("le marché", "A2", "Le marché ouvre le samedi matin.")
+    assert exercises
+    assert "réponse B" not in exercises[0]["explanation"]
+    assert "bonne réponse" in exercises[0]["explanation"]
+
+
+def test_examiner_pool_is_large():
+    import topic_bank
+    assert len(topic_bank.EXAMINERS) >= 30
+    drawn = {topic_bank.pick_examiner()[0] for _ in range(60)}
+    assert len(drawn) >= 15
+
+
+def test_the_same_text_keeps_the_same_scores(monkeypatch):
+    """A second correction must not drift (the reported case was B1 6/6/6/5, then B2 8/8/8/7)."""
+    calls = []
+    answers = iter([GOOD_EVAL, GOOD_EVAL.replace("NIVEAU: B1", "NIVEAU: B2").replace("STRUCTURE: 6", "STRUCTURE: 8")])
+
+    def fake_generate(contents, stream=False, **kwargs):
+        calls.append(kwargs.get("temperature"))
+        text = next(answers)
+        return _chunks(text) if stream else SimpleNamespace(text=text)
+
+    monkeypatch.setattr(svc, "API_KEY", "test")
+    monkeypatch.setattr(svc, "_gemini_generate", fake_generate)
+    prompt = "Écrivez à un collègue au sujet d'un événement local."
+    response = " ".join(["phrase"] * 130)
+    first = svc.evaluate_tcf_writing_task("task2", prompt, response)
+    second = svc.evaluate_tcf_writing_task("task2", prompt, response)
+    assert first == second
+    assert first["level"] == "B1"
+    assert calls == [0.0]
+    assert svc._WRITING_EVAL_TEMPERATURE == 0.0
 
 
 def test_evaluate_streams_then_parses(monkeypatch):

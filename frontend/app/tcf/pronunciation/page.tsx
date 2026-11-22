@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
+import { API_BASE_URL, authHeaders } from "@/services/api";
 import TcfAppShell from "@/components/TcfAppShell";
 import PronunciationTrainer from "@/components/PronunciationTrainer";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -52,9 +53,65 @@ export default function PronunciationPage() {
   const [activeText, setActiveText] = useState<string | null>(null);
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [levelFilter, setLevelFilter] = useState<string>("all");
+  const [served, setServed] = useState<{ text: string; phonetic?: string; level: string }[]>(SAMPLE_WORDS_FR);
+  const [promptNote, setPromptNote] = useState("");
 
-  const samples = language === "fr" ? SAMPLE_WORDS_FR : SAMPLE_WORDS_EN;
-  const filtered = levelFilter === "all" ? samples : samples.filter((s) => s.level === levelFilter);
+  useEffect(() => {
+    let cancelled = false;
+    const fallback = (language === "fr" ? SAMPLE_WORDS_FR : SAMPLE_WORDS_EN).filter(
+      (item) => levelFilter === "all" || item.level === levelFilter,
+    );
+    setServed(fallback);
+    setPromptNote("");
+    const level = levelFilter === "all" ? "A2" : levelFilter;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 20000);
+    fetch(`${API_BASE_URL}/api/pronunciation/prompts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ language, level, count: 8 }),
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await res.text());
+        return res.json() as Promise<{ prompts: { text: string; level: string }[] }>;
+      })
+      .then((data) => {
+        if (cancelled) return;
+        const prompts = (data.prompts || []).filter((item) => item.text && item.text.trim());
+        if (!prompts.length) {
+          setServed(fallback);
+          setPromptNote("Showing saved sample words.");
+          return;
+        }
+        setServed(prompts.map((item) => ({ text: item.text, level: item.level })));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        const fallback = (language === "fr" ? SAMPLE_WORDS_FR : SAMPLE_WORDS_EN).filter(
+          (item) => levelFilter === "all" || item.level === levelFilter,
+        );
+        setServed(fallback);
+        setPromptNote("Showing saved sample words.");
+        fallback.forEach((item) => {
+          fetch(`${API_BASE_URL}/api/pronunciation/prompts/seen`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            body: JSON.stringify({ text: item.text, language }),
+            cache: "no-store",
+          }).catch(() => undefined);
+        });
+      })
+      .finally(() => window.clearTimeout(timer));
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [language, levelFilter]);
+
+  const samples = served;
+  const filtered = samples;
 
   const levels = ["all", ...Array.from(new Set(samples.map((s) => s.level)))];
 
@@ -198,6 +255,7 @@ export default function PronunciationPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-2 pt-0">
+                {promptNote && <p className="text-[11px] text-slate-400">{promptNote}</p>}
                 {filtered.map((sample) => (
                   <button
                     key={sample.text}
@@ -212,7 +270,7 @@ export default function PronunciationPage() {
                       <span className="text-sm font-medium text-slate-800">{sample.text}</span>
                       <Badge variant="outline" className="text-[10px]">{sample.level}</Badge>
                     </div>
-                    <p className="text-[11px] text-slate-400 mt-0.5 font-mono">{sample.phonetic}</p>
+                    {sample.phonetic && <p className="text-[11px] text-slate-400 mt-0.5 font-mono">{sample.phonetic}</p>}
                   </button>
                 ))}
               </CardContent>

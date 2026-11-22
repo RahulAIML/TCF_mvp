@@ -17,6 +17,8 @@ interface ListeningQuestionCardProps {
   onPlay?: () => void;
   /** Called when audio needs to be fetched on-demand (question loaded with defer_audio) */
   onRequestAudio?: (question: ListeningQuestion) => Promise<string | undefined>;
+  /** True while a recording is being fetched, so the exam clock can pause. */
+  onBufferingChange?: (busy: boolean) => void;
   showTranscript: boolean;
   onToggleTranscript?: () => void;
   onTranscriptSelect?: (text: string) => void;
@@ -45,6 +47,7 @@ export default function ListeningQuestionCard({
   playCount = 0,
   onPlay,
   onRequestAudio,
+  onBufferingChange,
   showTranscript,
   onToggleTranscript,
   onTranscriptSelect,
@@ -179,6 +182,24 @@ export default function ListeningQuestionCard({
   }, [isPlaying, showTranscript, words.length]);
 
   useEffect(() => {
+    if (!audioError || !onRequestAudio) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void onRequestAudio(question)
+        .then((fetched) => {
+          if (cancelled || !fetched) return;
+          setLocalAudioUrl(resolveUrl(fetched));
+          setAudioError("");
+        })
+        .catch(() => undefined);
+    }, 6000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [audioError, onRequestAudio, question]);
+
+  useEffect(() => {
     if (!showTranscript || !autoScroll) return;
     const currentWord = wordRefs.current[currentWordIndex];
     if (currentWord && transcriptRef.current) {
@@ -196,7 +217,7 @@ export default function ListeningQuestionCard({
       };
       const onReady = () => done(true);
       const onError = () => done(false);
-      const timer = setTimeout(() => done(audio.readyState >= 2), 30000);
+      const timer = setTimeout(() => done(audio.readyState >= 2), 12000);
       audio.addEventListener("canplay", onReady);
       audio.addEventListener("error", onError);
       audio.load();
@@ -217,17 +238,36 @@ export default function ListeningQuestionCard({
     }
     if (remainingPlays !== null && remainingPlays <= 0) return;
 
+    const pullAudio = async (): Promise<string | undefined> => {
+      if (!onRequestAudio) return undefined;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const fetched = await Promise.race([
+            onRequestAudio(question),
+            new Promise<undefined>((_, reject) => {
+              window.setTimeout(() => reject(new Error("The audio is taking too long.")), 12000);
+            }),
+          ]);
+          if (fetched) return fetched;
+        } catch {
+          // One automatic retry, then the caller shows the message.
+        }
+        if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 600));
+      }
+      return undefined;
+    };
+
+    const setBusy = (busy: boolean) => {
+      setIsBuffering(busy);
+      onBufferingChange?.(busy);
+    };
+
     let effectiveSrc = audioSrc;
     if (!effectiveSrc && onRequestAudio) {
-      setIsBuffering(true);
-      let fetched: string | undefined;
-      try {
-        fetched = await onRequestAudio(question);
-      } catch {
-        fetched = undefined;
-      }
+      setBusy(true);
+      const fetched = await pullAudio();
       if (!fetched) {
-        setIsBuffering(false);
+        setBusy(false);
         setAudioError("The audio is not available right now.");
         return;
       }
@@ -242,22 +282,36 @@ export default function ListeningQuestionCard({
     if (audio.src !== effectiveSrc) {
       audio.src = effectiveSrc;
     }
-    if (audio.readyState < 3) {
-      setIsBuffering(true);
-      const ok = await waitUntilPlayable(audio);
-      if (!ok) {
-        setIsBuffering(false);
-        setAudioError("The audio could not be loaded.");
-        return;
+    const loadSrc = async (src: string) => {
+      if (audio.src !== src) audio.src = src;
+      if (audio.readyState >= 3) return true;
+      setBusy(true);
+      return waitUntilPlayable(audio);
+    };
+
+    let ready = await loadSrc(effectiveSrc);
+    // A pooled URL can 404 after a restart. Ask the server to synthesize this script again.
+    if (!ready && onRequestAudio) {
+      const fetched = await pullAudio();
+      if (fetched) {
+        effectiveSrc = resolveUrl(fetched);
+        setLocalAudioUrl(effectiveSrc);
+        ready = await loadSrc(effectiveSrc);
       }
+    }
+    if (!ready) {
+      setBusy(false);
+      setAudioError("The audio could not be loaded.");
+      return;
     }
 
     try {
       await audio.play();
       onPlay?.();
     } catch {
-      setIsBuffering(false);
       setAudioError("Playback was blocked by the browser. Press Play again.");
+    } finally {
+      setBusy(false);
     }
   };
   const handlePauseClick = () => {
@@ -325,7 +379,7 @@ export default function ListeningQuestionCard({
               {isBuffering ? (
                 <>
                   <span className="h-3 w-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                  Loading…
+                  Loading audio…
                 </>
               ) : isPlaying ? (
                 <>
@@ -462,15 +516,37 @@ export default function ListeningQuestionCard({
                 onPointerDown={() => setAutoScroll(false)}
                 onTouchMove={() => setAutoScroll(false)}
               >
-                {words.map((word, index) => (
+                {question.speakers && question.speakers.length > 0 && (
+                  <p className="mb-2 text-xs font-medium text-indigo-700">
+                    {question.speakers.map((name, i) => (
+                      <span key={name}>
+                        {i > 0 && <span className="text-slate-300"> · </span>}
+                        <span className={i % 2 === 0 ? "text-indigo-700" : "text-teal-700"}>{name}</span>
+                      </span>
+                    ))}
+                  </p>
+                )}
+                {words.map((word, index) => {
+                  const speakerName = word.replace(/:$/, "");
+                  const isSpeaker = (question.speakers ?? []).includes(speakerName);
+                  const startsTurn = isSpeaker && (word.endsWith(":") || words[index + 1] === ":");
+                  return (
                   <span
                     key={`word-${index}`}
                     ref={(el) => { wordRefs.current[index] = el; }}
-                    className={index === currentWordIndex ? "rounded bg-yellow-200 px-1" : ""}
+                    className={
+                      isSpeaker
+                        ? "font-semibold text-indigo-700"
+                        : index === currentWordIndex
+                          ? "rounded bg-yellow-200 px-1"
+                          : ""
+                    }
                   >
+                    {startsTurn && index > 0 ? <br /> : null}
                     {word}{" "}
                   </span>
-                ))}
+                  );
+                })}
               </div>
               {showTranslation && translationText && (
                 <div className="border-l border-indigo-100 pl-3">

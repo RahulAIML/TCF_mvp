@@ -18,9 +18,16 @@ import { streamPronunciationEvaluation, transcribeRecording } from "@/services/s
 import type { PronunciationEvalResult } from "@/types/tcf-speaking";
 import type { TtsHistoryItem, TtsVoice } from "@/types/tts";
 import { getAuthToken } from "@/lib/auth";
+import { SLOW_MESSAGE, useSlow } from "@/lib/slow-load";
 import { createRecorder, extensionForMime, microphoneErrorMessage, recordedMime } from "@/lib/audio-mime";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const FALLBACK_VOICES: TtsVoice[] = [
+  { id: "fr-FR-male-1", label: "French Male", language: "fr", gender: "male" },
+  { id: "fr-FR-male-2", label: "French Male 2", language: "fr", gender: "male" },
+  { id: "fr-FR-female-1", label: "French Female", language: "fr", gender: "female" },
+  { id: "fr-FR-female-2", label: "French Female 2", language: "fr", gender: "female" },
+];
 const MAX_CHARS = 10000;
 const MAX_WORDS = 1500;
 const MAX_RECORD_SECS = 60;
@@ -94,8 +101,49 @@ function HighlightedText({ text, mistakes }: { text: string; mistakes: string[] 
   );
 }
 
+function formatClock(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  const whole = Math.round(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+}
+
 function HistoryAudioPlayer({ src }: { src: string }) {
   const [expired, setExpired] = useState(false);
+  const [playable, setPlayable] = useState<string | null>(null);
+  const [duration, setDuration] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = "";
+    setExpired(false);
+    setPlayable(null);
+    setDuration("");
+    fetch(src)
+      .then((res) => {
+        if (!res.ok) throw new Error(String(res.status));
+        return res.blob();
+      })
+      .then(async (blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setPlayable(objectUrl);
+        const ctx = new AudioContext();
+        try {
+          const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
+          if (!cancelled) setDuration(formatClock(decoded.duration));
+        } catch {
+          // The player still works; the native control will show the length once it can.
+        } finally {
+          void ctx.close();
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setExpired(true);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [src]);
   if (expired) {
     return (
       <p className="text-xs text-slate-400 italic flex items-center gap-1 py-1">
@@ -105,17 +153,21 @@ function HistoryAudioPlayer({ src }: { src: string }) {
     );
   }
   return (
-    <audio
-      src={src}
-      controls
-      className="w-full h-8"
-      onError={() => setExpired(true)}
-    />
+    <div className="flex items-center gap-2">
+      <audio
+        src={playable ?? undefined}
+        controls
+        preload="metadata"
+        className="w-full"
+        onError={() => setExpired(true)}
+      />
+      {duration && <span className="shrink-0 text-xs tabular-nums text-slate-500">{duration}</span>}
+    </div>
   );
 }
 
 export default function TtsPage() {
-  const [voices, setVoices] = useState<TtsVoice[]>([]);
+  const [voices, setVoices] = useState<TtsVoice[]>(FALLBACK_VOICES);
   const [language, setLanguage] = useState<LanguageCode>("fr");
   const [selectedVoice, setSelectedVoice] = useState("fr-FR-male-1");
   const [inputMode, setInputMode] = useState<InputMode>("type");
@@ -137,6 +189,7 @@ export default function TtsPage() {
   // Voices
   const [voicesError, setVoicesError] = useState("");
   const [voicesLoading, setVoicesLoading] = useState(true);
+  const voicesSlow = useSlow(voicesLoading);
 
   // TTS
   const [generating, setGenerating] = useState(false);
@@ -167,7 +220,8 @@ export default function TtsPage() {
         if (first) setSelectedVoice(first.id);
       })
       .catch((e: unknown) => {
-        setVoicesError(e instanceof Error ? e.message : "Voices could not be loaded.");
+        setVoices((current) => (current.length ? current : FALLBACK_VOICES));
+        setVoicesError(e instanceof Error ? e.message : SLOW_MESSAGE);
       })
       .finally(() => setVoicesLoading(false));
   }, []);
@@ -405,10 +459,16 @@ export default function TtsPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
-            {voicesLoading && (
+            {voicesLoading && !voicesSlow && (
               <p className="text-xs text-slate-400 flex items-center gap-1.5">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading voices…
               </p>
+            )}
+            {voicesSlow && (
+              <div className="mb-2 flex items-center justify-between gap-3 rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800" role="alert">
+                <span>{SLOW_MESSAGE}</span>
+                <button onClick={loadVoices} className="font-medium underline">Retry</button>
+              </div>
             )}
             {voicesError && (
               <div className="flex items-center justify-between gap-3 rounded-lg bg-red-50 border border-red-200 p-3 text-xs text-red-600">

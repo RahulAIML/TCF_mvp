@@ -8,11 +8,22 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./tcf.db")
 
 connect_args = {}
 if DATABASE_URL.startswith("sqlite"):
-  connect_args = {"check_same_thread": False}
+  connect_args = {"check_same_thread": False, "timeout": 30}
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=connect_args)
+_engine_kwargs = {"pool_pre_ping": True, "connect_args": connect_args}
+if not DATABASE_URL.startswith("sqlite"):
+  # Drop connections the host has already closed, and don't wait forever for a slot.
+  _engine_kwargs.update(pool_size=5, max_overflow=10, pool_recycle=300, pool_timeout=30)
+engine = create_engine(DATABASE_URL, **_engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+
+def script_key_migration_sql(dialect: str) -> str | None:
+  """Widen stored_audio.script_key. Postgres enforces VARCHAR(64); SQLite does not."""
+  if dialect == "postgresql":
+    return "ALTER TABLE stored_audio ALTER COLUMN script_key TYPE TEXT"
+  return None
 
 
 def get_db() -> Generator:
@@ -27,13 +38,16 @@ def init_db() -> None:
   from models import (
     ExamAttempt, ListeningAttempt, User, WritingSession, TcfWritingSession,
     SpeakingSession, UserAudioResponse, QuestionValidation, LearnSession,
-    PronunciationEvaluation, VocabularyWord, TtsAudioHistory, McpToken
+    PronunciationEvaluation, VocabularyWord, TtsAudioHistory, McpToken,
+    SeenItem, ContentRegistry, PregenItem, ExamSlot, WritingEvalCache, StoredAudio,
   )
 
   Base.metadata.create_all(bind=engine)
 
   # Add columns and tables that were introduced after the initial database creation.
+  # create_all does not widen an existing column, so Postgres keeps VARCHAR(64) until this ALTER.
   migrations = [
+    script_key_migration_sql(engine.dialect.name),
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR(100)",
     """
     CREATE TABLE IF NOT EXISTS tts_audio_history (
@@ -49,7 +63,11 @@ def init_db() -> None:
   ]
   with engine.begin() as conn:
     for sql in migrations:
+      if not sql:
+        continue
       try:
         conn.execute(text(sql))
       except Exception:
         pass  # SQLite / syntax difference — skip gracefully
+  import audio_store
+  audio_store.forget_pitched_audio()

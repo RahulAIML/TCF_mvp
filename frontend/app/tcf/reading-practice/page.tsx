@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { SLOW_MESSAGE, useSlow } from "@/lib/slow-load";
 import TcfAppShell from "@/components/TcfAppShell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -62,6 +63,7 @@ export default function ReadingPracticePage() {
   const [selectedAnswer, setSelectedAnswer] = useState<AnswerOption | "">("");
   const [revealed, setRevealed] = useState(false);
   const [loading, setLoading] = useState(false);
+  const questionSlow = useSlow(loading);
   const [error, setError] = useState("");
   const [scores, setScores] = useState<Partial<Record<ReadingLevel, LevelScore>>>({});
 
@@ -290,10 +292,19 @@ export default function ReadingPracticePage() {
               <div className="grid gap-2 pt-1">
                 {[1, 2, 3, 4].map((i) => <div key={i} className="h-10 rounded-xl bg-slate-100" />)}
               </div>
-              <p className="flex items-center gap-1.5 pt-1 text-xs text-slate-400">
-                <span className="inline-block h-2 w-2 animate-ping rounded-full bg-indigo-400" />
-                Loading question…
-              </p>
+              {questionSlow ? (
+                <div className="flex flex-wrap items-center gap-3 pt-1 text-sm text-slate-600" role="alert">
+                  <span>{SLOW_MESSAGE}</span>
+                  {level && (
+                    <Button size="sm" variant="secondary" onClick={() => void showNextQuestion(level)}>Retry</Button>
+                  )}
+                </div>
+              ) : (
+                <p className="flex items-center gap-1.5 pt-1 text-xs text-slate-400">
+                  <span className="inline-block h-2 w-2 animate-ping rounded-full bg-indigo-400" />
+                  Loading question…
+                </p>
+              )}
             </CardContent>
           </Card>
         )}

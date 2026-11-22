@@ -122,7 +122,7 @@ def test_name_pool_is_large_and_gendered():
     assert len(set(aq.MALE_NAMES)) == len(aq.MALE_NAMES) and len(set(aq.FEMALE_NAMES)) == len(aq.FEMALE_NAMES)
     assert not set(aq.MALE_NAMES) & set(aq.FEMALE_NAMES)
     for name in aq.MALE_NAMES + aq.FEMALE_NAMES:
-        assert ls.SPEAKER_LINE_RE.match(f"{name} : Bonjour."), name  # every name is detectable as a speaker
+        assert ls.SPEAKER_LABEL_RE.match(f"{name} : Bonjour."), name  # every name is detectable as a speaker
     assert ls._NAME_GENDER["Lucie"] == "female" and ls._NAME_GENDER["Hugo"] == "male"
 
 
@@ -292,7 +292,21 @@ def test_reading_quiz_redone_when_too_many_items_are_guessable(monkeypatch, fres
         }
 
     monkeypatch.setattr(rs, "_llm_json", fake)
+    monkeypatch.setattr(aq, "BLIND_LEVELS", ("B2",))  # B2 is not blind-checked by default (latency)
     # Make every item's answer "A" so the confident blind guesses in quiz 1 hit.
     monkeypatch.setattr(rs, "_quiz_letters", lambda count=10: ["A"] * count)
     quiz = rs.produce_passage_quiz("B2")
     assert state["quizzes"] == 2 and len(quiz.questions) == 10
+
+
+def test_blind_guess_call_only_runs_where_tone_gives_answers_away():
+    calls = []
+
+    def llm(prompt, temperature):
+        calls.append(1)
+        return {"guess": "A", "confidence": 0.99}
+
+    opts = ["Elle approuve le projet municipal.", "Elle réclame un autre calendrier.",
+            "Elle doute du budget annoncé.", "Elle propose un vote public."]
+    assert aq.option_problem("B2", "Que pense-t-elle ?", opts, 0, llm) is None and calls == []
+    assert aq.option_problem("C2", "Que pense-t-elle ?", opts, 0, llm) and calls == [1]

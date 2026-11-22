@@ -101,6 +101,11 @@ def _voicing(win: np.ndarray, rate: int) -> float:
 
 
 def _is_burst_frame(x: np.ndarray, i: int, frame: int, rms: np.ndarray, ref: float, rate: int) -> bool:
+  block = x[i * frame:(i + 1) * frame]
+  # A full-scale burst (the click at the end of some TTS MP3s) sits on the rails.
+  # Ordinary speech, even when loud, only touches the rail at the peaks of a vowel.
+  if len(block) and float(np.mean(np.abs(block) >= 30000)) >= 0.08:
+    return True
   if rms[i] < TAIL_LOUD_FRACTION * ref:
     return False
   win = _window(x, i * frame + frame // 2, int(rate * 0.040))

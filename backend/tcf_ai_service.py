@@ -26,7 +26,11 @@ from google import genai as genai_client
 from google.genai import types
 
 import answer_balance
-from pregen_pool import PregenPool
+import content_bank
+import content_dedupe as dedupe
+import topic_bank
+from content_bank import DurablePool
+from learner import active_learner
 from schemas import TcfExamQuestion, ListeningQuestionResponse
 
 load_dotenv()
@@ -56,7 +60,11 @@ def _gemini_client() -> "genai_client.Client":
     if not API_KEY:
         raise RuntimeError("Missing API key. Set GEMINI_API_KEY in backend/.env.")
     if _shared_client is None:
-        _shared_client = genai_client.Client(api_key=API_KEY)
+        timeout_ms = int(os.getenv("GEMINI_TIMEOUT_MS", "120000"))
+        _shared_client = genai_client.Client(
+            api_key=API_KEY,
+            http_options=types.HttpOptions(timeout=timeout_ms),
+        )
     return _shared_client
 
 
@@ -67,17 +75,25 @@ def _gen_config(**kwargs: Any) -> "types.GenerateContentConfig":
 
 
 def _gemini_generate(contents: Any, stream: bool = False, **config_kwargs: Any) -> Any:
-    """generate_content with the shared client; drops thinking_config once if the model rejects it."""
-    global _thinking_enabled
-    method = _gemini_client().models.generate_content_stream if stream else _gemini_client().models.generate_content
-    try:
-        return method(model=MODEL_NAME, contents=contents, config=_gen_config(**config_kwargs))
-    except Exception as error:
-        if _thinking_enabled and "think" in str(error).lower():
-            logging.getLogger(__name__).warning("Model rejected thinking_config (%s); disabling it.", error)
-            _thinking_enabled = False
+    """generate_content with the shared client; drops thinking_config once if the model rejects it.
+
+    Timeouts, 429s and 5xx are retried. A request the model rejects for content is not.
+    """
+    import resilience
+
+    def once() -> Any:
+        global _thinking_enabled
+        method = _gemini_client().models.generate_content_stream if stream else _gemini_client().models.generate_content
+        try:
             return method(model=MODEL_NAME, contents=contents, config=_gen_config(**config_kwargs))
-        raise
+        except Exception as error:
+            if _thinking_enabled and "think" in str(error).lower():
+                logging.getLogger(__name__).warning("Model rejected thinking_config (%s); disabling it.", error)
+                _thinking_enabled = False
+                return method(model=MODEL_NAME, contents=contents, config=_gen_config(**config_kwargs))
+            raise
+
+    return resilience.retry(once, attempts=4, base=0.4, cap=8.0)
 
 # ── Shared scenario pools (reused for variety) ──────────────────────────────
 
@@ -113,24 +129,27 @@ SCENARIO_CONTEXTS = [
 ]
 
 # Real examiner names used to avoid AI generating "[placeholder]" names
-TCF_EXAMINER_NAMES = [
-    ("Marie Dupont", "examinatrice"),
-    ("Sophie Martin", "examinatrice"),
-    ("Claire Lefebvre", "examinatrice"),
-    ("Isabelle Moreau", "examinatrice"),
-    ("Nathalie Petit", "examinatrice"),
-    ("Jean-Pierre Bernard", "examinateur"),
-    ("Thomas Rousseau", "examinateur"),
-    ("Michel Laurent", "examinateur"),
-]
+TCF_EXAMINER_NAMES = list(topic_bank.EXAMINERS)
 
 def _pick_examiner(session_id: str | None) -> tuple[str, str]:
-    """Return (name, title) deterministic per session, random otherwise."""
-    import hashlib
-    if session_id:
-        idx = int(hashlib.md5(session_id.encode()).hexdigest(), 16) % len(TCF_EXAMINER_NAMES)
-        return TCF_EXAMINER_NAMES[idx]
-    return random.choice(TCF_EXAMINER_NAMES)
+    """A name from the large pool. The same learner does not draw a name they just heard."""
+    avoid: list[str] = []
+    try:
+        from learner import current_learner
+        who = current_learner()
+        if who:
+            avoid = content_bank.recent_labels(who, "speaking_examiner", 12)
+    except Exception:
+        avoid = []
+    name, title = topic_bank.pick_examiner(avoid)
+    try:
+        from learner import current_learner
+        who = current_learner()
+        if who:
+            content_bank.remember(who, "speaking_examiner", dedupe.fingerprint(name), None, label=name)
+    except Exception:
+        pass
+    return name, title
 
 
 # TCF Canada expression orale, 3 tasks:
@@ -241,7 +260,7 @@ def _generate_tts_audio(script: str, question_number: int, session_id: str | Non
                 },
                 timeout=(5, 40),
             )
-            data = response.content
+            data = tts_service.polish_mp3(response.content)
         except Exception as error:
             logger.warning("ElevenLabs TTS failed: %s. Falling back to Gemini TTS.", error)
             result = tts_service.synthesize_gemini(script, "fr-FR-female-1")
@@ -250,10 +269,10 @@ def _generate_tts_audio(script: str, question_number: int, session_id: str | Non
         result = tts_service.synthesize_gemini(script, "fr-FR-female-1")
         data, ext = result["data"], result["extension"]
 
+    import audio_store
     file_name = f"tcf_audio_{question_number}_{session_id or 'global'}_{uuid.uuid4().hex[:8]}.{ext}"
-    with open(os.path.join(AUDIO_STORAGE_PATH, file_name), "wb") as audio_file:
-        audio_file.write(data)
-    return f"/audio/{file_name}"
+    mime = "audio/wav" if ext == "wav" else "audio/mpeg"
+    return audio_store.save(file_name, data, mime)
 
 
 def _freshness_token() -> str:
@@ -471,25 +490,38 @@ def _split_feedback(value: Any) -> list[str]:
 
 def _pick_writing_themes(count: int = 3) -> list[str]:
     with _writing_lock:
-        fresh = [t for t in WRITING_THEMES if t not in _writing_recent_themes]
-        if len(fresh) < count:
-            fresh = list(WRITING_THEMES)
-        chosen = random.sample(fresh, count)
+        recent = list(_writing_recent_themes)
+    try:
+        user_recent = content_bank.recent_labels(active_learner(), "writing_theme", 40)
+    except Exception:
+        user_recent = []
+    chosen = topic_bank.pick_writing_themes(count, list(recent) + user_recent)
+    with _writing_lock:
         _writing_recent_themes.extend(chosen)
+    from learner import current_learner
+    who = current_learner()
+    if who:
+        for theme in chosen:
+            content_bank.remember(who, "writing_theme", dedupe.fingerprint(theme), None, label=theme[:240])
     return chosen
 
 
 def _writing_tasks_prompt(themes: list[str]) -> str:
+    import variety
+    from learner import current_learner
+    who = current_learner()
+    form1 = variety.choose("writing_task1", variety.WRITING_TASK1_FORMS, who)
+    form2 = variety.choose("writing_task2", variety.WRITING_TASK2_FORMS, who)
     return f"""Tu es concepteur officiel d'épreuves d'expression écrite du TCF Canada (France Éducation international).
 Rédige UNE série complète de trois tâches, en français, au format officiel. Contexte canadien bienvenu.
 
 Thèmes imposés (un par tâche, dans cet ordre) : 1) {themes[0]} ; 2) {themes[1]} ; 3) {themes[2]}.
 
 Format officiel à respecter :
-- Tâche 1 (60 à 120 mots) : rédiger un MESSAGE (courriel, mot, invitation…) adressé à un ou plusieurs destinataires
+- Tâche 1 (60 à 120 mots) : rédiger {form1} adressé à un ou plusieurs destinataires
   nommés, pour décrire, raconter ou expliquer quelque chose. La consigne précise le destinataire et 2 ou 3 éléments
   à inclure.
-- Tâche 2 (120 à 150 mots) : rédiger un ARTICLE, un COURRIER ou une NOTE pour un lecteur précis (journal local,
+- Tâche 2 (120 à 150 mots) : rédiger {form2} pour un lecteur précis (journal local,
   blogue, association…) qui rend compte d'un événement ou d'une expérience ET donne une opinion argumentée.
 - Tâche 3 (120 à 180 mots) : deux courts documents (60 à 90 mots chacun) présentent deux points de vue OPPOSÉS sur
   le thème. La consigne demande : comparer les deux points de vue (40 à 60 mots), puis donner son opinion
@@ -499,6 +531,7 @@ Format officiel à respecter :
 Règles :
 - Consignes naturelles et réalistes, vouvoiement du candidat, nombre de mots indiqué dans chaque consigne.
 - Pas de jargon, situations de la vie courante, professionnelle ou citoyenne.
+- Au Canada, les prix sont en dollars canadiens, jamais en francs.
 - Sortie : JSON valide uniquement, sans Markdown :
 {{
   "task1_prompt": "...",
@@ -535,11 +568,18 @@ def _generate_writing_task_set() -> dict[str, str]:
     raise RuntimeError(f"Writing task generation failed: {last_error}") from last_error
 
 
-_writing_task_pool: PregenPool[dict[str, str]] = PregenPool(
+def _writing_fingerprint(tasks: dict[str, str]) -> str:
+    return dedupe.fingerprint("\n".join(tasks.get(key, "") for key in ("task1_prompt", "task2_prompt", "task3_prompt")))
+
+
+_writing_task_pool = DurablePool(
     "writing_tasks",
     lambda _key: _generate_writing_task_set(),
     target=int(os.getenv("PREGEN_WRITING_TARGET", "5")),
     warm_keys=("all",),
+    module="writing",
+    fingerprint_of=_writing_fingerprint,
+    simhash_of=lambda tasks: dedupe.simhash_of("\n".join(tasks.values())),
 )
 
 
@@ -548,21 +588,56 @@ def _writing_session_served(session_id: str | None) -> deque[str]:
         return _writing_served_by_session.setdefault(session_id or "__anon__", deque(maxlen=200))
 
 
+def _remember_writing(learner: str, tasks: dict[str, str]) -> None:
+    content_bank.remember(learner, "writing", _writing_fingerprint(tasks), dedupe.simhash_of("\n".join(tasks.values())))
+    for value in tasks.values():
+        if _substantial(value):
+            content_bank.remember(learner, "writing_task", dedupe.fingerprint(value), dedupe.simhash_of(value), label=value[:240])
+
+
+def _substantial(text: str) -> bool:
+    return len(dedupe.normalize_text(text).split()) >= 12
+
+
+def _writing_blocked(learner: str, served: deque[str], tasks: dict[str, str]) -> bool:
+    key = _writing_fingerprint(tasks)
+    if key in served or content_bank.is_seen(learner, "writing", key, dedupe.simhash_of("\n".join(tasks.values()))):
+        return True
+    for value in tasks.values():
+        if _substantial(value) and content_bank.is_seen(
+            learner, "writing_task", dedupe.fingerprint(value), dedupe.simhash_of(value)
+        ):
+            return True
+    return False
+
+
 def generate_tcf_writing_tasks(session_id: str | None = None) -> dict[str, str]:
-    """Serve a ready task set from the pre-generated pool (instant); generate one live only if the pool is empty."""
+    """Serve a ready task set from the durable pool, or generate one. A learner never receives a prompt twice."""
+    learner = active_learner(session_id)
     served = _writing_session_served(session_id)
     for _ in range(5):
         tasks = _writing_task_pool.take("all")
         if tasks is None:
             break
-        key = _fingerprint("".join(tasks.values()))
-        if key in served:
+        if _writing_blocked(learner, served, tasks):
             continue
-        served.append(key)
+        served.append(_writing_fingerprint(tasks))
+        _remember_writing(learner, tasks)
         return tasks
-    tasks = _generate_writing_task_set()
-    served.append(_fingerprint("".join(tasks.values())))
-    return tasks
+    last_error: Exception | None = None
+    for _ in range(3):
+        try:
+            tasks = _generate_writing_task_set()
+        except Exception as error:
+            last_error = error
+            continue
+        if _writing_blocked(learner, served, tasks):
+            last_error = RuntimeError("writing prompts already served")
+            continue
+        served.append(_writing_fingerprint(tasks))
+        _remember_writing(learner, tasks)
+        return tasks
+    raise RuntimeError(f"No new writing tasks: {last_error}")
 
 
 def assist_tcf_writing(
@@ -696,6 +771,8 @@ Règles d'honnêteté :
 - Moins de {spec['min_words']} mots : STRUCTURE au maximum 5.
 - Chaque point à améliorer cite un extrait précis du texte et propose une correction.
 - Le NIVEAU global est cohérent avec la moyenne des quatre notes.
+- Stabilité : applique le barème de façon mécanique. Deux copies identiques reçoivent exactement les mêmes quatre notes.
+  N'arrondis pas à la hausse et ne change pas une note d'une correction à l'autre.
 
 Réponds EXACTEMENT dans ce format, en français, sans Markdown, sans LaTeX, sans rien avant ni après :
 NIVEAU: <A1|A2|B1|B2|C1|C2>
@@ -727,8 +804,48 @@ def _level_from_average(average: float) -> str:
     return "C2"
 
 
+def _evaluation_from_json(payload: dict) -> dict[str, Any] | None:
+    scores = {
+        "structure": payload.get("structure"),
+        "grammar": payload.get("grammaire", payload.get("grammar")),
+        "coherence": payload.get("coherence"),
+        "vocab": payload.get("vocabulaire", payload.get("vocab")),
+    }
+    parsed_scores: dict[str, int | None] = {}
+    for key, value in scores.items():
+        if value is None or value == "":
+            parsed_scores[key] = None
+            continue
+        try:
+            parsed_scores[key] = max(0, min(10, round(float(value))))
+        except (TypeError, ValueError):
+            parsed_scores[key] = None
+    level = str(payload.get("niveau") or payload.get("level") or "").strip().upper()
+    if level not in _LEVELS:
+        level = None
+    feedback = payload.get("feedback") or payload.get("points") or []
+    return {
+        "level": level,
+        "scores": parsed_scores,
+        "feedback": _split_feedback(feedback),
+        "improved_version": str(payload.get("improved_version") or payload.get("version_amelioree") or "").strip(),
+        "complete": level is not None and all(v is not None for v in parsed_scores.values()),
+    }
+
+
 def parse_writing_evaluation_text(text: str) -> dict[str, Any]:
-    """Parse the streamed line format. Missing parts are None/empty; `complete` tells if all scores were found."""
+    """Parse the streamed line format, or a JSON object. `complete` tells if all scores were found."""
+    stripped = (text or "").strip()
+    if stripped.startswith("{"):
+        import json
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            parsed = _evaluation_from_json(payload)
+            if parsed and parsed["complete"]:
+                return parsed
     level: str | None = None
     scores: dict[str, int | None] = {key: None for key in _EVAL_SCORE_KEYS}
     feedback_lines: list[str] = []
@@ -807,34 +924,7 @@ def _apply_writing_guards(result: dict[str, Any], task_type: str, response_text:
 
 
 _EVAL_SEED = 1729
-_WRITING_EVAL_CACHE_MAX = 1000
-_writing_eval_cache: "OrderedDict[str, tuple[str, dict[str, object]]]" = OrderedDict()
-_writing_eval_cache_lock = threading.Lock()
-
-
-def _normalize_for_key(text: str) -> str:
-    return re.sub(r"\s+", " ", (text or "").strip())
-
-
-def writing_eval_cache_key(task_type: str, prompt_text: str, response_text: str) -> str:
-    raw = "\x1f".join((task_type, _normalize_for_key(prompt_text), _normalize_for_key(response_text)))
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-def _cached_writing_evaluation(key: str) -> "tuple[str, dict[str, object]] | None":
-    with _writing_eval_cache_lock:
-        hit = _writing_eval_cache.get(key)
-        if hit is not None:
-            _writing_eval_cache.move_to_end(key)
-        return hit
-
-
-def _store_writing_evaluation(key: str, streamed_text: str, evaluation: dict[str, object]) -> None:
-    with _writing_eval_cache_lock:
-        _writing_eval_cache[key] = (streamed_text, evaluation)
-        _writing_eval_cache.move_to_end(key)
-        while len(_writing_eval_cache) > _WRITING_EVAL_CACHE_MAX:
-            _writing_eval_cache.popitem(last=False)
+_WRITING_EVAL_TEMPERATURE = float(os.getenv("WRITING_EVAL_TEMPERATURE", "0"))
 
 
 def stream_writing_evaluation_tokens(task_type: str, prompt_text: str, response_text: str):
@@ -844,14 +934,16 @@ def stream_writing_evaluation_tokens(task_type: str, prompt_text: str, response_
     """
     if not response_text.strip():
         return
-    cached = _cached_writing_evaluation(writing_eval_cache_key(task_type, prompt_text, response_text))
-    if cached is not None:
-        for line in cached[0].splitlines(keepends=True):
-            yield line
+    cached = content_bank.get_writing_eval(content_bank.writing_eval_key(task_type, prompt_text, response_text))
+    if cached and cached.get("raw_text"):
+        yield from _without_model_level([cached["raw_text"]])
         return
     _ensure_api_key()
     chunks = _gemini_generate(
-        _writing_eval_prompt(task_type, prompt_text, response_text), stream=True, temperature=0.0, seed=_EVAL_SEED
+        _writing_eval_prompt(task_type, prompt_text, response_text),
+        stream=True,
+        temperature=_WRITING_EVAL_TEMPERATURE,
+        seed=_EVAL_SEED,
     )
     yield from _without_model_level(getattr(chunk, "text", None) or "" for chunk in chunks)
 
@@ -876,27 +968,33 @@ def _without_model_level(tokens):
 def finalize_writing_evaluation(
     streamed_text: str, task_type: str, prompt_text: str, response_text: str
 ) -> dict[str, object]:
-    """Normalize the streamed evaluation; one non-streamed retry if the stream was malformed."""
+    """Normalize the streamed evaluation; one non-streamed retry if the stream was malformed.
+
+    The first successful score for a given task, prompt and response is stored and reused, so a
+    second correction of the same text cannot drift from B1 to B2.
+    """
     if not response_text.strip():
         return _empty_writing_evaluation()
-    key = writing_eval_cache_key(task_type, prompt_text, response_text)
-    cached = _cached_writing_evaluation(key)
-    if cached is not None:
-        return dict(cached[1])
+    cache_key = content_bank.writing_eval_key(task_type, prompt_text, response_text)
+    cached = content_bank.get_writing_eval(cache_key)
+    if cached and cached.get("result"):
+        return cached["result"]
     parsed = parse_writing_evaluation_text(streamed_text)
+    raw_text = streamed_text
     if not parsed["complete"]:
-        streamed_text = _gemini_text_deterministic(_writing_eval_prompt(task_type, prompt_text, response_text))
-        parsed = parse_writing_evaluation_text(streamed_text)
-        if not parsed["complete"]:
+        raw_text = _gemini_text_deterministic(_writing_eval_prompt(task_type, prompt_text, response_text))
+        retry = parse_writing_evaluation_text(raw_text)
+        if not retry["complete"]:
             raise RuntimeError("Writing evaluation could not be parsed.")
-    evaluation = _apply_writing_guards(parsed, task_type, response_text)
-    _store_writing_evaluation(key, streamed_text, evaluation)
-    return dict(evaluation)
+        parsed = retry
+    result = _apply_writing_guards(parsed, task_type, response_text)
+    content_bank.put_writing_eval(cache_key, raw_text, result)
+    return result
 
 
 def _gemini_text_deterministic(prompt: str) -> str:
     _ensure_api_key()
-    response = _gemini_generate(prompt, temperature=0.0, seed=_EVAL_SEED)
+    response = _gemini_generate(prompt, temperature=_WRITING_EVAL_TEMPERATURE, seed=_EVAL_SEED)
     text = getattr(response, "text", None)
     if not text:
         raise RuntimeError("Gemini returned an empty response.")
@@ -1014,8 +1112,7 @@ def _build_speaking_prompt(
     examiner_name: str | None = None,
 ) -> tuple[str, str, str]:
     """Return (prompt, chosen_topic, examiner_name) for the examiner's next turn."""
-    topics = _SPEAKING_TOPIC_LISTS.get(task_type, TCF_OPINION_TOPICS)
-    chosen_topic = session_topic if session_topic else random.choice(topics)
+    chosen_topic = session_topic if session_topic else topic_bank.speaking_topic(task_type)
     task_brief = _SPEAKING_TASK_BRIEFS.get(task_type, _SPEAKING_TASK_BRIEFS["opinion"])
     name, title = _resolve_examiner(examiner_name, session_id)
 
@@ -1162,9 +1259,16 @@ def generate_tcf_speaking_opening(task_type: str, avoid_topics: list[str] | None
     A fresh session opening for the pre-generation pool: new topic + examiner's first line + audio,
     in one Gemini call. Falls back to the curated topic list when the model output is unusable.
     """
-    name, title = random.choice(TCF_EXAMINER_NAMES)
+    name, title = _pick_examiner(None)
     brief = _SPEAKING_TASK_BRIEFS.get(task_type, _SPEAKING_TASK_BRIEFS["opinion"])
-    examples = "\n".join(f"- {t}" for t in _SPEAKING_TOPIC_LISTS.get(task_type, TCF_OPINION_TOPICS)[:4])
+    import variety
+    from learner import current_learner
+    situation = variety.choose(
+        f"speaking:{task_type}",
+        variety.SPEAKING_SITUATIONS.get(task_type, variety.SPEAKING_SITUATIONS["opinion"]),
+        current_learner(),
+    )
+    examples = "\n".join(f"- {topic_bank.speaking_topic(task_type)}" for _ in range(4))
     avoid = ""
     if avoid_topics:
         avoid = "\nSujets déjà utilisés (en choisir un TOUT AUTRE) :\n" + "\n".join(f"- {t[:140]}" for t in avoid_topics[-25:])
@@ -1180,7 +1284,8 @@ def generate_tcf_speaking_opening(task_type: str, avoid_topics: list[str] | None
         )
     prompt = f"""Tu es {name}, {title} TCF Canada. {brief}
 
-Crée une NOUVELLE situation d'examen réaliste (contexte canadien ou francophone, vie courante, niveau B1-B2),
+Crée une NOUVELLE situation d'examen réaliste (contexte canadien ou francophone, vie courante, niveau B1-B2).
+Forme à privilégier cette fois : {situation}.
 dans le même style que ces exemples :
 {examples}{avoid}
 
@@ -1509,6 +1614,22 @@ Règles : tout en français ; 3 à 5 points clés ; 3 à 5 mots de vocabulaire a
 # ── Exercise generation: one small model call per exercise, all five in parallel ──
 # A single call writing all five exercises took ~20 s; five small calls finish in about the time of one.
 
+def _scrub_learn_exercises(exercises: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    import quality_guard
+    cleaned: list[Dict[str, Any]] = []
+    for exercise in exercises:
+        item = dict(exercise)
+        if item.get("explanation"):
+            item["explanation"] = quality_guard.scrub_letter_citations(str(item["explanation"]))
+        cleaned.append(item)
+    return cleaned
+
+
+def _grammar_focus() -> str:
+    import variety
+    from learner import current_learner
+    return variety.choose("grammar", variety.GRAMMAR_FOCI, current_learner())
+
 _LEARN_SLOT_EXECUTOR = ThreadPoolExecutor(max_workers=12, thread_name_prefix="learn-slot")
 
 _LEARN_SLOTS: list[tuple[str, str]] = [
@@ -1556,6 +1677,10 @@ def _valid_slot(exercise_type: str, payload: Any) -> Dict[str, Any] | None:
     return item
 
 
+def _grammar_clause(exercise_type: str) -> str:
+    return f"La phrase à corriger porte sur {_grammar_focus()}.\n" if exercise_type == "sentence_correction" else ""
+
+
 def _generate_learn_slot(index: int, source: str, level_rule: str, exclude_questions, temperature: float) -> Dict[str, Any] | None:
     exercise_type, instruction = _LEARN_SLOTS[index]
     letter = answer_balance.next_letter("learn") if exercise_type == "mcq" else ""
@@ -1564,7 +1689,7 @@ def _generate_learn_slot(index: int, source: str, level_rule: str, exclude_quest
 {source}
 
 Exercice demandé : {instruction.format(letter=letter)}
-{level_rule}
+{_grammar_clause(exercise_type)}{level_rule}
 {_exclusion_block(exclude_questions)}
 
 Réponds avec UN objet JSON exactement de cette forme, en français, sans rien d'autre :
@@ -1594,7 +1719,7 @@ def _generate_learn_set(source: str, level_rule: str, exclude_questions, tempera
         results[index] = future.result()
         if results[index] is not None and on_ready is not None:
             on_ready(index, results[index])
-    return _drop_repeated([ex for ex in results if ex], exclude)
+    return _scrub_learn_exercises(_drop_repeated([ex for ex in results if ex], exclude))
 
 
 def generate_learn_exercises(text: str, exclude_questions=(), on_ready=None) -> list[Dict[str, Any]]:

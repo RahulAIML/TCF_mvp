@@ -95,7 +95,13 @@ def post_generate_tts(
                 _jobs[job_id]["status"] = "error"
                 _jobs[job_id]["error"] = "La génération audio a échoué. Réessayez."
 
-    threading.Thread(target=_run, daemon=True).start()
+    import limits
+    try:
+        limits.submit(_run)
+    except limits.Busy:
+        with _lock:
+            _jobs[job_id]["status"] = "error"
+            _jobs[job_id]["error"] = "Audio is busy right now. Please try again."
     return {"job_id": job_id, "status": "pending"}
 
 

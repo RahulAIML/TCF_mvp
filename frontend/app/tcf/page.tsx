@@ -36,14 +36,14 @@ const modules = [
       {
         title: "Reading",
         description: "39-question mock exam + passage analyzer with CEFR-level progression.",
-        href: "/tcf/reading",
+        href: "/tcf/reading-practice",
         icon: BookOpen,
         accent: "bg-indigo-600",
       },
       {
         title: "Listening",
         description: "39 audio MCQs, progressive A1–C2. Audio plays once per question.",
-        href: "/tcf/listening-exam",
+        href: "/tcf/listening-exam?mode=practice",
         icon: Headphones,
         accent: "bg-teal-600",
       },

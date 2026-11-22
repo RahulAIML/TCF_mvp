@@ -7,11 +7,19 @@ import pytest
 import tcf_ai_service as svc
 
 
+def _clear_eval_cache():
+    from sqlalchemy import text
+    import content_bank
+    content_bank.ensure_schema()
+    with content_bank.engine.begin() as conn:
+        conn.execute(text("DELETE FROM writing_eval_cache"))
+
+
 @pytest.fixture(autouse=True)
 def _clean_cache():
-    svc._writing_eval_cache.clear()
+    _clear_eval_cache()
     yield
-    svc._writing_eval_cache.clear()
+    _clear_eval_cache()
 
 
 def _eval_text(score: int) -> str:
@@ -84,12 +92,6 @@ def test_level_comes_only_from_the_scores(score, level):
     assert svc._apply_writing_guards(parsed, "task1", TEXT)["level"] == level
 
 
-def test_cache_is_bounded(monkeypatch):
-    monkeypatch.setattr(svc, "_WRITING_EVAL_CACHE_MAX", 3)
-    _varying_model(monkeypatch)
-    for i in range(6):
-        svc.evaluate_tcf_writing_task("task1", "Consigne", TEXT + f" {i}")
-    assert len(svc._writing_eval_cache) == 3
 
 
 def _sse_parts(raw: str):

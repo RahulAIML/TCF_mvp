@@ -1,6 +1,7 @@
 "use client";
 
 import type { TcfExamQuestion, TcfSubmitExamResponse } from "@/types/tcf-exam";
+import { estimateCefr, OFFICIAL_SCORE_NOTE } from "@/lib/tcf-results";
 
 interface TcfExamResultsProps {
   results: TcfSubmitExamResponse;
@@ -13,11 +14,20 @@ export default function TcfExamResults({ results, questions }: TcfExamResultsPro
   const attemptedResults = results.results.filter((item) => item.user_answer);
   const attempted = results.attempted ?? attemptedResults.length;
 
+  const cefr = estimateCefr(results.results.map((item) => ({
+    question_number: item.question_number,
+    is_correct: item.is_correct,
+    user_answer: item.user_answer,
+  })));
+
   return (
-    <div className="space-y-6">
+    <div id="exam-results" className="space-y-6">
       {/* Summary */}
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="text-lg font-semibold text-slate-900">Exam Results</h3>
+        <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">Reading exam results</p>
+        <h3 className="text-2xl font-semibold text-slate-900">You scored {results.score} / {results.total}</h3>
+        <p className="mt-2 text-sm font-semibold text-indigo-700">CEFR estimate: {cefr}</p>
+        <p className="mt-2 text-sm text-slate-600"><span className="font-semibold text-slate-800">NCLC: not assigned.</span> {OFFICIAL_SCORE_NOTE}</p>
         <div className="mt-3 flex flex-wrap gap-6 text-sm text-slate-600">
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Generated</p>
@@ -42,6 +52,9 @@ export default function TcfExamResults({ results, questions }: TcfExamResultsPro
             </p>
           </div>
         </div>
+        <p className="mt-3 text-xs text-slate-500">
+          Practice count only. The official reading test reports 100–699 and IRCC converts that to NCLC. This count is not that score.
+        </p>
       </div>
 
       {/* Per-question review */}

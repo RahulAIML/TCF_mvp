@@ -11,6 +11,7 @@ Answer-option quality shared by listening and reading generators.
 from __future__ import annotations
 
 import logging
+import os
 import random
 import re
 import threading
@@ -132,6 +133,11 @@ class StemHistory:
 
 LENGTH_RATIO = 1.3
 CHECKED_LEVELS = ("B1", "B2", "C1", "C2")
+# The blind-guess check costs one extra model call per attempt, so it only runs where tone gives answers
+# away (C1/C2 by default). The free checks above still apply from B1.
+BLIND_LEVELS = tuple(
+    lvl.strip().upper() for lvl in os.getenv("BLIND_GUESS_LEVELS", "C1,C2").split(",") if lvl.strip()
+)
 
 
 def length_problem(options: Sequence[str], correct_index: int) -> Optional[str]:
@@ -228,7 +234,7 @@ def option_problem(level: str, question: str, options: Sequence[str], correct_in
     reason = length_problem(options, correct_index)
     if reason:
         return reason
-    if llm is not None:
+    if llm is not None and level in BLIND_LEVELS:
         return blind_problem(llm, question, options, correct_index)
     return None
 

@@ -15,7 +15,10 @@ export interface GenerateListeningAudioRequest {
 }
 
 export interface GenerateListeningAudioResponse {
-  audio_url: string;
+  audio_url?: string | null;
+  voices?: { speaker?: string | null; voice_id: string; provider?: string | null; provider_voice?: string | null; pitch_semitones?: number | null }[];
+  job_id?: string | null;
+  status?: "ready" | "pending" | "failed" | string;
 }
 
 export interface ListeningQuestion {

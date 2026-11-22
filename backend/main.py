@@ -6,7 +6,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi import HTTPException
+from fastapi.responses import Response
 
 import pregen_pool
 from database import init_db
@@ -22,6 +23,7 @@ from routers.tcf_writing_routes import router as tcf_writing_router
 from routers.pronunciation_routes import router as pronunciation_router
 from routers.ai_chat_routes import router as ai_chat_router
 from routers.tts_routes import router as tts_router
+from learner import LearnerMiddleware
 from routers.mcp_routes import McpOpenCorsMiddleware, router as mcp_router
 
 load_dotenv()
@@ -30,7 +32,17 @@ app = FastAPI(title="TCF Canada API", version="0.1.0")
 
 AUDIO_DIR = Path(__file__).resolve().parent / "data" / "audio"
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/audio", StaticFiles(directory=str(AUDIO_DIR)), name="audio")
+
+
+@app.get("/audio/{file_name}")
+def serve_audio(file_name: str) -> Response:
+  """Serve a stored recording. If this instance's disk lost the file, the database copy is used."""
+  import audio_store
+  loaded = audio_store.load(file_name)
+  if loaded is None:
+    raise HTTPException(status_code=404, detail="This audio is no longer on the server. Please generate it again.")
+  data, mime = loaded
+  return Response(content=data, media_type=mime, headers={"Cache-Control": "public, max-age=86400"})
 
 configured_origins = [
   origin.strip()
@@ -42,20 +54,85 @@ configured_origins = [
 ]
 frontend_origins = sorted(
   set(configured_origins).union({
+    "https://tcf-trainer.onrender.com",
     "http://localhost:3000",
     "http://localhost:3001",
-    "http://127.0.0.1:3000"
+    "http://127.0.0.1:3000",
   })
 )
+_ALLOWED_ORIGINS = set(frontend_origins)
+_CORS_ALLOW_HEADERS = "Authorization, Content-Type, X-Learner-Id, Accept"
+
+
+def _cors_headers(scope) -> list[tuple[bytes, bytes]]:
+  """Headers for the browser. /mcp stays open; the site only trusts its own origin."""
+  path = scope.get("path") or ""
+  if path == "/mcp" or path.startswith("/mcp/"):
+    return [
+      (b"access-control-allow-origin", b"*"),
+      (b"access-control-allow-methods", b"GET, POST, OPTIONS"),
+      (b"access-control-allow-headers", b"Authorization, Content-Type, Accept, Mcp-Protocol-Version, Mcp-Session-Id, Last-Event-ID"),
+      (b"access-control-max-age", b"86400"),
+    ]
+  headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers") or []}
+  origin = headers.get("origin", "")
+  if origin not in _ALLOWED_ORIGINS:
+    return []
+  return [
+    (b"access-control-allow-origin", origin.encode("latin-1")),
+    (b"access-control-allow-credentials", b"true"),
+    (b"access-control-allow-methods", b"GET, POST, PUT, PATCH, DELETE, OPTIONS"),
+    (b"access-control-allow-headers", _CORS_ALLOW_HEADERS.encode("latin-1")),
+    (b"access-control-max-age", b"86400"),
+    (b"vary", b"Origin"),
+  ]
+
+
+class EnsureCorsMiddleware:
+  """Outermost middleware. Every response, including errors, carries CORS, and OPTIONS never reaches the app."""
+
+  def __init__(self, app):
+    self.app = app
+
+  async def __call__(self, scope, receive, send):
+    if scope.get("type") != "http":
+      await self.app(scope, receive, send)
+      return
+    extra = _cors_headers(scope)
+    if scope.get("method") == "OPTIONS":
+      await send({"type": "http.response.start", "status": 204, "headers": extra})
+      await send({"type": "http.response.body", "body": b""})
+      return
+
+    async def send_with_cors(message):
+      if message["type"] == "http.response.start" and extra:
+        existing = list(message.get("headers") or [])
+        names = {name.lower() for name, _value in existing}
+        message["headers"] = existing + [item for item in extra if item[0] not in names]
+      await send(message)
+
+    try:
+      await self.app(scope, receive, send_with_cors)
+    except Exception:
+      import logging
+      logging.getLogger("tcf").exception("Unhandled error")
+      body = b'{"detail":"The service is temporarily unavailable. Please try again."}'
+      headers = [(b"content-type", b"application/json")] + extra
+      await send({"type": "http.response.start", "status": 500, "headers": headers})
+      await send({"type": "http.response.body", "body": body})
+
+
+# Learner first (innermost), then the MCP exception, then CORS so it wraps errors and preflight.
+app.add_middleware(LearnerMiddleware)
+app.add_middleware(McpOpenCorsMiddleware)
 app.add_middleware(
   CORSMiddleware,
   allow_origins=frontend_origins,
   allow_credentials=True,
   allow_methods=["*"],
-  allow_headers=["*"]
+  allow_headers=["Authorization", "Content-Type", "X-Learner-Id", "Accept"],
 )
-# Added after CORSMiddleware, so it runs first: /mcp is open to any origin (bearer token only, no cookies).
-app.add_middleware(McpOpenCorsMiddleware)
+app.add_middleware(EnsureCorsMiddleware)
 
 app.include_router(dictionary_router)
 app.include_router(passage_router)
@@ -72,10 +149,24 @@ app.include_router(tts_router)
 app.include_router(mcp_router)
 
 
+def _warm_in_background() -> None:
+  """Fill pools after the process is already accepting health checks, so warmup cannot fail the deploy."""
+  time.sleep(float(os.getenv("PREGEN_WARM_DELAY_SECONDS", "3")))
+  try:
+    pregen_pool.warm_all()
+  except Exception:
+    import logging
+    logging.getLogger("tcf").exception("Background pool warm-up failed")
+
+
 @app.on_event("startup")
 async def on_startup() -> None:
-  init_db()
-  pregen_pool.warm_all()
+  # init_db talks to Postgres. Do it off the event loop so the process can answer health checks.
+  import anyio
+  await anyio.to_thread.run_sync(init_db)
+  # Do not generate questions on the startup thread. A burst of model and ffmpeg work at boot
+  # has been restarting the instance (instant 502s from the proxy).
+  threading.Thread(target=_warm_in_background, name="pregen-warm", daemon=True).start()
 
 
 @app.get("/api/pregen/stats")
@@ -83,45 +174,24 @@ def pregen_stats() -> dict:
   return pregen_pool.all_stats()
 
 
+def _deploy_commit() -> str:
+  """Render sets RENDER_GIT_COMMIT. Local and other hosts fall back to dev."""
+  return os.getenv("RENDER_GIT_COMMIT") or os.getenv("GIT_COMMIT") or "dev"
+
+
 @app.get("/")
 async def root() -> dict[str, str]:
-  return {"status": "ok", "service": "tcf-backend"}
+  return {"status": "ok", "service": "tcf-backend", "commit": _deploy_commit()}
 
 
-_HEALTH_PROBE_TTL_SECONDS = 60
-_health_probe_lock = threading.Lock()
-_health_probe: dict = {"checked_at": 0.0, "result": "untested"}
-
-
-def _gemini_probe() -> str:
-  """Live Gemini call, cached for 60 s so the public health endpoint cannot be used to burn quota."""
-  if not os.getenv("GEMINI_API_KEY"):
-    return "untested"
-  with _health_probe_lock:
-    if time.time() - _health_probe["checked_at"] < _HEALTH_PROBE_TTL_SECONDS:
-      return _health_probe["result"]
-    try:
-      from google import genai as genai_client
-      client = genai_client.Client(api_key=os.getenv("GEMINI_API_KEY"))
-      resp = client.models.generate_content(
-        model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
-        contents="Reply with just the word: ok"
-      )
-      result = "ok" if resp.text else "empty response"
-    except Exception as exc:
-      result = f"FAILED: {type(exc).__name__}"
-    _health_probe.update(checked_at=time.time(), result=result)
-    return result
+@app.get("/api/version")
+async def version() -> dict[str, str]:
+  """No database and no provider. This must answer even when generation threads are all busy."""
+  return {"service": "tcf-backend", "commit": _deploy_commit()}
 
 
 @app.get("/api/health")
-def health() -> dict:
-  """Check environment config and Gemini key validity (probe cached for 60 s)."""
-  return {
-    "GEMINI_API_KEY": "set" if os.getenv("GEMINI_API_KEY") else "MISSING",
-    "GEMINI_MODEL": os.getenv("GEMINI_MODEL", "gemini-2.0-flash (default)"),
-    "GEMINI_TTS_MODEL": os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-preview-tts (default)"),
-    "ELEVENLABS_API_KEY": "set" if os.getenv("ELEVENLABS_API_KEY") else "MISSING",
-    "gemini_chat_test": _gemini_probe(),
-    "pregen": pregen_pool.all_stats(),
-  }
+@app.get("/healthz")
+async def health() -> dict[str, str]:
+  """Liveness only. A provider call here can stall the only worker, so this handler never makes one."""
+  return {"status": "ok", "service": "tcf-backend", "commit": _deploy_commit()}

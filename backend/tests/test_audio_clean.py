@@ -199,34 +199,31 @@ def test_the_switch_turns_it_off(monkeypatch):
 # ------------------------------- through the real pipeline -------------------------------
 
 def _fake_gemini(monkeypatch, pcm_bytes):
-  class _Inline:
+  class _Audio:
     data = pcm_bytes
 
-  class _Part:
-    inline_data = _Inline()
+  class _Interaction:
+    output_audio = _Audio()
 
-  class _Resp:
-    candidates = [type("C", (), {"content": type("K", (), {"parts": [_Part()]})()})()]
-
-  class _Models:
-    def generate_content(self, **kw):
-      return _Resp()
+  class _Interactions:
+    def create(self, **kw):
+      return _Interaction()
 
   class _Client:
     def __init__(self, **kw):
-      self.models = _Models()
+      self.interactions = _Interactions()
 
   fake_genai = types.ModuleType("google.genai")
   fake_genai.Client = _Client
   fake_types = types.ModuleType("google.genai.types")
-  for n in ("GenerateContentConfig", "SpeechConfig", "VoiceConfig", "PrebuiltVoiceConfig"):
-    setattr(fake_types, n, lambda **kw: kw)
+  fake_types.HttpOptions = lambda **kw: kw
   fake_genai.types = fake_types
   monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
   monkeypatch.setitem(sys.modules, "google.genai.types", fake_types)
   import google
   monkeypatch.setattr(google, "genai", fake_genai, raising=False)
   monkeypatch.setattr(tts, "_GEMINI_API_KEY", "x")
+  monkeypatch.setattr(tts, "_gemini_tts_client", None)
 
 
 def _decode(mp3):
@@ -273,6 +270,18 @@ def test_a_burst_with_codec_ramps_at_the_edges_is_still_found():
   y = samples(out)
   assert report.burst_head_ms >= 60 and report.burst_tail_ms >= 150
   assert edge_noise_ms(y, "head") == 0 and edge_noise_ms(y, "tail") == 0
+
+
+def test_a_full_scale_tail_burst_is_gone_from_the_mp3():
+  """The burst seen in production is ~0.06-0.18 s at the rails, after the last word."""
+  speech = sentence()
+  burst = np.clip(rng.standard_normal(int(RATE * 0.12)) * 22000, -32767, 32767)
+  dirty = pcm(np.concatenate([speech, burst]))
+  cleaned, report = ac.clean_pcm(dirty, RATE)
+  assert report.burst_tail_ms >= 60
+  assert edge_noise_ms(samples(cleaned), "tail") == 0
+  mp3 = tts.polish_mp3(tts._pcm_to_mp3(dirty))
+  assert edge_noise_ms(_decode(mp3), "tail") == 0
 
 
 def test_the_padding_around_the_speech_is_true_silence_never_leftover_noise():

@@ -28,7 +28,7 @@ def post_generate_question(
 ) -> TcfGenerateQuestionResponse:
   try:
     question = get_reading_question(payload.question_number, payload.session_id, payload.target_level)
-  except RuntimeError as error:
+  except Exception as error:
     logger.warning("Reading question generation failed: %s", error)
     raise HTTPException(
       status_code=503,

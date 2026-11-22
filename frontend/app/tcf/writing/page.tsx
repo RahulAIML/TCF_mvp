@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SLOW_MESSAGE, useSlow } from "@/lib/slow-load";
 
 import TcfAppShell from "@/components/TcfAppShell";
 import WritingStepper, { WritingStep } from "@/components/WritingStepper";
@@ -215,6 +216,7 @@ export default function WritingPage() {
   const [mode, setMode] = useState<TcfWritingMode | null>(null);
   const [isStarted, setIsStarted] = useState(false);
   const [loadingPrompts, setLoadingPrompts] = useState(false);
+  const promptsSlow = useSlow(loadingPrompts);
   const [error, setError] = useState("");
   const [prompts, setPrompts] = useState<PerTask<string>>(perTask(() => ""));
   const [stepIndex, setStepIndex] = useState<PerTask<number>>(perTask(() => 0));
@@ -725,6 +727,11 @@ export default function WritingPage() {
         <div className="space-y-6 min-w-0">
           {!mode || !isStarted ? (
             <div className="grid gap-6 lg:grid-cols-2">
+              {error && (
+                <div className="lg:col-span-2 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700" role="alert">
+                  {error}
+                </div>
+              )}
               <Card className="border-slate-200 shadow-sm">
                 <CardContent className="p-6 space-y-4">
                   <h2 className="text-2xl font-semibold text-slate-900">Practice Mode</h2>
@@ -774,9 +781,18 @@ export default function WritingPage() {
               )}
 
               {loadingPrompts && (
-                <div className="rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping" aria-hidden />
-                  Preparing your writing prompts…
+                <div className="rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 flex flex-wrap items-center gap-3" role="status">
+                  {promptsSlow ? (
+                    <>
+                      <span>{SLOW_MESSAGE}</span>
+                      <Button size="sm" variant="outline" onClick={() => void startMode(mode)}>Retry</Button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping" aria-hidden />
+                      Preparing your writing prompts…
+                    </>
+                  )}
                 </div>
               )}
 

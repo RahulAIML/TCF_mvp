@@ -265,8 +265,19 @@ class TcfGenerateListeningAudioRequest(BaseModel):
   speakers: List[str] = Field(default_factory=list, max_length=6)
 
 
+class ListeningVoiceTurn(BaseModel):
+  speaker: str | None = None
+  voice_id: str
+  provider: str | None = None
+  provider_voice: str | None = None
+  pitch_semitones: float | None = None
+
+
 class GenerateListeningAudioResponse(BaseModel):
   audio_url: str | None = None
+  voices: List[ListeningVoiceTurn] = Field(default_factory=list)
+  job_id: str | None = None
+  status: str = "ready"
 
 
 class SubmitListeningExamRequest(BaseModel):

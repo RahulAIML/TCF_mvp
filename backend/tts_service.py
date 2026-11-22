@@ -59,6 +59,8 @@ class VoiceConfig(TypedDict):
     active: bool
     elevenlabs_voice_id: str
     gemini_voice_name: str
+    gemini_style: str
+    pitch_semitones: float
 
 
 # code -> (locale used in voice ids, name shown to people)
@@ -70,34 +72,84 @@ LANGUAGES: dict[str, tuple[str, str]] = {
 }
 DEFAULT_LANGUAGE = "fr"
 
-# (gender, number, env var, default ElevenLabs voice id, Gemini voice name)
-_BASE_VOICES: list[tuple[str, int, str, str, str]] = [
-    # pNInz6obpgDQGcFmaJgB = Adam (male)
-    ("male", 1, "ELEVENLABS_VOICE_ID_TTS_M1", "pNInz6obpgDQGcFmaJgB", "Fenrir"),
-    # ErXwobaYiN019PkySvjV = Antoni (warm male voice)
-    ("male", 2, "ELEVENLABS_VOICE_ID_TTS_M2", "ErXwobaYiN019PkySvjV", "Puck"),
-    # 21m00Tcm4TlvDq8ikWAM = Rachel (clear, natural female)
-    ("female", 1, "ELEVENLABS_VOICE_ID_TTS_F1", "21m00Tcm4TlvDq8ikWAM", "Aoede"),
-    # AZnzlk1XvdvUeBnXmlld = Domi (strong, expressive female)
-    ("female", 2, "ELEVENLABS_VOICE_ID_TTS_F2", "AZnzlk1XvdvUeBnXmlld", "Leda"),
+# Pitch is never shifted. A ±4 semitone offset on four voices is what made one speaker sound
+# like a child and the other like a very old person. Every voice is used at its natural pitch.
+_ADULT_STYLE_FR = (
+    "Speak in neutral standard French, the way a TCF Canada listening exam is recorded. "
+    "You are a professional adult between 30 and 50 years old, in a quiet studio. "
+    "Clear diction, natural pace, calm and even. No childlike voice, no elderly voice, "
+    "no caricature, no strong regional accent."
+)
+# Adult Gemini prebuilt voices only. Left out on purpose: Leda (youthful), Fenrir (excitable),
+# Algenib (gravelly), Gacrux (mature, reads as elderly), and Puck (the high voice that
+# sounded like a child once it was pitched).
+_FRENCH_ADULTS: list[tuple[str, str]] = [
+    ("male", "Charon"),
+    ("male", "Orus"),
+    ("male", "Schedar"),
+    ("male", "Achird"),
+    ("male", "Algieba"),
+    ("male", "Iapetus"),
+    ("male", "Umbriel"),
+    ("male", "Sadaltager"),
+    ("female", "Kore"),
+    ("female", "Aoede"),
+    ("female", "Zephyr"),
+    ("female", "Sulafat"),
+    ("female", "Despina"),
+    ("female", "Erinome"),
+    ("female", "Vindemiatrix"),
+    ("female", "Callirrhoe"),
 ]
+# English, Spanish and Portuguese keep four adult voices and a real ElevenLabs id for fallback.
+_OTHER_VOICES: list[tuple[str, int, str, str, str, str]] = [
+    ("male", 1, "ELEVENLABS_VOICE_ID_TTS_M1", "2EiwWnXFnvU5JabPnv8n", "Charon",
+     "Speak as a calm adult man, clear and professional, at a natural speed."),
+    ("male", 2, "ELEVENLABS_VOICE_ID_TTS_M2", "SOYHLrjzK2X1ezoPC6cr", "Puck",
+     "Speak as a clear adult man, warm and professional, at a natural speed."),
+    ("female", 1, "ELEVENLABS_VOICE_ID_TTS_F1", "ThT5KcBeYPX3keUQqHPh", "Kore",
+     "Speak as a calm adult woman, clear and professional, at a natural speed."),
+    ("female", 2, "ELEVENLABS_VOICE_ID_TTS_F2", "XB0fDUnXU5powFXDhCwa", "Zephyr",
+     "Speak as a clear adult woman, warm and professional, at a natural speed."),
+]
+
+
+def _voice(voice_id: str, label: str, language: str, gender: str, gemini_name: str, style: str, el_id: str) -> VoiceConfig:
+    return {
+        "id": voice_id,
+        "label": label,
+        "language": language,
+        "gender": gender,
+        "active": True,
+        "elevenlabs_voice_id": el_id,
+        "gemini_voice_name": gemini_name,
+        "gemini_style": style,
+        "pitch_semitones": 0.0,
+    }
 
 
 def _build_registry() -> dict[str, VoiceConfig]:
     registry: dict[str, VoiceConfig] = {}
+    counts = {"male": 0, "female": 0}
+    for gender, gemini_name in _FRENCH_ADULTS:
+        counts[gender] += 1
+        number = counts[gender]
+        voice_id = f"fr-FR-{gender}-{number}"
+        suffix = "" if number == 1 else f" {number}"
+        registry[voice_id] = _voice(
+            voice_id, f"French {gender.capitalize()}{suffix}", "fr", gender,
+            gemini_name, _ADULT_STYLE_FR, "",
+        )
     for code, (locale, language_name) in LANGUAGES.items():
-        for gender, number, env_var, el_default, gemini_name in _BASE_VOICES:
+        if code == "fr":
+            continue
+        for gender, number, env_var, el_default, gemini_name, style in _OTHER_VOICES:
             voice_id = f"{locale}-{gender}-{number}"
             suffix = "" if number == 1 else f" {number}"
-            registry[voice_id] = {
-                "id": voice_id,
-                "label": f"{language_name} {gender.capitalize()}{suffix}",
-                "language": code,
-                "gender": gender,
-                "active": True,
-                "elevenlabs_voice_id": os.getenv(env_var, el_default),
-                "gemini_voice_name": gemini_name,
-            }
+            registry[voice_id] = _voice(
+                voice_id, f"{language_name} {gender.capitalize()}{suffix}", code, gender,
+                gemini_name, style, os.getenv(env_var, el_default),
+            )
     return registry
 
 
@@ -198,27 +250,78 @@ ELEVENLABS_SLOTS = threading.BoundedSemaphore(max(1, int(os.getenv("ELEVENLABS_M
 
 
 def elevenlabs_post(url: str, headers: dict, payload: dict, timeout) -> requests.Response:
-    """POST to ElevenLabs within the shared concurrency cap, retrying 429/5xx with backoff."""
-    delay = 1.0
-    for attempt in range(4):
-        with ELEVENLABS_SLOTS:
-            resp = _SESSION.post(url, headers=headers, json=payload, timeout=timeout)
-        if resp.status_code != 429 and resp.status_code < 500:
-            resp.raise_for_status()
-            return resp
-        if attempt == 3:
-            resp.raise_for_status()
-        logger.warning("ElevenLabs HTTP %s, retrying in %.0fs", resp.status_code, delay)
-        time.sleep(delay)
-        delay *= 2
-    raise RuntimeError("unreachable")
+    """POST to ElevenLabs within the shared concurrency cap, retrying timeouts, 429s and 5xx."""
+    import resilience
+
+    def once() -> requests.Response:
+        try:
+            with ELEVENLABS_SLOTS:
+                resp = _SESSION.post(url, headers=headers, json=payload, timeout=timeout)
+        except (requests.Timeout, requests.ConnectionError) as error:
+            raise RuntimeError(f"ElevenLabs timeout: {error}") from error
+        if resp.status_code == 429 or resp.status_code >= 500:
+            raise RuntimeError(f"ElevenLabs HTTP {resp.status_code}: {resp.text[:240]}")
+        if resp.status_code >= 400:
+            raise RuntimeError(f"ElevenLabs HTTP {resp.status_code}: {resp.text[:240]}")
+        return resp
+
+    return resilience.retry(once, attempts=6, base=0.5, cap=8.0)
 
 
-class AudioResult(TypedDict):
+class AudioResult(TypedDict, total=False):
     data: bytes
     extension: str   # "mp3" (or "wav" only if no MP3 encoder is installed)
     mime_type: str
     provider: str
+    provider_voice: str
+
+
+def polish_mp3(mp3: bytes) -> bytes:
+    """
+    Decode an MP3, strip a full-scale noise burst at either end, fade, and encode again.
+    The burst is in the provider's audio (and sometimes survives the first encode). Re-encoding
+    after the PCM cleaner is what makes the file the learner hears end in silence.
+    If ffmpeg is missing or fails, the original bytes are returned.
+    """
+    if not mp3 or not audio_clean.enabled():
+        return mp3
+    import shutil
+    import subprocess
+    import tempfile
+    if shutil.which("ffmpeg") is None:
+        return mp3
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "in.mp3")
+            pcm_path = os.path.join(tmp, "in.pcm")
+            out = os.path.join(tmp, "out.mp3")
+            with open(src, "wb") as handle:
+                handle.write(mp3)
+            import limits
+            decoded = limits.run_ffmpeg(
+                ["ffmpeg", "-v", "error", "-i", src, "-f", "s16le", "-ac", "1", "-ar", str(GEMINI_SAMPLE_RATE), pcm_path],
+                check=False, capture_output=True,
+            )
+            if decoded.returncode != 0 or not os.path.exists(pcm_path):
+                return mp3
+            with open(pcm_path, "rb") as handle:
+                pcm = handle.read()
+            cleaned, _report = audio_clean.clean_pcm(pcm, GEMINI_SAMPLE_RATE)
+            with open(pcm_path, "wb") as handle:
+                handle.write(cleaned)
+            import limits
+            encoded = limits.run_ffmpeg(
+                ["ffmpeg", "-v", "error", "-f", "s16le", "-ar", str(GEMINI_SAMPLE_RATE), "-ac", "1",
+                 "-i", pcm_path, "-codec:a", "libmp3lame", "-b:a", "64k", "-y", out],
+                check=False, capture_output=True,
+            )
+            if encoded.returncode != 0 or not os.path.exists(out):
+                return mp3
+            with open(out, "rb") as handle:
+                return handle.read() or mp3
+    except Exception as exc:
+        logger.warning("MP3 polish skipped: %s", exc)
+        return mp3
 
 
 def _pcm_to_mp3(pcm_bytes: bytes) -> bytes | None:
@@ -251,16 +354,38 @@ def save_audio(result: AudioResult, voice_id: str, *, long_name: bool = False) -
     Write the audio under AUDIO_STORAGE_PATH. Returns (file_name, url_path), url_path being "/audio/<file_name>".
     long_name=True uses a full 128-bit random name (files shared outside the app, e.g. through the MCP server).
     """
-    os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
+    import audio_store
     safe_id = voice_id.replace("/", "_")
     token = uuid.uuid4().hex if long_name else uuid.uuid4().hex[:8]
     file_name = f"tts_{safe_id}_{token}.{result['extension']}"
-    with open(os.path.join(AUDIO_STORAGE_PATH, file_name), "wb") as f:
-        f.write(result["data"])
-    return file_name, f"/audio/{file_name}"
+    mime = result.get("mime_type") or "audio/mpeg"
+    url = audio_store.save(file_name, result["data"], mime)
+    return file_name, url
 
 
-def _generate_via_elevenlabs(text: str, voice: VoiceConfig) -> AudioResult:
+def shift_pitch_pcm(pcm: bytes, semitones: float, sample_rate: int = GEMINI_SAMPLE_RATE) -> bytes:
+    """Pitch shifting is disabled. The bytes are returned unchanged at the speaker's natural pitch."""
+    return pcm
+
+
+def _mp3_to_pcm(data: bytes, sample_rate: int = GEMINI_SAMPLE_RATE) -> bytes:
+    import subprocess
+    import limits
+    proc = limits.run_ffmpeg(
+        ["ffmpeg", "-v", "error", "-i", "pipe:0", "-f", "s16le", "-ac", "1", "-ar", str(sample_rate), "pipe:1"],
+        input=data, capture_output=True, timeout=30,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        raise RuntimeError("Could not decode MP3 for pitch shift.")
+    return proc.stdout
+
+
+def _with_pitch(data: bytes, extension: str, voice: VoiceConfig) -> tuple[bytes, str]:
+    """Audio is stored at the provider's natural pitch and speed. Nothing is shifted."""
+    return data, extension
+
+
+def _generate_via_elevenlabs(text: str, voice: VoiceConfig, polish: bool = True) -> AudioResult:
     if not _ELEVENLABS_API_KEY:
         raise RuntimeError("ELEVENLABS_API_KEY not configured.")
     el_voice_id = voice["elevenlabs_voice_id"]
@@ -275,8 +400,19 @@ def _generate_via_elevenlabs(text: str, voice: VoiceConfig) -> AudioResult:
     }
     headers = {"xi-api-key": _ELEVENLABS_API_KEY, "Content-Type": "application/json"}
     logger.info("ElevenLabs TTS: voice=%s chars=%s", voice["id"], len(text))
+    logger.info(
+        "ElevenLabs TTS turn: registry=%s provider_voice=%s chars=%d",
+        voice["id"], el_voice_id, len(text),
+    )
     resp = elevenlabs_post(url, headers, payload, timeout=(5, 120))
-    return {"data": resp.content, "extension": "mp3", "mime_type": "audio/mpeg", "provider": "elevenlabs"}
+    raw = resp.content
+    data, _ext = _with_pitch(raw, "mp3", voice)
+    if polish:
+        data = polish_mp3(data)
+    return {
+        "data": data, "extension": "mp3", "mime_type": "audio/mpeg",
+        "provider": "elevenlabs", "provider_voice": el_voice_id,
+    }
 
 
 def _clean_edges(pcm_bytes: bytes, voice_id: str) -> bytes:
@@ -314,44 +450,87 @@ def _get_gemini_tts_client():
             kwargs = {"api_key": _GEMINI_API_KEY}
             http_options_cls = getattr(types, "HttpOptions", None)
             if http_options_cls is not None:
-                kwargs["http_options"] = http_options_cls(timeout=_GEMINI_TTS_TIMEOUT_MS)
+                kwargs["http_options"] = http_options_cls(timeout=_GEMINI_TTS_TIMEOUT_MS, api_version="v1beta")
             _gemini_tts_client = (genai_client, genai_client.Client(**kwargs))
         return _gemini_tts_client[1]
 
 
-def _generate_via_gemini(text: str, voice: VoiceConfig) -> AudioResult:
+def _pcm_from_audio_bytes(raw: bytes) -> bytes:
+    """Gemini 3.8 returns a WAV for unary calls and headerless PCM when we ask for audio/l16."""
+    if raw[:4] == b"RIFF":
+        import wave as _wave
+        with _wave.open(io.BytesIO(raw), "rb") as wf:
+            return wf.readframes(wf.getnframes())
+    return raw
+
+
+def _interaction_pcm(voice: VoiceConfig, text: str) -> bytes:
+    """Gemini 3.8 TTS speaks with the voice named in speech_config.
+
+    google-genai 1.x sent the retired Interactions schema, which the API rejects. The SDK 2+
+    request puts the voice in generation_config.speech_config and asks for audio via response_format.
+    There is no fallback that omits the voice: a failure is raised so another real voice can be used.
+    """
+    client = _get_gemini_tts_client()
+    provider_voice = voice["gemini_voice_name"]
+    style = voice.get("gemini_style") or ""
+    content: dict = {"type": "text", "text": text}
+    if style:
+        content["annotations"] = [{"type": "speech_metadata", "style": style}]
+    logger.info(
+        "Gemini TTS turn: registry=%s provider_voice=%s style=%s chars=%d",
+        voice["id"], provider_voice, style, len(text),
+    )
+    interaction = client.interactions.create(
+        model=_GEMINI_TTS_MODEL,
+        input=[{"type": "user_input", "content": [content]}],
+        response_format={"type": "audio"},
+        generation_config={"speech_config": [{"voice": provider_voice}]},
+    )
+    return _pcm_from_audio_bytes(_audio_bytes_from_interaction(interaction, provider_voice))
+
+
+def _audio_bytes_from_interaction(interaction, provider_voice: str) -> bytes:
+    import base64
+    audio = getattr(interaction, "output_audio", None)
+    data = getattr(audio, "data", None) if audio is not None else None
+    if data is None and isinstance(audio, dict):
+        data = audio.get("data")
+    if isinstance(data, str):
+        data = base64.b64decode(data)
+    if data:
+        return bytes(data)
+    for step in getattr(interaction, "steps", None) or []:
+        for block in getattr(step, "content", None) or []:
+            raw = getattr(block, "data", None)
+            if isinstance(raw, str):
+                raw = base64.b64decode(raw)
+            if raw:
+                return bytes(raw)
+    raise RuntimeError(f"Gemini TTS returned no audio for voice {provider_voice}")
+
+
+def _generate_via_gemini(text: str, voice: VoiceConfig, polish: bool = True) -> AudioResult:
     if not _GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY not configured.")
     try:
-        from google.genai import types
-    except ImportError as exc:
-        raise RuntimeError("google-genai package not installed.") from exc
-
-    client = _get_gemini_tts_client()
-    logger.info("Gemini TTS: voice=%s chars=%s", voice["id"], len(text))
-    response = client.models.generate_content(
-        model=_GEMINI_TTS_MODEL,
-        contents=text,
-        config=types.GenerateContentConfig(
-            response_modalities=["AUDIO"],
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name=voice["gemini_voice_name"]
-                    )
-                )
-            ),
-        ),
-    )
-    pcm_bytes = response.candidates[0].content.parts[0].inline_data.data
+        pcm_bytes = _interaction_pcm(voice, text)
+    except Exception as error:
+        logger.exception(
+            "Gemini TTS failed for registry=%s provider_voice=%s: %s",
+            voice["id"], voice["gemini_voice_name"], error,
+        )
+        raise
     pcm_bytes = _clean_edges(pcm_bytes, voice["id"])
     mp3 = _pcm_to_mp3(pcm_bytes)
+    provider_voice = voice["gemini_voice_name"]
     if mp3:
-        return {"data": mp3, "extension": "mp3", "mime_type": "audio/mpeg", "provider": "gemini"}
-    return {"data": _pcm_to_wav(pcm_bytes), "extension": "wav", "mime_type": "audio/wav", "provider": "gemini"}
+        data = polish_mp3(mp3) if polish else mp3
+        return {"data": data, "extension": "mp3", "mime_type": "audio/mpeg", "provider": "gemini", "provider_voice": provider_voice}
+    return {"data": _pcm_to_wav(pcm_bytes), "extension": "wav", "mime_type": "audio/wav", "provider": "gemini", "provider_voice": provider_voice}
 
 
-def synthesize_elevenlabs(text: str, voice_id: str) -> AudioResult:
+def synthesize_elevenlabs(text: str, voice_id: str, polish: bool = True) -> AudioResult:
     """
     Generate audio via ElevenLabs only — no Gemini fallback.
     Use for cases where a real human-sounding distinct voice is required (e.g. dialogue TTS).
@@ -361,17 +540,17 @@ def synthesize_elevenlabs(text: str, voice_id: str) -> AudioResult:
         raise ValueError("Text must not be empty.")
     if len(text) > MAX_TEXT_LENGTH:
         raise ValueError(f"Text exceeds maximum length of {MAX_TEXT_LENGTH} characters.")
-    return _generate_via_elevenlabs(text, get_voice(voice_id))
+    return _generate_via_elevenlabs(text, get_voice(voice_id), polish=polish)
 
 
-def synthesize_gemini(text: str, voice_id: str) -> AudioResult:
+def synthesize_gemini(text: str, voice_id: str, polish: bool = True) -> AudioResult:
     """Generate audio via Gemini only (no ElevenLabs fallback) with the voice's Gemini counterpart."""
     text = text.strip()
     if not text:
         raise ValueError("Text must not be empty.")
     if len(text) > MAX_TEXT_LENGTH:
         raise ValueError(f"Text exceeds maximum length of {MAX_TEXT_LENGTH} characters.")
-    return _generate_via_gemini(text, get_voice(voice_id))
+    return _generate_via_gemini(text, get_voice(voice_id), polish=polish)
 
 
 def synthesize(text: str, voice_id: str) -> AudioResult:

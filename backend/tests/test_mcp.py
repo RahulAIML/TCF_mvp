@@ -115,6 +115,24 @@ def test_cors_is_open_for_mcp_only(client):
   assert other.headers.get("access-control-allow-origin") != "*"
 
 
+def test_frontend_preflight_and_errors_carry_acao(client):
+  origin = "https://tcf-trainer.onrender.com"
+  pre = client.options(
+    "/tcf/generate-listening-question",
+    headers={
+      "Origin": origin,
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "content-type,x-learner-id",
+    },
+  )
+  assert pre.status_code == 204
+  assert pre.headers["access-control-allow-origin"] == origin
+  assert "X-Learner-Id" in pre.headers["access-control-allow-headers"]
+  missing = client.get("/api/does-not-exist", headers={"Origin": origin})
+  assert missing.status_code == 404
+  assert missing.headers["access-control-allow-origin"] == origin
+
+
 # ----------------------------------- auth -----------------------------------
 
 def test_no_token_or_wrong_token_is_401_with_the_bearer_challenge(client):
@@ -206,7 +224,7 @@ def test_list_languages_and_voices(client, token):
   assert [l["code"] for l in langs["languages"]] == ["fr", "en", "es", "pt"]
   es = call(client, token[0], "list_voices", {"language": "Spanish"})["structuredContent"]["voices"]
   assert len(es) == 4 and all(v["language"] == "es" for v in es)
-  assert len(call(client, token[0], "list_voices")["structuredContent"]["voices"]) == 16
+  assert len(call(client, token[0], "list_voices")["structuredContent"]["voices"]) == 28
   bad = call(client, token[0], "list_voices", {"language": "klingon"})
   assert bad["isError"] is True and "fr, en, es, pt" in bad["content"][0]["text"]
 
@@ -342,7 +360,7 @@ def test_text_that_looks_like_instructions_is_just_spoken(client, token, fake_tt
 
 def test_the_existing_voices_endpoint_still_works_and_can_filter_by_language(client):
   allv = client.get("/api/tts/voices").json()
-  assert len(allv) == 16
+  assert len(allv) == 28
   assert {v["language"] for v in client.get("/api/tts/voices?language=pt").json()} == {"pt"}
   assert [l["code"] for l in client.get("/api/tts/languages").json()] == ["fr", "en", "es", "pt"]
 
@@ -362,7 +380,7 @@ def test_nothing_specified_asks_instead_of_guessing(client, token, fake_tts):
   assert [c["type"] for c in res["content"]] == ["text"]
   assert "ASK THE PERSON" in res["content"][0]["text"]
   assert [l["code"] for l in data["languages"]] == ["fr", "en", "es", "pt"]
-  assert len(data["voices"]) == 16 and len(data["ask"]) == 2
+  assert len(data["voices"]) == 28 and len(data["ask"]) == 2
   assert "use_defaults" in data["then"]
 
 

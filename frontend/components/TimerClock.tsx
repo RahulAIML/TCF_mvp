@@ -8,8 +8,10 @@ interface TimerClockProps {
   isActive: boolean;
   resetKey: number;
   onExpire?: () => void;
-  /** Called with the seconds left whenever the display updates (e.g. to save progress). */
-  onTick?: (remainingSeconds: number) => void;
+  /** Called with the exact seconds left (at least once a second while running). */
+  onTick?: (secondsLeft: number) => void;
+  /** Shown instead of the clock while the exam is waiting or paused. */
+  holdLabel?: string;
 }
 
 function formatTime(totalSeconds: number) {
@@ -18,8 +20,16 @@ function formatTime(totalSeconds: number) {
   return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
 }
 
-export default function TimerClock({ durationSeconds, isActive, resetKey, onExpire, onTick }: TimerClockProps) {
+export default function TimerClock({
+  durationSeconds,
+  isActive,
+  resetKey,
+  onExpire,
+  onTick,
+  holdLabel
+}: TimerClockProps) {
   const [remaining, setRemaining] = useState(durationSeconds);
+  const label = formatTime(remaining);
   const countdownRef = useRef<Countdown>(createCountdown(durationSeconds));
   const resetRef = useRef(`${resetKey}:${durationSeconds}`);
   // Latest callbacks without restarting the clock when the parent re-renders with new function identities.
@@ -67,8 +77,8 @@ export default function TimerClock({ durationSeconds, isActive, resetKey, onExpi
   return (
     <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm">
       <p className="text-xs font-medium uppercase text-slate-400">Time Remaining</p>
-      <p className={`text-base font-semibold tabular-nums ${remaining <= 60 ? "text-rose-600" : "text-slate-900"}`}>
-        {formatTime(remaining)}
+      <p className={`text-base font-semibold ${!holdLabel && remaining <= 60 ? "text-rose-600" : "text-slate-900"}`}>
+        {holdLabel ?? label}
       </p>
     </div>
   );

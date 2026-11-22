@@ -15,6 +15,9 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+import content_bank
+import content_dedupe as dedupe
+from learner import active_learner
 from tcf_ai_service import (
   evaluate_learn_answer,
   extract_text_from_image_bytes,
@@ -139,6 +142,21 @@ def _start_analysis(text: str) -> tuple[Future, Future]:
   return _EXECUTOR.submit(generate_learn_overview, text), _EXECUTOR.submit(generate_learn_exercises, text)
 
 
+def _unseen_exercises(exercises: list[dict[str, Any]]) -> list[dict[str, Any]]:
+  """Drop exercises this learner has already been served, and remember the ones we keep."""
+  learner = active_learner()
+  kept: list[dict[str, Any]] = []
+  for exercise in exercises:
+    question = str(exercise.get("question", ""))
+    fp = dedupe.fingerprint(question)
+    sim = dedupe.simhash_of(question)
+    if not question or content_bank.is_seen(learner, "learn", fp, sim):
+      continue
+    content_bank.remember(learner, "learn", fp, sim, label=question[:240])
+    kept.append(exercise)
+  return kept
+
+
 def _finish_analysis(overview: dict[str, Any], exercises: list[dict[str, Any]]) -> str:
   content_id = content_id_for(overview["topic"], overview["level"], overview["summary"])
   _batches.remember(content_id, [ex.get("question", "") for ex in exercises])
@@ -158,6 +176,7 @@ def analyze_content(
   except Exception as err:
     logger.error("learn analysis failed: %s", err)
     raise HTTPException(status_code=503, detail=_FRIENDLY_ERROR)
+  exercises = _unseen_exercises(exercises)
   if not exercises:
     raise HTTPException(status_code=503, detail=_FRIENDLY_ERROR)
   content_id = _finish_analysis(overview, exercises)
@@ -202,7 +221,7 @@ def analyze_content_stream(
           yield _sse({"type": "overview", **overview})
         else:
           finished += 1
-          exercises = _valid_exercises(data.result())
+          exercises = _unseen_exercises(_valid_exercises(data.result()))
           if not exercises:
             raise RuntimeError("no valid exercises")
           yield _sse({"type": "exercises", "exercises": exercises})
@@ -309,6 +328,7 @@ def more_exercises(
     except Exception as err:
       logger.error("generate_more_exercises failed: %s", err)
       raise HTTPException(status_code=503, detail="La génération des exercices a échoué. Veuillez réessayer.")
+  exercises = _unseen_exercises(exercises or [])
   if not exercises:
     raise HTTPException(status_code=503, detail="La génération des exercices a échoué. Veuillez réessayer.")
 

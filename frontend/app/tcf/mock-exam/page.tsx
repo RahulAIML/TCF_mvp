@@ -75,6 +75,7 @@ export default function MockExamPage() {
   const [timerDuration, setTimerDuration] = useState(EXAM_DURATION_SECONDS);
 
   const questionsRef = useRef<Record<number, TcfExamQuestion>>({});
+  const visitedRef = useRef<Set<number>>(new Set());
   const remainingRef = useRef(EXAM_DURATION_SECONDS);
 
   const diffRange = DIFFICULTY_RANGES[difficultyGroup];
@@ -86,6 +87,10 @@ export default function MockExamPage() {
   useEffect(() => {
     questionsRef.current = questions;
   }, [questions]);
+
+  useEffect(() => {
+    if (isExamStarted) visitedRef.current.add(currentQuestion);
+  }, [isExamStarted, currentQuestion]);
 
   // Check for saved progress on mount
   useEffect(() => {
@@ -212,6 +217,7 @@ export default function MockExamPage() {
     setIsExamStarted(true);
     const startQ = DIFFICULTY_RANGES[difficultyGroup].start;
     setCurrentQuestion(startQ);
+    visitedRef.current = new Set([startQ]);
     const sessionId = typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -313,7 +319,9 @@ export default function MockExamPage() {
     setTimerActive(false);
     try {
       const completedAt = new Date().toISOString();
-      const questionList = Object.values(questionsRef.current)
+      const questionList = [...visitedRef.current]
+        .map((number) => questionsRef.current[number])
+        .filter((question): question is TcfExamQuestion => Boolean(question))
         .sort((a, b) => a.question_number - b.question_number)
         .map((question) => ({
           question_number: question.question_number,
@@ -346,19 +354,11 @@ export default function MockExamPage() {
       return;
     }
 
-    const questionList = Object.values(questionsRef.current)
-      .sort((a, b) => a.question_number - b.question_number)
-      .map((question) => ({
-        question_number: question.question_number,
-        correct_answer: question.correct_answer,
-        question_type: question.question_type,
-        explanation: question.explanation
-      }));
-
-    if (questionList.length < TOTAL_QUESTIONS) {
+    const opened = visitedRef.current.size;
+    const inExam = diffRange.end - diffRange.start + 1;
+    if (opened < inExam) {
       const note =
-        `Partial submission: ${questionList.length} of ${TOTAL_QUESTIONS} questions generated. ` +
-        "Score is based only on generated questions.";
+        `You opened ${opened} of ${inExam} questions. Your score uses only those questions.`;
       setSubmitNote(note);
       setConfirmPartial(true);
       return;
@@ -440,6 +440,8 @@ export default function MockExamPage() {
               </Button>
             </CardContent>
           </Card>
+        ) : results ? (
+          <TcfExamResults results={results} questions={questions} />
         ) : (
           <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
             <ExamContainer
@@ -450,7 +452,14 @@ export default function MockExamPage() {
               timer={
                 <TimerClock
                   durationSeconds={timerDuration}
-                  isActive={timerActive && loadingPauses === 0}
+                  isActive={timerActive && !loadingQuestion}
+                  holdLabel={
+                    !timerActive
+                      ? "Starts when the first question is ready"
+                      : loadingQuestion
+                        ? "Paused while loading"
+                        : undefined
+                  }
                   resetKey={timerKey}
                   onExpire={handleTimerExpire}
                   onTick={(seconds) => {
@@ -469,11 +478,6 @@ export default function MockExamPage() {
                     : isSubmitting
                       ? "Time is up. Submitting your exam…"
                       : "Time is up. Your exam could not be submitted yet."}
-                </div>
-              )}
-              {submitNote && (
-                <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                  {submitNote}
                 </div>
               )}
               {error && (
@@ -641,14 +645,6 @@ export default function MockExamPage() {
           </div>
         )}
 
-        {results && (
-          <div className="space-y-4">
-            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-              Exam submitted successfully.
-            </div>
-            <TcfExamResults results={results} questions={questions} />
-          </div>
-        )}
       </div>
     </TcfAppShell>
   );

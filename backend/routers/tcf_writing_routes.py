@@ -59,8 +59,9 @@ def post_generate_writing_tasks(
   _user: User = Depends(get_optional_user)
 ) -> TcfGenerateWritingTasksResponse:
   try:
-    prompts = generate_tcf_writing_tasks(payload.session_id)
-  except RuntimeError as error:
+    import resilience
+    prompts = resilience.retry(lambda: generate_tcf_writing_tasks(payload.session_id), attempts=3, base=0.4)
+  except Exception as error:
     logger.error("writing task generation failed: %s", error)
     raise HTTPException(status_code=503, detail="Impossible de générer les consignes pour le moment. Réessayez.") from error
   return TcfGenerateWritingTasksResponse(**prompts)

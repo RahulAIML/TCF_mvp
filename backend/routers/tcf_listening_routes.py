@@ -1,5 +1,7 @@
 ﻿import logging
 
+import audio_jobs
+import resilience
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -37,17 +39,51 @@ def post_generate_listening_question(
     raise HTTPException(status_code=503, detail=_UNAVAILABLE) from error
 
 
+def _synthesize_for_job(script: str, speakers: list[str] | None) -> dict:
+  """Run synthesis, retrying transient provider failures. Returns the URL and the per-turn voices."""
+  turns: list = []
+
+  def once() -> str:
+    turns.clear()
+    return listening_service.synthesize_listening_audio(script, speakers, report=turns)
+
+  url = resilience.retry(once, attempts=3, base=0.4)
+  return {"audio_url": url, "voices": list(turns)}
+
+
 @router.post("/generate-listening-audio", response_model=GenerateListeningAudioResponse)
 def post_generate_listening_audio(
   payload: TcfGenerateListeningAudioRequest,
   _user: User = Depends(get_optional_user)
 ) -> GenerateListeningAudioResponse:
-  try:
-    audio_url = listening_service.synthesize_listening_audio(payload.script, payload.speakers or None)
-  except Exception as error:
-    logger.error("Listening audio failed: %s", error)
-    raise HTTPException(status_code=503, detail="The audio could not be generated right now. Please try again.") from error
-  return GenerateListeningAudioResponse(audio_url=audio_url)
+  """Start synthesis and return as soon as the file is ready, or a job id if it is still running.
+
+  The host cuts HTTP requests off at about 100 seconds. A long interview stays under that limit
+  because the work continues in the background and the client polls.
+  """
+  job_id = audio_jobs.submit(lambda: _synthesize_for_job(payload.script, payload.speakers or None))
+  done = audio_jobs.wait(job_id, audio_jobs.INLINE_WAIT_SECONDS)
+  if done and done.get("status") == "ready" and done.get("audio_url"):
+    return GenerateListeningAudioResponse(
+      audio_url=done["audio_url"], voices=done.get("voices") or [], job_id=job_id, status="ready",
+    )
+  if done and done.get("status") == "failed":
+    logger.error("Listening audio failed: %s", done.get("error"))
+    raise HTTPException(status_code=503, detail="The audio could not be generated right now. Please try again.")
+  return GenerateListeningAudioResponse(job_id=job_id, status="pending")
+
+
+@router.get("/listening-audio-jobs/{job_id}", response_model=GenerateListeningAudioResponse)
+def get_listening_audio_job(job_id: str) -> GenerateListeningAudioResponse:
+  found = audio_jobs.snapshot(job_id)
+  if found is None:
+    raise HTTPException(status_code=404, detail="This audio request has expired. Please start it again.")
+  return GenerateListeningAudioResponse(
+    audio_url=found.get("audio_url"),
+    voices=found.get("voices") or [],
+    job_id=job_id,
+    status=found.get("status") or "pending",
+  )
 
 
 @router.post("/submit-listening-exam", response_model=SubmitListeningExamResponse)

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { SLOW_MESSAGE, useSlow } from "@/lib/slow-load";
 import TcfAppShell from "@/components/TcfAppShell";
 import ExamContainer from "@/components/ExamContainer";
 import ListeningQuestionCard from "@/components/ListeningQuestionCard";
@@ -80,7 +81,7 @@ interface QueuedQuestion {
 }
 
 export default function ListeningExamPage() {
-  const [mode, setMode] = useState<"practice" | "exam">("exam");
+  const [mode, setMode] = useState<"practice" | "exam">("practice");
   const [showTranscript, setShowTranscript] = useState(false);
 
   // Exam state is indexed by position in the exam (1..examSize); positions map to real TCF question numbers.
@@ -90,6 +91,7 @@ export default function ListeningExamPage() {
   const [answers, setAnswers] = useState<Record<number, AnswerOption | "">>({});
   const [playCounts, setPlayCounts] = useState<Record<number, number>>({});
   const [loadingQuestion, setLoadingQuestion] = useState(false);
+  const questionSlow = useSlow(loadingQuestion);
   const [error, setError] = useState("");
   const [submitNote, setSubmitNote] = useState("");
   const [startedAt, setStartedAt] = useState<string | null>(null);
@@ -120,6 +122,7 @@ export default function ListeningExamPage() {
 
   const [pendingPracticeLevel, setPendingPracticeLevel] = useState<Level | null>(null);
   const [audioUrls, setAudioUrls] = useState<Record<string, string>>({});
+  const [audioBusy, setAudioBusy] = useState(false);
 
   const questionsRef = useRef<Record<number, ListeningQuestion>>({});
   const inFlightRef = useRef<Partial<Record<number, Promise<ListeningQuestion>>>>({});
@@ -130,6 +133,7 @@ export default function ListeningExamPage() {
   const practiceLevelRef = useRef<Level>(practiceLevel);
   const audioCacheRef = useRef<Record<string, Promise<string | undefined>>>({});
   const warmAudioRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+  const visitedRef = useRef<Set<number>>(new Set());
 
   const [examStart, examEnd] = examRange(examFocus);
   const examSize = examEnd - examStart + 1;
@@ -147,16 +151,20 @@ export default function ListeningExamPage() {
     setShowTranscript(false);
   }, [mode]);
 
-  // URL deep-link: read ?mode on mount, sync on mode change
+  // The first render is always Practice so the server and the browser match.
+  // Reading ?mode= happens after that, and the URL must not be rewritten to Practice
+  // before that read has been applied.
+  const skipModeWrite = useRef(true);
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const urlMode = params.get("mode");
-    if (urlMode === "practice" || urlMode === "exam") {
-      setMode(urlMode);
-    }
+    const urlMode = new URLSearchParams(window.location.search).get("mode");
+    if (urlMode === "practice" || urlMode === "exam") setMode(urlMode);
   }, []);
 
   useEffect(() => {
+    if (skipModeWrite.current) {
+      skipModeWrite.current = false;
+      return;
+    }
     const params = new URLSearchParams(window.location.search);
     params.set("mode", mode);
     window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
@@ -180,6 +188,10 @@ export default function ListeningExamPage() {
   useEffect(() => {
     if (mode === "exam") setShowTranscript(false);
   }, [currentQuestion, mode]);
+
+  useEffect(() => {
+    if (mode === "exam" && isExamStarted) visitedRef.current.add(currentQuestion);
+  }, [mode, isExamStarted, currentQuestion]);
 
   // ── Audio: requested as soon as a question exists, then pre-buffered by the browser ──────────────
 
@@ -231,7 +243,7 @@ export default function ListeningExamPage() {
 
   // ── Exam ─────────────────────────────────────────────────────────────────────────────────────────
 
-  const ensureQuestion = async (position: number, showLoader = true) => {
+  const ensureQuestion = async (position: number, showLoader = true, withAudio = true) => {
     const existing = questionsRef.current[position];
     if (existing) return existing;
 
@@ -257,7 +269,7 @@ export default function ListeningExamPage() {
           const updated = { ...questionsRef.current, [position]: normalized };
           questionsRef.current = updated;
           setQuestions(updated);
-          void fetchAudio(normalized);
+          if (withAudio) void fetchAudio(normalized);
           return normalized;
         });
         inFlightRef.current[position] = request;
@@ -280,7 +292,8 @@ export default function ListeningExamPage() {
       const position = fromPosition + offset;
       if (position > examSize) break;
       if (questionsRef.current[position] || inFlightRef.current[position]) continue;
-      void ensureQuestion(position, false).catch(() => undefined);
+      // Only the next item fetches audio. The rest wait, so five clips are not synthesized at once.
+      void ensureQuestion(position, false, offset === 1).catch(() => undefined);
     }
   };
 
@@ -292,6 +305,7 @@ export default function ListeningExamPage() {
     setQuestions({});
     setAnswers({});
     setPlayCounts({});
+    visitedRef.current = new Set([1]);
     setResults(null);
     setIsExamStarted(true);
     setCurrentQuestion(1);
@@ -350,9 +364,10 @@ export default function ListeningExamPage() {
     setTimerActive(false);
 
     try {
-      const questionList = Object.entries(questionsRef.current)
-        .map(([pos, question]) => ({ position: Number(pos), question }))
-        .sort((a, b) => a.position - b.position);
+      const questionList = [...visitedRef.current]
+        .filter((position) => questionsRef.current[position])
+        .sort((a, b) => a - b)
+        .map((position) => ({ position, question: questionsRef.current[position] }));
 
       let correct = 0;
       const detailed = questionList.map(({ position, question }) => {
@@ -399,11 +414,10 @@ export default function ListeningExamPage() {
       setError("Exam has not started.");
       return;
     }
-    const generated = Object.keys(questionsRef.current).length;
-    if (generated < examSize) {
+    const opened = visitedRef.current.size;
+    if (opened < examSize) {
       setSubmitNote(
-        `Partial submission: ${generated} of ${examSize} questions were opened. ` +
-        "Your score is based only on the questions you saw."
+        `You opened ${opened} of ${examSize} questions. Your score uses only those questions.`
       );
       setConfirmPartial(true);
       return;
@@ -497,13 +511,18 @@ export default function ListeningExamPage() {
   };
 
   // Keep questions ready for the selected level as soon as practice is open.
+  // The first render is practice even when the URL says exam, so read the URL before starting audio.
   useEffect(() => {
-    if (mode === "practice") topUpPracticeQueue(practiceLevel);
+    const urlMode = new URLSearchParams(window.location.search).get("mode");
+    if (urlMode === "exam" || mode !== "practice") return;
+    topUpPracticeQueue(practiceLevel);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, practiceLevel]);
 
+  const practiceLoadLock = useRef(false);
   const loadPracticeQuestion = async () => {
-    if (loadingQuestion) return;
+    if (practiceLoadLock.current) return;
+    practiceLoadLock.current = true;
     const level = practiceLevel;
     setError("");
     setLoadingQuestion(true);
@@ -521,6 +540,7 @@ export default function ListeningExamPage() {
     } catch (err) {
       setError(errorMessage(err, "Failed to load practice question."));
     } finally {
+      practiceLoadLock.current = false;
       setLoadingQuestion(false);
     }
   };
@@ -688,9 +708,12 @@ export default function ListeningExamPage() {
                       Practice one question at a time. Level: <strong>{practiceLevel}</strong>. The transcript is
                       hidden until you choose to show it.
                     </p>
-                    <Button className="mt-4" onClick={() => void loadPracticeQuestion()} disabled={loadingQuestion}>
-                      {loadingQuestion ? "Loading question…" : "Start Practice"}
+                    <Button className="mt-4" onClick={() => { practiceLoadLock.current = false; setLoadingQuestion(false); void loadPracticeQuestion(); }} disabled={loadingQuestion && !questionSlow}>
+                      {loadingQuestion && !questionSlow ? "Loading question…" : questionSlow ? "Retry" : "Start Practice"}
                     </Button>
+                    {questionSlow && (
+                      <p className="mt-3 text-sm text-slate-600" role="alert">{SLOW_MESSAGE}</p>
+                    )}
                   </CardContent>
                 </Card>
               ) : (
@@ -773,7 +796,17 @@ export default function ListeningExamPage() {
           </div>
         )}
 
-        {mode === "exam" && (
+        {mode === "exam" && results && (
+          <ListeningResults
+            score={results.score}
+            total={results.total}
+            attempted={results.attempted}
+            accuracy={results.accuracy}
+            results={results.results}
+          />
+        )}
+
+        {mode === "exam" && !results && (
           <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
             <ExamContainer
               currentQuestion={currentQuestion}
@@ -782,9 +815,18 @@ export default function ListeningExamPage() {
               timer={
                 <TimerClock
                   durationSeconds={examDurationSeconds(examFocus)}
-                  isActive={timerActive && loadingPauses === 0}
+                  isActive={timerActive && !loadingQuestion && !audioBusy}
                   resetKey={timerKey}
                   onExpire={handleTimerExpire}
+                  holdLabel={
+                    !isExamStarted
+                      ? undefined
+                      : !timerActive
+                        ? "Starts when the first question is ready"
+                        : loadingQuestion || audioBusy
+                          ? "Paused while loading"
+                          : undefined
+                  }
                 />
               }
             >
@@ -837,11 +879,6 @@ export default function ListeningExamPage() {
                       Time is up. Your exam has been submitted.
                     </div>
                   )}
-                  {submitNote && !results && (
-                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                      {submitNote}
-                    </div>
-                  )}
                   {error && (
                     <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                       <span>{error}</span>
@@ -862,10 +899,17 @@ export default function ListeningExamPage() {
                             <div key={i} className="h-10 rounded-xl bg-slate-100" />
                           ))}
                         </div>
-                        <p className="text-xs text-slate-400 flex items-center gap-1.5">
-                          <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping inline-block" />
-                          Loading question…
-                        </p>
+                        {questionSlow ? (
+                          <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600" role="alert">
+                            <span>{SLOW_MESSAGE}</span>
+                            <Button size="sm" variant="outline" onClick={() => void handleSelectQuestion(currentQuestion)}>Retry</Button>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-slate-400 flex items-center gap-1.5">
+                            <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping inline-block" />
+                            Loading question…
+                          </p>
+                        )}
                       </CardContent>
                     </Card>
                   )}
@@ -881,6 +925,7 @@ export default function ListeningExamPage() {
                       playCount={currentPlays}
                       onPlay={() => handlePlay(currentQuestion)}
                       onRequestAudio={handleRequestAudio}
+                      onBufferingChange={setAudioBusy}
                       showTranscript={Boolean(results) && showTranscript}
                       onToggleTranscript={results ? () => setShowTranscript((prev) => !prev) : undefined}
                       onTranscriptSelect={handleTranscriptSelection}
@@ -950,15 +995,6 @@ export default function ListeningExamPage() {
           </div>
         )}
 
-        {results && (
-          <ListeningResults
-            score={results.score}
-            total={results.total}
-            attempted={results.attempted}
-            accuracy={results.accuracy}
-            results={results.results}
-          />
-        )}
       </div>
     </TcfAppShell>
   );
