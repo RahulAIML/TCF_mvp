@@ -529,6 +529,7 @@ export default function ListeningQuestionCard({
                 {words.map((word, index) => {
                   const speakerName = word.replace(/:$/, "");
                   const isSpeaker = (question.speakers ?? []).includes(speakerName);
+                  const startsTurn = isSpeaker && (word.endsWith(":") || words[index + 1] === ":");
                   return (
                   <span
                     key={`word-${index}`}
@@ -541,6 +542,7 @@ export default function ListeningQuestionCard({
                           : ""
                     }
                   >
+                    {startsTurn && index > 0 ? <br /> : null}
                     {word}{" "}
                   </span>
                   );

@@ -267,10 +267,15 @@ def generate_vocabulary(
 ) -> VocabularyGenerationResponse:
     """Words at the requested level, never repeated within a session (served from a pre-generated pool)."""
     try:
+        topic = (request.topic or "").strip()
+        if not topic:
+            import variety
+            from learner import current_learner
+            topic = variety.choose("vocab_topic", variety.VOCAB_TOPICS, current_learner())
         words = take_vocabulary(
             level=request.level,
             count=request.count,
-            topic=request.topic,
+            topic=topic,
             language=request.language,
             session_id=request.session_id,
         )

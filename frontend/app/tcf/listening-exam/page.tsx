@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { SLOW_MESSAGE, useSlow } from "@/lib/slow-load";
 import TcfAppShell from "@/components/TcfAppShell";
 import ExamContainer from "@/components/ExamContainer";
 import ListeningQuestionCard from "@/components/ListeningQuestionCard";
@@ -90,6 +91,7 @@ export default function ListeningExamPage() {
   const [answers, setAnswers] = useState<Record<number, AnswerOption | "">>({});
   const [playCounts, setPlayCounts] = useState<Record<number, number>>({});
   const [loadingQuestion, setLoadingQuestion] = useState(false);
+  const questionSlow = useSlow(loadingQuestion);
   const [error, setError] = useState("");
   const [submitNote, setSubmitNote] = useState("");
   const [startedAt, setStartedAt] = useState<string | null>(null);
@@ -508,8 +510,10 @@ export default function ListeningExamPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, practiceLevel]);
 
+  const practiceLoadLock = useRef(false);
   const loadPracticeQuestion = async () => {
-    if (loadingQuestion) return;
+    if (practiceLoadLock.current) return;
+    practiceLoadLock.current = true;
     const level = practiceLevel;
     setError("");
     setLoadingQuestion(true);
@@ -527,6 +531,7 @@ export default function ListeningExamPage() {
     } catch (err) {
       setError(errorMessage(err, "Failed to load practice question."));
     } finally {
+      practiceLoadLock.current = false;
       setLoadingQuestion(false);
     }
   };
@@ -694,9 +699,12 @@ export default function ListeningExamPage() {
                       Practice one question at a time. Level: <strong>{practiceLevel}</strong>. The transcript is
                       hidden until you choose to show it.
                     </p>
-                    <Button className="mt-4" onClick={() => void loadPracticeQuestion()} disabled={loadingQuestion}>
-                      {loadingQuestion ? "Loading question…" : "Start Practice"}
+                    <Button className="mt-4" onClick={() => { practiceLoadLock.current = false; setLoadingQuestion(false); void loadPracticeQuestion(); }} disabled={loadingQuestion && !questionSlow}>
+                      {loadingQuestion && !questionSlow ? "Loading question…" : questionSlow ? "Retry" : "Start Practice"}
                     </Button>
+                    {questionSlow && (
+                      <p className="mt-3 text-sm text-slate-600" role="alert">{SLOW_MESSAGE}</p>
+                    )}
                   </CardContent>
                 </Card>
               ) : (
@@ -882,10 +890,17 @@ export default function ListeningExamPage() {
                             <div key={i} className="h-10 rounded-xl bg-slate-100" />
                           ))}
                         </div>
-                        <p className="text-xs text-slate-400 flex items-center gap-1.5">
-                          <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping inline-block" />
-                          Loading question…
-                        </p>
+                        {questionSlow ? (
+                          <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600" role="alert">
+                            <span>{SLOW_MESSAGE}</span>
+                            <Button size="sm" variant="outline" onClick={() => void handleSelectQuestion(currentQuestion)}>Retry</Button>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-slate-400 flex items-center gap-1.5">
+                            <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping inline-block" />
+                            Loading question…
+                          </p>
+                        )}
                       </CardContent>
                     </Card>
                   )}

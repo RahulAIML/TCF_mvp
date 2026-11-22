@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SLOW_MESSAGE, useSlow } from "@/lib/slow-load";
 
 import TcfAppShell from "@/components/TcfAppShell";
 import WritingStepper, { WritingStep } from "@/components/WritingStepper";
@@ -215,6 +216,7 @@ export default function WritingPage() {
   const [mode, setMode] = useState<TcfWritingMode | null>(null);
   const [isStarted, setIsStarted] = useState(false);
   const [loadingPrompts, setLoadingPrompts] = useState(false);
+  const promptsSlow = useSlow(loadingPrompts);
   const [error, setError] = useState("");
   const [prompts, setPrompts] = useState<PerTask<string>>(perTask(() => ""));
   const [stepIndex, setStepIndex] = useState<PerTask<number>>(perTask(() => 0));
@@ -779,9 +781,18 @@ export default function WritingPage() {
               )}
 
               {loadingPrompts && (
-                <div className="rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping" aria-hidden />
-                  Preparing your writing prompts…
+                <div className="rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 flex flex-wrap items-center gap-3" role="status">
+                  {promptsSlow ? (
+                    <>
+                      <span>{SLOW_MESSAGE}</span>
+                      <Button size="sm" variant="outline" onClick={() => void startMode(mode)}>Retry</Button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping" aria-hidden />
+                      Preparing your writing prompts…
+                    </>
+                  )}
                 </div>
               )}
 

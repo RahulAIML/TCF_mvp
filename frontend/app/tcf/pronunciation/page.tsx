@@ -53,12 +53,15 @@ export default function PronunciationPage() {
   const [activeText, setActiveText] = useState<string | null>(null);
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [levelFilter, setLevelFilter] = useState<string>("all");
-  const [served, setServed] = useState<{ text: string; phonetic?: string; level: string }[]>([]);
+  const [served, setServed] = useState<{ text: string; phonetic?: string; level: string }[]>(SAMPLE_WORDS_FR);
   const [promptNote, setPromptNote] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    setServed([]);
+    const fallback = (language === "fr" ? SAMPLE_WORDS_FR : SAMPLE_WORDS_EN).filter(
+      (item) => levelFilter === "all" || item.level === levelFilter,
+    );
+    setServed(fallback);
     setPromptNote("");
     const level = levelFilter === "all" ? "A2" : levelFilter;
     const controller = new AbortController();
@@ -76,7 +79,13 @@ export default function PronunciationPage() {
       })
       .then((data) => {
         if (cancelled) return;
-        setServed((data.prompts || []).map((item) => ({ text: item.text, level: item.level })));
+        const prompts = (data.prompts || []).filter((item) => item.text && item.text.trim());
+        if (!prompts.length) {
+          setServed(fallback);
+          setPromptNote("Showing saved sample words.");
+          return;
+        }
+        setServed(prompts.map((item) => ({ text: item.text, level: item.level })));
       })
       .catch(() => {
         if (cancelled) return;

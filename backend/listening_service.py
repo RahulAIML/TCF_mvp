@@ -280,8 +280,8 @@ _DEEP = {"male": "fr-FR-male-1", "female": "fr-FR-female-1"}
 _BRIGHT = {"male": "fr-FR-male-2", "female": "fr-FR-female-2"}
 
 
-def assign_voices(speakers: List[str]) -> Dict[Optional[str], str]:
-    """Distinct voices. Mixed genders get deep-male + bright-female. Same gender gets deep vs bright, never two similar voices."""
+def _classic_voices(speakers: List[str]) -> Dict[Optional[str], str]:
+    """Stable contrast used when no learner is known: deep versus bright, genders matched."""
     mapping: Dict[Optional[str], str] = {}
     genders = [_NAME_GENDER.get(name) for name in speakers]
     if len(speakers) >= 2 and genders[0] and genders[1] and genders[0] != genders[1]:
@@ -291,11 +291,33 @@ def assign_voices(speakers: List[str]) -> Dict[Optional[str], str]:
         mapping[speakers[0]] = _DEEP[genders[0]]
         mapping[speakers[1]] = _BRIGHT[genders[0]]
     else:
-        # Unknown names: still force the widest contrast (deep male, bright female).
         if speakers:
             mapping[speakers[0]] = _DEEP["male"]
         if len(speakers) > 1:
             mapping[speakers[1]] = _BRIGHT["female"]
+    return mapping
+
+
+def assign_voices(speakers: List[str], learner: Optional[str] = None) -> Dict[Optional[str], str]:
+    """Distinct voices. With a learner, the pair rotates so the next item does not reuse it."""
+    mapping: Dict[Optional[str], str] = {}
+    genders = [_NAME_GENDER.get(name) for name in speakers]
+    if learner and len(speakers) >= 2:
+        import variety
+        same = bool(genders[0] and genders[1] and genders[0] == genders[1])
+        mixed = bool(genders[0] and genders[1] and genders[0] != genders[1])
+        left, right = variety.listening_pair(True if same else False if mixed else None, learner)
+        if mixed:
+            # Keep the voice gender aligned with the name, using the two chosen voices.
+            male_voice = left if variety._voice_gender(left) == "male" else right
+            female_voice = right if variety._voice_gender(right) == "female" else left
+            for name, gender in zip(speakers[:2], genders[:2]):
+                mapping[name] = male_voice if gender == "male" else female_voice
+        else:
+            mapping[speakers[0]] = left
+            mapping[speakers[1]] = right
+    else:
+        mapping = _classic_voices(speakers)
     used = set(mapping.values())
     spare = [v for vs in VOICES.values() for v in vs if v not in used]
     for name in speakers:
@@ -527,6 +549,23 @@ def _record_voice_plan(
 _SCRIPT_LOCKS: Dict[str, threading.Lock] = {}
 _SCRIPT_LOCKS_GUARD = threading.Lock()
 _AUDIO_WARM = threading.BoundedSemaphore(1)
+# Same script for the same learner keeps the voice pair picked on the first call (prefetch, then play).
+_VOICE_PLANS: Dict[str, Dict[Optional[str], str]] = {}
+
+
+def _planned_voices(script: str, names: List[str]) -> Dict[Optional[str], str]:
+    import hashlib
+    from learner import current_learner
+    learner = current_learner()
+    digest = hashlib.sha256(f"{learner or ''}|{script.strip()}".encode("utf-8")).hexdigest()
+    hit = _VOICE_PLANS.get(digest)
+    if hit:
+        return hit
+    mapping = assign_voices(names, learner=learner)
+    _VOICE_PLANS[digest] = mapping
+    if len(_VOICE_PLANS) > 200:
+        _VOICE_PLANS.pop(next(iter(_VOICE_PLANS)))
+    return mapping
 
 
 def _script_lock(key: str) -> threading.Lock:
@@ -565,7 +604,7 @@ def _synthesize_listening_audio(
     import audio_store
     import hashlib
     names_for_key = detect_speakers(script, speakers or None) if speakers else detect_speakers(script)
-    planned = assign_voices(names_for_key) if names_for_key else {}
+    planned = _planned_voices(script, names_for_key) if names_for_key else {}
     voice_key = ",".join(
         f"{name}:{planned[name]}@{tts_service.get_voice(planned[name]).get('pitch_semitones', 0)}"
         for name in names_for_key
@@ -585,7 +624,7 @@ def _synthesize_listening_audio(
         result = tts_service.synthesize(spoken or script, voice)
         return _save(result["data"], result["extension"], script_key)
 
-    voices = assign_voices(names)
+    voices = planned or _planned_voices(script, names)
     segments = dialogue_segments(script, names)
     # Never send the "Name :" label to the synthesizer.
     labelled = [
@@ -899,7 +938,11 @@ def build_question(level: str, question_number: Optional[int] = None, with_audio
 
     lo, hi = LEVEL_RANGES[level]
     number = question_number if question_number and lo <= question_number <= hi else random.randint(lo, hi)
-    fmt, is_dialogue = random.choice(LISTENING_FORMATS[level])
+    import variety
+    from learner import current_learner
+    formats = LISTENING_FORMATS[level]
+    fmt = variety.choose(f"listening_format:{level}", [name for name, _dialogue in formats], current_learner())
+    is_dialogue = dict(formats)[fmt]
     names = _pick_names()
     last_error: Exception | None = None
     target_letter = answer_balance.next_letter(f"listening:{level}")
