@@ -118,7 +118,8 @@ def _decode_with_ffmpeg(data: bytes) -> "tuple[array.array, int] | None":
     if not ffmpeg:
         return None
     try:
-        out = subprocess.run(
+        import limits
+        out = limits.run_ffmpeg(
             [ffmpeg, "-v", "quiet", "-i", "pipe:0", "-ac", "1", "-ar", "16000", "-f", "s16le", "pipe:1"],
             input=data, capture_output=True, timeout=15, check=True,
         ).stdout

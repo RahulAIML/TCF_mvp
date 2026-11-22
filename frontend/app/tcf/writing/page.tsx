@@ -725,6 +725,11 @@ export default function WritingPage() {
         <div className="space-y-6 min-w-0">
           {!mode || !isStarted ? (
             <div className="grid gap-6 lg:grid-cols-2">
+              {error && (
+                <div className="lg:col-span-2 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700" role="alert">
+                  {error}
+                </div>
+              )}
               <Card className="border-slate-200 shadow-sm">
                 <CardContent className="p-6 space-y-4">
                   <h2 className="text-2xl font-semibold text-slate-900">Practice Mode</h2>

@@ -384,7 +384,8 @@ def _mix_turns(parts: List[bytes], pause_ms: int = 650) -> bytes:
                 pcm_path = os.path.join(tmp, f"turn{index}.pcm")
                 with open(src, "wb") as handle:
                     handle.write(data)
-                decoded = subprocess.run(
+                import limits
+                decoded = limits.run_ffmpeg(
                     ["ffmpeg", "-y", "-v", "error", "-i", src, "-f", "s16le", "-ac", "1", "-ar", "24000", pcm_path],
                     capture_output=True,
                 )
@@ -397,7 +398,8 @@ def _mix_turns(parts: List[bytes], pause_ms: int = 650) -> bytes:
             out_path = os.path.join(tmp, "out.mp3")
             with open(raw_path, "wb") as handle:
                 handle.write(gap.join(pcm_parts))
-            encoded = subprocess.run(
+            import limits
+            encoded = limits.run_ffmpeg(
                 ["ffmpeg", "-y", "-v", "error", "-f", "s16le", "-ar", "24000", "-ac", "1", "-i", raw_path,
                  "-codec:a", "libmp3lame", "-b:a", "64k", out_path],
                 capture_output=True,

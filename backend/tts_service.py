@@ -256,7 +256,8 @@ def polish_mp3(mp3: bytes) -> bytes:
             out = os.path.join(tmp, "out.mp3")
             with open(src, "wb") as handle:
                 handle.write(mp3)
-            decoded = subprocess.run(
+            import limits
+            decoded = limits.run_ffmpeg(
                 ["ffmpeg", "-v", "error", "-i", src, "-f", "s16le", "-ac", "1", "-ar", str(GEMINI_SAMPLE_RATE), pcm_path],
                 check=False, capture_output=True,
             )
@@ -267,7 +268,8 @@ def polish_mp3(mp3: bytes) -> bytes:
             cleaned, _report = audio_clean.clean_pcm(pcm, GEMINI_SAMPLE_RATE)
             with open(pcm_path, "wb") as handle:
                 handle.write(cleaned)
-            encoded = subprocess.run(
+            import limits
+            encoded = limits.run_ffmpeg(
                 ["ffmpeg", "-v", "error", "-f", "s16le", "-ar", str(GEMINI_SAMPLE_RATE), "-ac", "1",
                  "-i", pcm_path, "-codec:a", "libmp3lame", "-b:a", "64k", "-y", out],
                 check=False, capture_output=True,
@@ -335,10 +337,11 @@ def shift_pitch_pcm(pcm: bytes, semitones: float, sample_rate: int = GEMINI_SAMP
         return pcm
     af = f"asetrate={sample_rate}*{factor:.6f},aresample={sample_rate},atempo={tempo:.6f}"
     try:
-        proc = subprocess.run(
+        import limits
+        proc = limits.run_ffmpeg(
             ["ffmpeg", "-v", "error", "-f", "s16le", "-ar", str(sample_rate), "-ac", "1", "-i", "pipe:0",
              "-af", af, "-f", "s16le", "-ar", str(sample_rate), "-ac", "1", "pipe:1"],
-            input=pcm, capture_output=True, timeout=60,
+            input=pcm, capture_output=True, timeout=30,
         )
     except Exception as error:
         logger.warning("Pitch shift failed (%s); using the original audio.", error)
@@ -351,9 +354,10 @@ def shift_pitch_pcm(pcm: bytes, semitones: float, sample_rate: int = GEMINI_SAMP
 
 def _mp3_to_pcm(data: bytes, sample_rate: int = GEMINI_SAMPLE_RATE) -> bytes:
     import subprocess
-    proc = subprocess.run(
+    import limits
+    proc = limits.run_ffmpeg(
         ["ffmpeg", "-v", "error", "-i", "pipe:0", "-f", "s16le", "-ac", "1", "-ar", str(sample_rate), "pipe:1"],
-        input=data, capture_output=True, timeout=60,
+        input=data, capture_output=True, timeout=30,
     )
     if proc.returncode != 0 or not proc.stdout:
         raise RuntimeError("Could not decode MP3 for pitch shift.")

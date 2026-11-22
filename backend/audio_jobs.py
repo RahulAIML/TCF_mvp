@@ -13,9 +13,13 @@ import time
 import uuid
 from typing import Any, Callable
 
+import limits
+
 logger = logging.getLogger("tcf.audio_jobs")
 
-INLINE_WAIT_SECONDS = float(os.getenv("AUDIO_INLINE_WAIT_SECONDS", "12"))
+# Short on purpose: the request thread is one of the few that can answer /api/version.
+# The file keeps generating in the heavy pool and the client polls.
+INLINE_WAIT_SECONDS = float(os.getenv("AUDIO_INLINE_WAIT_SECONDS", "2"))
 _KEEP_SECONDS = 15 * 60
 
 _lock = threading.Lock()
@@ -59,7 +63,12 @@ def submit(work: Callable[[], dict[str, Any]]) -> str:
         finally:
             job["event"].set()
 
-    threading.Thread(target=run, name=f"audio-{job_id[:8]}", daemon=True).start()
+    try:
+        limits.submit(run)
+    except limits.Busy as error:
+        job["status"] = "failed"
+        job["error"] = str(error)
+        job["event"].set()
     return job_id
 
 

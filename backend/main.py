@@ -97,7 +97,9 @@ def _warm_in_background() -> None:
 
 @app.on_event("startup")
 async def on_startup() -> None:
-  init_db()
+  # init_db talks to Postgres. Do it off the event loop so the process can answer health checks.
+  import anyio
+  await anyio.to_thread.run_sync(init_db)
   # Do not generate questions on the startup thread. A burst of model and ffmpeg work at boot
   # has been restarting the instance (instant 502s from the proxy).
   threading.Thread(target=_warm_in_background, name="pregen-warm", daemon=True).start()
@@ -119,45 +121,13 @@ async def root() -> dict[str, str]:
 
 
 @app.get("/api/version")
-def version() -> dict[str, str]:
+async def version() -> dict[str, str]:
+  """No database and no provider. This must answer even when generation threads are all busy."""
   return {"service": "tcf-backend", "commit": _deploy_commit()}
 
 
-_HEALTH_PROBE_TTL_SECONDS = 60
-_health_probe_lock = threading.Lock()
-_health_probe: dict = {"checked_at": 0.0, "result": "untested"}
-
-
-def _gemini_probe() -> str:
-  """Live Gemini call, cached for 60 s so the public health endpoint cannot be used to burn quota."""
-  if not os.getenv("GEMINI_API_KEY"):
-    return "untested"
-  with _health_probe_lock:
-    if time.time() - _health_probe["checked_at"] < _HEALTH_PROBE_TTL_SECONDS:
-      return _health_probe["result"]
-    try:
-      from google import genai as genai_client
-      client = genai_client.Client(api_key=os.getenv("GEMINI_API_KEY"))
-      resp = client.models.generate_content(
-        model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
-        contents="Reply with just the word: ok"
-      )
-      result = "ok" if resp.text else "empty response"
-    except Exception as exc:
-      result = f"FAILED: {type(exc).__name__}"
-    _health_probe.update(checked_at=time.time(), result=result)
-    return result
-
-
 @app.get("/api/health")
-def health() -> dict:
-  """Check environment config and Gemini key validity (probe cached for 60 s)."""
-  return {
-    "GEMINI_API_KEY": "set" if os.getenv("GEMINI_API_KEY") else "MISSING",
-    "GEMINI_MODEL": os.getenv("GEMINI_MODEL", "gemini-2.0-flash (default)"),
-    "GEMINI_TTS_MODEL": os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-preview-tts (default)"),
-    "ELEVENLABS_API_KEY": "set" if os.getenv("ELEVENLABS_API_KEY") else "MISSING",
-    "gemini_chat_test": _gemini_probe(),
-    "pregen": pregen_pool.all_stats(),
-    "commit": _deploy_commit(),
-  }
+@app.get("/healthz")
+async def health() -> dict[str, str]:
+  """Liveness only. A provider call here can stall the only worker, so this handler never makes one."""
+  return {"status": "ok", "service": "tcf-backend", "commit": _deploy_commit()}
