@@ -7,6 +7,8 @@ interface TimerClockProps {
   isActive: boolean;
   resetKey: number;
   onExpire?: () => void;
+  /** Shown instead of the clock while the exam is waiting or paused. */
+  holdLabel?: string;
 }
 
 function formatTime(totalSeconds: number) {
@@ -19,7 +21,8 @@ export default function TimerClock({
   durationSeconds,
   isActive,
   resetKey,
-  onExpire
+  onExpire,
+  holdLabel
 }: TimerClockProps) {
   const [remaining, setRemaining] = useState(durationSeconds);
 
@@ -49,8 +52,8 @@ export default function TimerClock({
   return (
     <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm">
       <p className="text-xs font-medium uppercase text-slate-400">Time Remaining</p>
-      <p className={`text-base font-semibold ${remaining <= 60 ? "text-rose-600" : "text-slate-900"}`}>
-        {label}
+      <p className={`text-base font-semibold ${!holdLabel && remaining <= 60 ? "text-rose-600" : "text-slate-900"}`}>
+        {holdLabel ?? label}
       </p>
     </div>
   );

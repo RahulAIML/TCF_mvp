@@ -45,11 +45,12 @@ LEVEL_RANGES: Dict[str, Tuple[int, int]] = {
 
 LISTENING_SPECS: Dict[str, Dict[str, str]] = {
     "A1": {
-        "word_count": "10 à 20 mots (5 à 10 secondes)",
-        "words": (8, 30),
+        "word_count": "25 à 45 mots (environ 12 à 20 secondes)",
+        "words": (22, 55),
         "complexity": (
             "Débit lent. Mots très fréquents (salutations, nombres, heures, prix, lieux, objets du quotidien). "
-            "Une seule idée, phrases de 3 à 7 mots, présent uniquement."
+            "Trois ou quatre phrases courtes, ou un échange de trois répliques. Présent uniquement. "
+            "Pas un simple « bonjour / merci » de deux lignes."
         ),
         "answer_difficulty": "repérage d'un mot ou d'une information explicite unique (prix, heure, lieu, objet)",
         "distractors": "les distracteurs diffèrent de la bonne réponse par un seul élément clé (un autre nombre, une autre heure, un autre objet)",

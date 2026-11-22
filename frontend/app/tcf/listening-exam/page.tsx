@@ -80,7 +80,7 @@ interface QueuedQuestion {
 }
 
 export default function ListeningExamPage() {
-  const [mode, setMode] = useState<"practice" | "exam">("exam");
+  const [mode, setMode] = useState<"practice" | "exam">("practice");
   const [showTranscript, setShowTranscript] = useState(false);
 
   // Exam state is indexed by position in the exam (1..examSize); positions map to real TCF question numbers.
@@ -118,6 +118,7 @@ export default function ListeningExamPage() {
 
   const [pendingPracticeLevel, setPendingPracticeLevel] = useState<Level | null>(null);
   const [audioUrls, setAudioUrls] = useState<Record<string, string>>({});
+  const [audioBusy, setAudioBusy] = useState(false);
 
   const questionsRef = useRef<Record<number, ListeningQuestion>>({});
   const inFlightRef = useRef<Partial<Record<number, Promise<ListeningQuestion>>>>({});
@@ -128,6 +129,7 @@ export default function ListeningExamPage() {
   const practiceLevelRef = useRef<Level>(practiceLevel);
   const audioCacheRef = useRef<Record<string, Promise<string | undefined>>>({});
   const warmAudioRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+  const visitedRef = useRef<Set<number>>(new Set());
 
   const [examStart, examEnd] = examRange(examFocus);
   const examSize = examEnd - examStart + 1;
@@ -145,16 +147,20 @@ export default function ListeningExamPage() {
     setShowTranscript(false);
   }, [mode]);
 
-  // URL deep-link: read ?mode on mount, sync on mode change
+  // The first render is always Practice so the server and the browser match.
+  // Reading ?mode= happens after that, and the URL must not be rewritten to Practice
+  // before that read has been applied.
+  const skipModeWrite = useRef(true);
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const urlMode = params.get("mode");
-    if (urlMode === "practice" || urlMode === "exam") {
-      setMode(urlMode);
-    }
+    const urlMode = new URLSearchParams(window.location.search).get("mode");
+    if (urlMode === "practice" || urlMode === "exam") setMode(urlMode);
   }, []);
 
   useEffect(() => {
+    if (skipModeWrite.current) {
+      skipModeWrite.current = false;
+      return;
+    }
     const params = new URLSearchParams(window.location.search);
     params.set("mode", mode);
     window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
@@ -178,6 +184,10 @@ export default function ListeningExamPage() {
   useEffect(() => {
     if (mode === "exam") setShowTranscript(false);
   }, [currentQuestion, mode]);
+
+  useEffect(() => {
+    if (mode === "exam" && isExamStarted) visitedRef.current.add(currentQuestion);
+  }, [mode, isExamStarted, currentQuestion]);
 
   // ── Audio: requested as soon as a question exists, then pre-buffered by the browser ──────────────
 
@@ -287,6 +297,7 @@ export default function ListeningExamPage() {
     setQuestions({});
     setAnswers({});
     setPlayCounts({});
+    visitedRef.current = new Set([1]);
     setResults(null);
     setIsExamStarted(true);
     setCurrentQuestion(1);
@@ -345,9 +356,10 @@ export default function ListeningExamPage() {
     setTimerActive(false);
 
     try {
-      const questionList = Object.entries(questionsRef.current)
-        .map(([pos, question]) => ({ position: Number(pos), question }))
-        .sort((a, b) => a.position - b.position);
+      const questionList = [...visitedRef.current]
+        .filter((position) => questionsRef.current[position])
+        .sort((a, b) => a - b)
+        .map((position) => ({ position, question: questionsRef.current[position] }));
 
       let correct = 0;
       const detailed = questionList.map(({ position, question }) => {
@@ -394,11 +406,10 @@ export default function ListeningExamPage() {
       setError("Exam has not started.");
       return;
     }
-    const generated = Object.keys(questionsRef.current).length;
-    if (generated < examSize) {
+    const opened = visitedRef.current.size;
+    if (opened < examSize) {
       setSubmitNote(
-        `Partial submission: ${generated} of ${examSize} questions were opened. ` +
-        "Your score is based only on the questions you saw."
+        `You opened ${opened} of ${examSize} questions. Your score uses only those questions.`
       );
       setConfirmPartial(true);
       return;
@@ -768,7 +779,17 @@ export default function ListeningExamPage() {
           </div>
         )}
 
-        {mode === "exam" && (
+        {mode === "exam" && results && (
+          <ListeningResults
+            score={results.score}
+            total={results.total}
+            attempted={results.attempted}
+            accuracy={results.accuracy}
+            results={results.results}
+          />
+        )}
+
+        {mode === "exam" && !results && (
           <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
             <ExamContainer
               currentQuestion={currentQuestion}
@@ -777,9 +798,18 @@ export default function ListeningExamPage() {
               timer={
                 <TimerClock
                   durationSeconds={examDurationSeconds(examFocus)}
-                  isActive={timerActive}
+                  isActive={timerActive && !loadingQuestion && !audioBusy}
                   resetKey={timerKey}
                   onExpire={handleTimerExpire}
+                  holdLabel={
+                    !isExamStarted
+                      ? undefined
+                      : !timerActive
+                        ? "Starts when the first question is ready"
+                        : loadingQuestion || audioBusy
+                          ? "Paused while loading"
+                          : undefined
+                  }
                 />
               }
             >
@@ -832,11 +862,6 @@ export default function ListeningExamPage() {
                       Time is up. Your exam has been submitted.
                     </div>
                   )}
-                  {submitNote && !results && (
-                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                      {submitNote}
-                    </div>
-                  )}
                   {error && (
                     <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                       <span>{error}</span>
@@ -876,6 +901,7 @@ export default function ListeningExamPage() {
                       playCount={currentPlays}
                       onPlay={() => handlePlay(currentQuestion)}
                       onRequestAudio={handleRequestAudio}
+                      onBufferingChange={setAudioBusy}
                       showTranscript={Boolean(results) && showTranscript}
                       onToggleTranscript={results ? () => setShowTranscript((prev) => !prev) : undefined}
                       onTranscriptSelect={handleTranscriptSelection}
@@ -945,15 +971,6 @@ export default function ListeningExamPage() {
           </div>
         )}
 
-        {results && (
-          <ListeningResults
-            score={results.score}
-            total={results.total}
-            attempted={results.attempted}
-            accuracy={results.accuracy}
-            results={results.results}
-          />
-        )}
       </div>
     </TcfAppShell>
   );
