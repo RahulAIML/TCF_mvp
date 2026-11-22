@@ -90,38 +90,42 @@ def test_pcm_is_encoded_as_a_real_mp3():
 
 
 def test_gemini_output_is_saved_as_mp3(monkeypatch):
-  class _Inline:  # what google-genai returns
+  calls = []
+
+  class _Audio:
     data = b"\x00\x00" * 4800
 
-  class _Part:
-    inline_data = _Inline()
+  class _Interaction:
+    output_audio = _Audio()
 
-  class _Resp:
-    candidates = [type("C", (), {"content": type("K", (), {"parts": [_Part()]})()})()]
-
-  class _Models:
-    def generate_content(self, **kw):
-      return _Resp()
+  class _Interactions:
+    def create(self, **kw):
+      calls.append(kw)
+      return _Interaction()
 
   class _Client:
     def __init__(self, **kw):
-      self.models = _Models()
+      self.interactions = _Interactions()
+      self.models = None
 
   import sys, types
   fake_genai = types.ModuleType("google.genai")
   fake_genai.Client = _Client
   fake_types = types.ModuleType("google.genai.types")
-  for n in ("GenerateContentConfig", "SpeechConfig", "VoiceConfig", "PrebuiltVoiceConfig"):
-    setattr(fake_types, n, lambda **kw: kw)
+  fake_types.HttpOptions = lambda **kw: kw
   fake_genai.types = fake_types
   monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
   monkeypatch.setitem(sys.modules, "google.genai.types", fake_types)
   import google
   monkeypatch.setattr(google, "genai", fake_genai, raising=False)
   monkeypatch.setattr(tts, "_GEMINI_API_KEY", "x")
+  monkeypatch.setattr(tts, "_gemini_tts_client", None)
 
   result = tts.synthesize("Hola", "es-ES-female-1")
   assert result["extension"] == "mp3" and result["mime_type"] == "audio/mpeg" and result["provider"] == "gemini"
+  assert result["provider_voice"] == "Gacrux"
+  assert calls[0]["generation_config"]["speech_config"] == [{"voice": "Gacrux"}]
+  assert calls[0]["response_format"] == {"type": "audio"}
 
 
 def test_save_audio_long_names_are_unguessable_and_short_ones_keep_the_old_shape():

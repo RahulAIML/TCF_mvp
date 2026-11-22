@@ -569,7 +569,8 @@ def _synthesize_listening_audio(
     )
     # Hash stays 64 characters (the column width). v5 drops files made with the short pause,
     # which could not be split back into turns, and files made before the pitch offset.
-    script_key = hashlib.sha256(f"v5|{voice_key}|650|{script.strip()}".encode("utf-8")).hexdigest()
+    # v6 drops files made when Gemini ignored the voice. The stored value is always a 64-char hash.
+    script_key = hashlib.sha256(f"v6|{voice_key}|650|{script.strip()}".encode("utf-8")).hexdigest()
     cached = audio_store.find_by_script(script_key)
     if cached and audio_store.available(cached):
         _record_voice_plan(report, script, names_for_key, planned, provider="cached")

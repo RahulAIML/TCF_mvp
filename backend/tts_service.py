@@ -441,7 +441,7 @@ def _get_gemini_tts_client():
             kwargs = {"api_key": _GEMINI_API_KEY}
             http_options_cls = getattr(types, "HttpOptions", None)
             if http_options_cls is not None:
-                kwargs["http_options"] = http_options_cls(timeout=_GEMINI_TTS_TIMEOUT_MS)
+                kwargs["http_options"] = http_options_cls(timeout=_GEMINI_TTS_TIMEOUT_MS, api_version="v1beta")
             _gemini_tts_client = (genai_client, genai_client.Client(**kwargs))
         return _gemini_tts_client[1]
 
@@ -456,30 +456,26 @@ def _pcm_from_audio_bytes(raw: bytes) -> bytes:
 
 
 def _interaction_pcm(voice: VoiceConfig, text: str) -> bytes:
-    """Gemini 3.8 TTS only applies a voice when it is set in speech_config, not the old voice_name field.
+    """Gemini 3.8 TTS speaks with the voice named in speech_config.
 
-    The previous generate_content call left every turn on the model's default voice, so two speakers
-    sounded like one person even though the voice ids differed.
+    google-genai 1.x sent the retired Interactions schema, which the API rejects. The SDK 2+
+    request puts the voice in generation_config.speech_config and asks for audio via response_format.
+    There is no fallback that omits the voice: a failure is raised so another real voice can be used.
     """
-    import base64
     client = _get_gemini_tts_client()
     provider_voice = voice["gemini_voice_name"]
     style = voice.get("gemini_style") or ""
+    content: dict = {"type": "text", "text": text}
+    if style:
+        content["annotations"] = [{"type": "speech_metadata", "style": style}]
     logger.info(
         "Gemini TTS turn: registry=%s provider_voice=%s style=%s chars=%d",
         voice["id"], provider_voice, style, len(text),
     )
     interaction = client.interactions.create(
         model=_GEMINI_TTS_MODEL,
-        input=[{
-            "type": "user_input",
-            "content": [{
-                "type": "text",
-                "text": text,
-                "annotations": [{"type": "speech_metadata", "style": style}] if style else [],
-            }],
-        }],
-        response_format={"type": "audio", "mime_type": "audio/l16", "sample_rate": GEMINI_SAMPLE_RATE},
+        input=[{"type": "user_input", "content": [content]}],
+        response_format={"type": "audio"},
         generation_config={"speech_config": [{"voice": provider_voice}]},
     )
     return _pcm_from_audio_bytes(_audio_bytes_from_interaction(interaction, provider_voice))
@@ -505,38 +501,17 @@ def _audio_bytes_from_interaction(interaction, provider_voice: str) -> bytes:
     raise RuntimeError(f"Gemini TTS returned no audio for voice {provider_voice}")
 
 
-def _legacy_gemini_pcm(voice: VoiceConfig, text: str) -> bytes:
-    from google.genai import types
-    client = _get_gemini_tts_client()
-    logger.warning(
-        "Gemini TTS legacy path (voice may be ignored): registry=%s provider_voice=%s",
-        voice["id"], voice["gemini_voice_name"],
-    )
-    response = client.models.generate_content(
-        model=_GEMINI_TTS_MODEL,
-        contents=text,
-        config=types.GenerateContentConfig(
-            response_modalities=["AUDIO"],
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name=voice["gemini_voice_name"]
-                    )
-                )
-            ),
-        ),
-    )
-    return _pcm_from_audio_bytes(response.candidates[0].content.parts[0].inline_data.data)
-
-
 def _generate_via_gemini(text: str, voice: VoiceConfig, polish: bool = True) -> AudioResult:
     if not _GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY not configured.")
     try:
         pcm_bytes = _interaction_pcm(voice, text)
-    except Exception as modern_error:
-        logger.warning("Gemini interactions TTS failed (%s); trying the legacy call.", modern_error)
-        pcm_bytes = _legacy_gemini_pcm(voice, text)
+    except Exception as error:
+        logger.exception(
+            "Gemini TTS failed for registry=%s provider_voice=%s: %s",
+            voice["id"], voice["gemini_voice_name"], error,
+        )
+        raise
     pcm_bytes = _clean_edges(pcm_bytes, voice["id"])
     pcm_bytes = shift_pitch_pcm(pcm_bytes, float(voice.get("pitch_semitones") or 0))
     mp3 = _pcm_to_mp3(pcm_bytes)

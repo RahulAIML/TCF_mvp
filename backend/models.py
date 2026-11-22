@@ -294,7 +294,10 @@ class StoredAudio(Base):
   __tablename__ = "stored_audio"
 
   name = Column(String(200), primary_key=True)
-  script_key = Column(String(64), nullable=True, index=True)
+  # TEXT, not VARCHAR(64). A descriptive key is longer than 64 characters; Postgres
+  # rejects the insert and the whole audio request used to fail. The store also hashes
+  # long keys, and startup widens any column that was created as VARCHAR(64).
+  script_key = Column(Text, nullable=True, index=True)
   mime = Column(String(40), nullable=False, default="audio/mpeg")
   content = Column(LargeBinary, nullable=False)
   created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

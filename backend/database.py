@@ -19,6 +19,13 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+def script_key_migration_sql(dialect: str) -> str | None:
+  """Widen stored_audio.script_key. Postgres enforces VARCHAR(64); SQLite does not."""
+  if dialect == "postgresql":
+    return "ALTER TABLE stored_audio ALTER COLUMN script_key TYPE TEXT"
+  return None
+
+
 def get_db() -> Generator:
   db = SessionLocal()
   try:
@@ -38,7 +45,9 @@ def init_db() -> None:
   Base.metadata.create_all(bind=engine)
 
   # Add columns and tables that were introduced after the initial database creation.
+  # create_all does not widen an existing column, so Postgres keeps VARCHAR(64) until this ALTER.
   migrations = [
+    script_key_migration_sql(engine.dialect.name),
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR(100)",
     """
     CREATE TABLE IF NOT EXISTS tts_audio_history (
@@ -54,6 +63,8 @@ def init_db() -> None:
   ]
   with engine.begin() as conn:
     for sql in migrations:
+      if not sql:
+        continue
       try:
         conn.execute(text(sql))
       except Exception:
