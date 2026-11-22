@@ -167,6 +167,9 @@ async def on_startup() -> None:
   # Do not generate questions on the startup thread. A burst of model and ffmpeg work at boot
   # has been restarting the instance (instant 502s from the proxy).
   threading.Thread(target=_warm_in_background, name="pregen-warm", daemon=True).start()
+  # Stored questions made before the quality guards existed are marked used so nobody is served them.
+  import pool_retire
+  pool_retire.run_in_background()
 
 
 @app.get("/api/pregen/stats")
