@@ -111,14 +111,34 @@ def _voice_gender(voice_id: str) -> str:
     return parts[2] if len(parts) >= 3 else ""
 
 
-def listening_pair(speakers_same_gender: bool | None, learner: str | None = None) -> tuple[str, str]:
-    """A voice pair this learner did not just hear. Same-gender dialogues stay on a same-gender pair."""
-    if speakers_same_gender is True:
-        options = [pair for pair in LISTENING_PAIRS if _voice_gender(pair[0]) == _voice_gender(pair[1])]
+def _adult_pairs(speakers_same_gender: bool | None, gender: str | None) -> list[tuple[str, str]]:
+    """Pairs drawn from the French adult pool, so a dialogue is not stuck on the first four voices."""
+    import tts_service
+    voices = tts_service.list_active_voices("fr")
+    males = [v["id"] for v in voices if v["gender"] == "male"]
+    females = [v["id"] for v in voices if v["gender"] == "female"]
+    if speakers_same_gender is True and gender == "female":
+        pool_a, pool_b = females, females
+    elif speakers_same_gender is True:
+        pool_a, pool_b = males, males
     elif speakers_same_gender is False:
-        options = [pair for pair in LISTENING_PAIRS if _voice_gender(pair[0]) != _voice_gender(pair[1])]
+        return [(m, f) for m in males for f in females] or list(LISTENING_PAIRS)
     else:
-        options = list(LISTENING_PAIRS)
+        return [(m, f) for m in males for f in females] or list(LISTENING_PAIRS)
+    return [(a, b) for i, a in enumerate(pool_a) for b in pool_b[i + 1 :]] or list(LISTENING_PAIRS)
+
+
+def listening_pair(
+    speakers_same_gender: bool | None,
+    learner: str | None = None,
+    gender: str | None = None,
+) -> tuple[str, str]:
+    """A voice pair this learner did not just hear. Same-gender dialogues stay on a same-gender pair."""
+    options = _adult_pairs(speakers_same_gender, gender)
+    if speakers_same_gender is True:
+        options = [pair for pair in options if _voice_gender(pair[0]) == _voice_gender(pair[1])] or options
+    elif speakers_same_gender is False:
+        options = [pair for pair in options if _voice_gender(pair[0]) != _voice_gender(pair[1])] or options
     labels = [pair_key(*pair) for pair in options]
     picked = choose("listening_pair", labels, learner)
     for pair in options:

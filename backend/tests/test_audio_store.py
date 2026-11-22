@@ -8,6 +8,22 @@ import audio_store
 import database
 
 
+def test_pitched_audio_is_deleted_once_and_user_tables_stay(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUDIO_STORAGE_PATH", str(tmp_path))
+    from sqlalchemy import text
+    audio_store.ensure_schema()
+    db = database.SessionLocal()
+    db.execute(text("DELETE FROM content_registry WHERE module = 'system'"))
+    db.commit()
+    db.close()
+    audio_store.save("old.mp3", b"ID3old-pitched", "audio/mpeg", "old-key")
+    audio_store.forget_pitched_audio()
+    assert audio_store.load("old.mp3") is None
+    audio_store.save("fresh.mp3", b"ID3fresh", "audio/mpeg", "fresh-key")
+    audio_store.forget_pitched_audio()
+    assert audio_store.load("fresh.mp3") is not None
+
+
 def test_postgres_migration_widens_script_key():
     sql = database.script_key_migration_sql("postgresql")
     assert sql == "ALTER TABLE stored_audio ALTER COLUMN script_key TYPE TEXT"

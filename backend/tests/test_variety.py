@@ -43,7 +43,6 @@ def test_every_module_has_more_than_one_format():
 def test_consecutive_dialogues_do_not_reuse_the_voice_pair():
     learner = "guest:variety-voices"
     pairs = []
-    pitches = []
     for _ in range(12):
         voices = assign_voices(["Marc", "Sophie"], learner=learner)
         assert voices["Marc"] != voices["Sophie"]
@@ -52,12 +51,13 @@ def test_consecutive_dialogues_do_not_reuse_the_voice_pair():
         import tts_service
         left = tts_service.get_voice(voices["Marc"])
         right = tts_service.get_voice(voices["Sophie"])
-        assert left["pitch_semitones"] != right["pitch_semitones"] or left["elevenlabs_voice_id"] != right["elevenlabs_voice_id"]
+        assert left["pitch_semitones"] == right["pitch_semitones"] == 0
+        assert left["gemini_voice_name"] != right["gemini_voice_name"]
         pairs.append(variety.pair_key(voices["Marc"], voices["Sophie"]))
-        pitches.append((left["pitch_semitones"], right["pitch_semitones"]))
     assert all(pairs[i] != pairs[i + 1] for i in range(len(pairs) - 1))
     assert len(set(pairs)) >= 4
-    assert len({pitch for pair in pitches for pitch in pair}) >= 2
+    used = {voice for pair in pairs for voice in pair.split("|")}
+    assert len(used) >= 6
 
 
 def test_same_gender_dialogue_keeps_two_different_voices():
@@ -73,6 +73,5 @@ def test_without_a_learner_the_classic_contrast_stays():
     import tts_service
     first = tts_service.get_voice(voices["François"])
     second = tts_service.get_voice(voices["Paul"])
-    assert {first["gemini_voice_name"], second["gemini_voice_name"]} == {"Charon", "Puck"}
-    assert first["pitch_semitones"] == -4
-    assert second["pitch_semitones"] == 4
+    assert {first["gemini_voice_name"], second["gemini_voice_name"]} == {"Charon", "Orus"}
+    assert first["pitch_semitones"] == second["pitch_semitones"] == 0
