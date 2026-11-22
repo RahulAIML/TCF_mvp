@@ -68,6 +68,7 @@ def post_generate_listening_audio(
       audio_url=done["audio_url"], voices=done.get("voices") or [], job_id=job_id, status="ready",
     )
   if done and done.get("status") == "failed":
+    logger.error("Listening audio failed: %s", done.get("error"))
     raise HTTPException(status_code=503, detail="The audio could not be generated right now. Please try again.")
   return GenerateListeningAudioResponse(job_id=job_id, status="pending")
 

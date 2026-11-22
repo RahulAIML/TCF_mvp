@@ -53,9 +53,9 @@ def submit(work: Callable[[], dict[str, Any]]) -> str:
             if not job["audio_url"]:
                 job["error"] = "empty audio"
         except Exception as error:
-            logger.warning("Listening audio job %s failed: %s", job_id, error)
+            logger.exception("Listening audio job %s failed: %s", job_id, error)
             job["status"] = "failed"
-            job["error"] = type(error).__name__
+            job["error"] = f"{type(error).__name__}: {error}"
         finally:
             job["event"].set()
 
@@ -73,6 +73,7 @@ def snapshot(job_id: str) -> dict[str, Any] | None:
             "status": job["status"],
             "audio_url": job["audio_url"],
             "voices": list(job["voices"]),
+            "error": job.get("error"),
         }
 
 

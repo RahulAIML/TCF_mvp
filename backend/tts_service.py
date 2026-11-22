@@ -219,8 +219,9 @@ def elevenlabs_post(url: str, headers: dict, payload: dict, timeout) -> requests
         except (requests.Timeout, requests.ConnectionError) as error:
             raise RuntimeError(f"ElevenLabs timeout: {error}") from error
         if resp.status_code == 429 or resp.status_code >= 500:
-            raise RuntimeError(f"ElevenLabs HTTP {resp.status_code}")
-        resp.raise_for_status()
+            raise RuntimeError(f"ElevenLabs HTTP {resp.status_code}: {resp.text[:240]}")
+        if resp.status_code >= 400:
+            raise RuntimeError(f"ElevenLabs HTTP {resp.status_code}: {resp.text[:240]}")
         return resp
 
     return resilience.retry(once, attempts=6, base=0.5, cap=8.0)
@@ -364,11 +365,15 @@ def _with_pitch(data: bytes, extension: str, voice: VoiceConfig) -> tuple[bytes,
     if abs(semitones) < 0.05:
         return data, extension
     logger.info("Pitch shift: registry=%s semitones=%s", voice["id"], semitones)
-    if extension == "mp3":
-        pcm = shift_pitch_pcm(_mp3_to_pcm(data), semitones)
-        mp3 = _pcm_to_mp3(pcm)
-        return (mp3, "mp3") if mp3 else (data, extension)
-    return shift_pitch_pcm(data, semitones), extension
+    try:
+        if extension == "mp3":
+            pcm = shift_pitch_pcm(_mp3_to_pcm(data), semitones)
+            mp3 = _pcm_to_mp3(pcm)
+            return (mp3, "mp3") if mp3 else (data, extension)
+        return shift_pitch_pcm(data, semitones), extension
+    except Exception as error:
+        logger.warning("Pitch shift skipped for %s (%s); keeping the original audio.", voice["id"], error)
+        return data, extension
 
 
 def _generate_via_elevenlabs(text: str, voice: VoiceConfig, polish: bool = True) -> AudioResult:
