@@ -19,8 +19,13 @@ from collections import OrderedDict, deque
 from typing import Any, Deque, Dict, List, Optional, Set, Tuple
 
 import answer_balance
+import content_bank
 import pregen_pool
+import content_dedupe as dedupe
+import quality_guard
+import topic_bank
 import tcf_ai_service as ai
+from learner import active_learner
 from schemas import PassageQuizResponse, PassageResponse, TcfExamQuestion
 
 logger = logging.getLogger(__name__)
@@ -357,8 +362,8 @@ def build_reading_prompt(level: str, question_number: int, target_letter: str, a
     spec = READING_SPECS[level]
     low, high = spec["words"]
     token = ai._freshness_token()
-    place, context = ai._scenario_from_seed(token)
-    domain = random.choice(ai.DOMAINS)
+    place, context = topic_bank.place(), random.choice(ai.SCENARIO_CONTEXTS)
+    domain = topic_bank.domain()
     document = random.choice(spec["documents"])
     avoid = "; ".join(avoid_topics) if avoid_topics else "aucun"
     return f"""Tu es concepteur d'épreuves officielles du TCF Canada (compréhension écrite).
@@ -384,6 +389,7 @@ Règles :
 - Les quatre options ont une longueur et une forme comparables ; ne commence pas les options par une lettre.
 - L'explication (en français, 1 à 3 phrases) justifie la bonne réponse à partir du texte et ne mentionne
   JAMAIS de lettre (A, B, C ou D).
+- {quality_guard.stance_and_length_rules() if level in ("C1", "C2") else "Si la scène est au Canada, les prix sont en dollars, jamais en francs."}
 - "topic" : le sujet du document en 3 à 6 mots.
 
 Sortie : JSON valide uniquement, sans Markdown :
@@ -426,6 +432,11 @@ def produce_reading_question(level: str, question_number: Optional[int] = None) 
             })
             if not _registry.check_and_register(f"q:{level}", text, str(payload.get("topic", ""))):
                 raise ValueError("duplicate or near-duplicate text")
+            problems = quality_guard.item_problems(
+                level, question.options, question.correct_answer, question.explanation, text, question.question,
+            )
+            if problems:
+                raise ValueError("; ".join(problems))
             return question
         except Exception as error:  # noqa: BLE001 - every failure triggers a fresh attempt
             last_error = error
@@ -433,11 +444,19 @@ def produce_reading_question(level: str, question_number: Optional[int] = None) 
     raise RuntimeError(f"Reading question generation failed for {level}: {last_error}") from last_error
 
 
-_READING_POOL: "pregen_pool.PregenPool[TcfExamQuestion]" = pregen_pool.PregenPool(
+def _reading_ids(question: TcfExamQuestion) -> tuple[str, str | None]:
+    return dedupe.fingerprint(question.text), dedupe.simhash_of(question.text)
+
+
+_READING_POOL = content_bank.DurablePool(
     "reading_question",
     lambda level: produce_reading_question(str(level)),
     target=5,
     warm_keys=tuple(READING_LEVELS),
+    module="reading",
+    fingerprint_of=lambda item: dedupe.fingerprint(item.text),
+    simhash_of=lambda item: dedupe.simhash_of(item.text),
+    load=lambda payload: TcfExamQuestion.model_validate(payload),
 )
 
 
@@ -450,27 +469,52 @@ def get_reading_question(
     Practice (target_level given): always a new item at that level.
     Exam (no target_level): level follows the question number; stable per (session, question number).
     """
+    learner = active_learner(session_id)
     level = normalize_level(target_level) or level_for_question(question_number)
     exam_key = f"{session_id}:{question_number}" if session_id and not target_level else None
     if exam_key:
         cached = _exam_cache_get(exam_key)
+        if cached is None and session_id:
+            stored = content_bank.load_exam(learner, session_id, "reading", str(question_number))
+            if stored:
+                cached = TcfExamQuestion.model_validate(stored)
+                _exam_cache_put(exam_key, cached)
         if cached is not None:
             return cached
 
     question: Optional[TcfExamQuestion] = None
-    for _ in range(3):
+    for _ in range(6):
         candidate = _READING_POOL.take(level)
         if candidate is None:
             break
-        if not _served.seen(session_id, _item_fp(candidate)):
+        fp, sim = _reading_ids(candidate)
+        if _served.seen(session_id, _item_fp(candidate)) or content_bank.is_seen(learner, "reading", fp, sim):
+            continue
+        question = candidate
+        break
+    if question is None:
+        last_error: Exception | None = None
+        for _ in range(3):
+            try:
+                candidate = produce_reading_question(level, question_number)
+            except Exception as error:
+                last_error = error
+                continue
+            fp, sim = _reading_ids(candidate)
+            if content_bank.is_seen(learner, "reading", fp, sim):
+                last_error = RuntimeError("reading item already served to this learner")
+                continue
             question = candidate
             break
-    if question is None:
-        question = produce_reading_question(level, question_number)
+        if question is None:
+            raise RuntimeError(f"No new reading question for {level}: {last_error}")
 
+    fp, sim = _reading_ids(question)
     _served.add(session_id, _item_fp(question))
-    if exam_key:
+    content_bank.remember(learner, "reading", fp, sim, label=question.text[:180])
+    if exam_key and session_id:
         _exam_cache_put(exam_key, question)
+        content_bank.save_exam(learner, session_id, "reading", str(question_number), fp, question.model_dump())
     return question
 
 
@@ -486,8 +530,8 @@ def build_quiz_prompt(level: str, letters: List[str], avoid_topics: List[str]) -
     spec = PASSAGE_SPECS[level]
     low, high = spec["words"]
     token = ai._freshness_token()
-    place, context = ai._scenario_from_seed(token)
-    domain = random.choice(ai.DOMAINS)
+    place, context = topic_bank.place(), random.choice(ai.SCENARIO_CONTEXTS)
+    domain = topic_bank.domain()
     avoid = "; ".join(avoid_topics) if avoid_topics else "aucun"
     letter_plan = ", ".join(f"Q{i + 1}={letter}" for i, letter in enumerate(letters))
     return f"""Tu es concepteur d'épreuves du TCF Canada (compréhension écrite).
@@ -542,6 +586,15 @@ def produce_passage_quiz(level: str) -> PassageQuizResponse:
             quiz = PassageQuizResponse.model_validate({"title": title, "passage": passage, "questions": questions})
             if not _registry.check_and_register(f"quiz:{level}", passage, str(payload.get("topic", ""))):
                 raise ValueError("duplicate or near-duplicate passage")
+            for block in questions:
+                problems = quality_guard.item_problems(
+                    level, block["options"], block["correct_answer"], block["explanation"], passage,
+                )
+                if problems:
+                    raise ValueError("; ".join(problems))
+            scene_problems = quality_guard.any_text_problems([passage, title])
+            if scene_problems:
+                raise ValueError("; ".join(scene_problems))
             return quiz
         except Exception as error:  # noqa: BLE001
             last_error = error
@@ -549,27 +602,51 @@ def produce_passage_quiz(level: str) -> PassageQuizResponse:
     raise RuntimeError(f"Passage quiz generation failed for {level}: {last_error}") from last_error
 
 
-_QUIZ_POOL: "pregen_pool.PregenPool[PassageQuizResponse]" = pregen_pool.PregenPool(
+_QUIZ_POOL = content_bank.DurablePool(
     "passage_quiz",
     lambda level: produce_passage_quiz(str(level)),
     target=2,
     warm_keys=("B1", "B2"),
+    module="passage_quiz",
+    fingerprint_of=lambda item: dedupe.fingerprint(item.passage),
+    simhash_of=lambda item: dedupe.simhash_of(item.passage),
+    load=lambda payload: PassageQuizResponse.model_validate(payload),
 )
 
 
 def get_passage_quiz(level: Optional[str] = None, session_id: Optional[str] = None) -> PassageQuizResponse:
+    learner = active_learner(session_id)
     chosen = normalize_level(level, PASSAGE_LEVELS) or "B1"
     quiz: Optional[PassageQuizResponse] = None
-    for _ in range(3):
+    for _ in range(4):
         candidate = _QUIZ_POOL.take(chosen)
         if candidate is None:
             break
-        if not _served.seen(session_id, ai._fingerprint(candidate.passage)):
+        fp = dedupe.fingerprint(candidate.passage)
+        sim = dedupe.simhash_of(candidate.passage)
+        if _served.seen(session_id, ai._fingerprint(candidate.passage)) or content_bank.is_seen(learner, "passage_quiz", fp, sim):
+            continue
+        quiz = candidate
+        break
+    if quiz is None:
+        last_error: Exception | None = None
+        for _ in range(3):
+            try:
+                candidate = produce_passage_quiz(chosen)
+            except Exception as error:
+                last_error = error
+                continue
+            fp = dedupe.fingerprint(candidate.passage)
+            if content_bank.is_seen(learner, "passage_quiz", fp, dedupe.simhash_of(candidate.passage)):
+                last_error = RuntimeError("passage already served")
+                continue
             quiz = candidate
             break
-    if quiz is None:
-        quiz = produce_passage_quiz(chosen)
+        if quiz is None:
+            raise RuntimeError(f"No new passage quiz: {last_error}")
+    fp = dedupe.fingerprint(quiz.passage)
     _served.add(session_id, ai._fingerprint(quiz.passage))
+    content_bank.remember(learner, "passage_quiz", fp, dedupe.simhash_of(quiz.passage), label=quiz.title[:180])
     return quiz
 
 
@@ -581,11 +658,12 @@ def generate_passage(level: Optional[str] = None) -> PassageResponse:
     last_error: Exception | None = None
     for _ in range(MAX_ATTEMPTS):
         token = ai._freshness_token()
-        place, context = ai._scenario_from_seed(token)
+        place, context = topic_bank.place(), random.choice(ai.SCENARIO_CONTEXTS)
         avoid = "; ".join(_registry.recent_topics(f"passage:{chosen}")) or "aucun"
         prompt = f"""Rédige un texte de lecture TCF Canada de niveau {chosen} du CECR.
 Longueur : {low} à {high} mots. Langue : {spec['language']}
-Domaine : {random.choice(ai.DOMAINS)} ; cadre : {place}, {context}.
+Domaine : {topic_bank.domain()} ; cadre : {place}, {context}.
+Si la scène est au Canada, les prix sont en dollars, jamais en francs.
 Sujets à ne pas reprendre : {avoid}. Jeton : {token} (ne pas l'inclure).
 Le texte commence par une phrase complète. Sortie JSON uniquement :
 {{"title": "...", "passage": "...", "topic": "..."}}
@@ -600,6 +678,14 @@ Le texte commence par une phrase complète. Sortie JSON uniquement :
                 raise ValueError("empty passage")
             if not _registry.check_and_register(f"passage:{chosen}", result.passage, str(payload.get("topic", ""))):
                 raise ValueError("duplicate passage")
+            scene = quality_guard.any_text_problems([result.passage, result.title])
+            if scene:
+                raise ValueError("; ".join(scene))
+            learner = active_learner()
+            fp = dedupe.fingerprint(result.passage)
+            if content_bank.is_seen(learner, "passage", fp, dedupe.simhash_of(result.passage)):
+                raise ValueError("passage already served to this learner")
+            content_bank.remember(learner, "passage", fp, dedupe.simhash_of(result.passage), label=result.title[:180])
             return result
         except Exception as error:  # noqa: BLE001
             last_error = error

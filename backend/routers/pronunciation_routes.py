@@ -31,7 +31,9 @@ from schemas import (
     VocabularyGenerationResponse,
     VocabularyWordItem,
 )
+from pronunciation_prompts import remember_prompt, take_prompts
 from speaking_pregen import take_vocabulary
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger("pronunciation_routes")
 
@@ -224,6 +226,35 @@ def get_pronunciation_guide(word: str, language: str = "fr") -> Response:
         raise HTTPException(status_code=503, detail="L'audio de prononciation est momentanément indisponible.")
     audio_bytes, media_type = result
     return Response(content=audio_bytes, media_type=media_type, headers={"Cache-Control": "public, max-age=3600"})
+
+
+class PronunciationPromptRequest(BaseModel):
+    level: str = "A2"
+    language: str = "fr"
+    count: int = 8
+
+
+class PronunciationSeenRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=240)
+    language: str = "fr"
+
+
+@router.post("/prompts")
+def post_pronunciation_prompts(body: PronunciationPromptRequest) -> dict:
+    """New read-aloud phrases for this learner. The offline list is used when generation is unavailable, and it is tracked too."""
+    try:
+        prompts = take_prompts(body.language, body.level, body.count)
+    except Exception as error:
+        logger.error("Pronunciation prompts failed: %s", error)
+        raise HTTPException(status_code=503, detail="No new pronunciation phrases are available right now. Please try again.") from error
+    return {"prompts": prompts}
+
+
+@router.post("/prompts/seen")
+def post_pronunciation_prompt_seen(body: PronunciationSeenRequest) -> dict:
+    """Remember a phrase the browser showed from its own fallback list."""
+    remember_prompt(body.text, body.language)
+    return {"status": "recorded"}
 
 
 # ── VOCABULARY ROUTES ────────────────────────────────────────────────────────

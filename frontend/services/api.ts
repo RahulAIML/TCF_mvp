@@ -44,6 +44,7 @@ import type { AuthResponse, LoginRequest, SignupRequest } from "@/types/user";
 import type { TtsGenerateRequest, TtsJobResponse, TtsHistoryItem, TtsLanguage, TtsVoice } from "@/types/tts";
 import type { McpCreatedToken, McpInfo, McpTokenRecord } from "@/types/mcp";
 import { getAuthToken } from "@/lib/auth";
+import { getLearnerId } from "@/lib/learner-id";
 import { emitAuthFailure } from "@/lib/auth-events";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -87,7 +88,11 @@ export function friendlyNetworkError(err: unknown): Error {
 
 export function authHeaders(): HeadersInit {
   const token = getAuthToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  const learner = getLearnerId();
+  return {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(learner ? { "X-Learner-Id": learner } : {}),
+  };
 }
 
 export async function signupUser(payload: SignupRequest): Promise<AuthResponse> {

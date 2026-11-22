@@ -23,7 +23,11 @@ from dotenv import load_dotenv
 from google import genai as genai_client
 from google.genai import types
 
-from pregen_pool import PregenPool
+import content_bank
+import content_dedupe as dedupe
+import topic_bank
+from content_bank import DurablePool
+from learner import active_learner
 from schemas import TcfExamQuestion, ListeningQuestionResponse
 
 load_dotenv()
@@ -238,7 +242,7 @@ def _generate_tts_audio(script: str, question_number: int, session_id: str | Non
                 },
                 timeout=(5, 40),
             )
-            data = response.content
+            data = tts_service.polish_mp3(response.content)
         except Exception as error:
             logger.warning("ElevenLabs TTS failed: %s. Falling back to Gemini TTS.", error)
             result = tts_service.synthesize_gemini(script, "fr-FR-female-1")
@@ -468,11 +472,19 @@ def _split_feedback(value: Any) -> list[str]:
 
 def _pick_writing_themes(count: int = 3) -> list[str]:
     with _writing_lock:
-        fresh = [t for t in WRITING_THEMES if t not in _writing_recent_themes]
-        if len(fresh) < count:
-            fresh = list(WRITING_THEMES)
-        chosen = random.sample(fresh, count)
+        recent = list(_writing_recent_themes)
+    try:
+        user_recent = content_bank.recent_labels(active_learner(), "writing_theme", 40)
+    except Exception:
+        user_recent = []
+    chosen = topic_bank.pick_writing_themes(count, list(recent) + user_recent)
+    with _writing_lock:
         _writing_recent_themes.extend(chosen)
+    from learner import current_learner
+    who = current_learner()
+    if who:
+        for theme in chosen:
+            content_bank.remember(who, "writing_theme", dedupe.fingerprint(theme), None, label=theme[:240])
     return chosen
 
 
@@ -496,6 +508,7 @@ Format officiel à respecter :
 Règles :
 - Consignes naturelles et réalistes, vouvoiement du candidat, nombre de mots indiqué dans chaque consigne.
 - Pas de jargon, situations de la vie courante, professionnelle ou citoyenne.
+- Au Canada, les prix sont en dollars canadiens, jamais en francs.
 - Sortie : JSON valide uniquement, sans Markdown :
 {{
   "task1_prompt": "...",
@@ -532,11 +545,18 @@ def _generate_writing_task_set() -> dict[str, str]:
     raise RuntimeError(f"Writing task generation failed: {last_error}") from last_error
 
 
-_writing_task_pool: PregenPool[dict[str, str]] = PregenPool(
+def _writing_fingerprint(tasks: dict[str, str]) -> str:
+    return dedupe.fingerprint("\n".join(tasks.get(key, "") for key in ("task1_prompt", "task2_prompt", "task3_prompt")))
+
+
+_writing_task_pool = DurablePool(
     "writing_tasks",
     lambda _key: _generate_writing_task_set(),
     target=int(os.getenv("PREGEN_WRITING_TARGET", "5")),
     warm_keys=("all",),
+    module="writing",
+    fingerprint_of=_writing_fingerprint,
+    simhash_of=lambda tasks: dedupe.simhash_of("\n".join(tasks.values())),
 )
 
 
@@ -545,21 +565,56 @@ def _writing_session_served(session_id: str | None) -> deque[str]:
         return _writing_served_by_session.setdefault(session_id or "__anon__", deque(maxlen=200))
 
 
+def _remember_writing(learner: str, tasks: dict[str, str]) -> None:
+    content_bank.remember(learner, "writing", _writing_fingerprint(tasks), dedupe.simhash_of("\n".join(tasks.values())))
+    for value in tasks.values():
+        if _substantial(value):
+            content_bank.remember(learner, "writing_task", dedupe.fingerprint(value), dedupe.simhash_of(value), label=value[:240])
+
+
+def _substantial(text: str) -> bool:
+    return len(dedupe.normalize_text(text).split()) >= 12
+
+
+def _writing_blocked(learner: str, served: deque[str], tasks: dict[str, str]) -> bool:
+    key = _writing_fingerprint(tasks)
+    if key in served or content_bank.is_seen(learner, "writing", key, dedupe.simhash_of("\n".join(tasks.values()))):
+        return True
+    for value in tasks.values():
+        if _substantial(value) and content_bank.is_seen(
+            learner, "writing_task", dedupe.fingerprint(value), dedupe.simhash_of(value)
+        ):
+            return True
+    return False
+
+
 def generate_tcf_writing_tasks(session_id: str | None = None) -> dict[str, str]:
-    """Serve a ready task set from the pre-generated pool (instant); generate one live only if the pool is empty."""
+    """Serve a ready task set from the durable pool, or generate one. A learner never receives a prompt twice."""
+    learner = active_learner(session_id)
     served = _writing_session_served(session_id)
     for _ in range(5):
         tasks = _writing_task_pool.take("all")
         if tasks is None:
             break
-        key = _fingerprint("".join(tasks.values()))
-        if key in served:
+        if _writing_blocked(learner, served, tasks):
             continue
-        served.append(key)
+        served.append(_writing_fingerprint(tasks))
+        _remember_writing(learner, tasks)
         return tasks
-    tasks = _generate_writing_task_set()
-    served.append(_fingerprint("".join(tasks.values())))
-    return tasks
+    last_error: Exception | None = None
+    for _ in range(3):
+        try:
+            tasks = _generate_writing_task_set()
+        except Exception as error:
+            last_error = error
+            continue
+        if _writing_blocked(learner, served, tasks):
+            last_error = RuntimeError("writing prompts already served")
+            continue
+        served.append(_writing_fingerprint(tasks))
+        _remember_writing(learner, tasks)
+        return tasks
+    raise RuntimeError(f"No new writing tasks: {last_error}")
 
 
 def assist_tcf_writing(
@@ -694,6 +749,8 @@ Règles d'honnêteté :
 - Moins de {spec['min_words']} mots : STRUCTURE au maximum 5.
 - Chaque point à améliorer cite un extrait précis du texte et propose une correction.
 - Le NIVEAU global est cohérent avec la moyenne des quatre notes.
+- Stabilité : applique le barème de façon mécanique. Deux copies identiques reçoivent exactement les mêmes quatre notes.
+  N'arrondis pas à la hausse et ne change pas une note d'une correction à l'autre.
 
 Réponds EXACTEMENT dans ce format, en français, sans Markdown, sans LaTeX, sans rien avant ni après :
 NIVEAU: <A1|A2|B1|B2|C1|C2>
@@ -722,8 +779,48 @@ def _level_from_average(average: float) -> str:
     return "C2"
 
 
+def _evaluation_from_json(payload: dict) -> dict[str, Any] | None:
+    scores = {
+        "structure": payload.get("structure"),
+        "grammar": payload.get("grammaire", payload.get("grammar")),
+        "coherence": payload.get("coherence"),
+        "vocab": payload.get("vocabulaire", payload.get("vocab")),
+    }
+    parsed_scores: dict[str, int | None] = {}
+    for key, value in scores.items():
+        if value is None or value == "":
+            parsed_scores[key] = None
+            continue
+        try:
+            parsed_scores[key] = max(0, min(10, round(float(value))))
+        except (TypeError, ValueError):
+            parsed_scores[key] = None
+    level = str(payload.get("niveau") or payload.get("level") or "").strip().upper()
+    if level not in _LEVELS:
+        level = None
+    feedback = payload.get("feedback") or payload.get("points") or []
+    return {
+        "level": level,
+        "scores": parsed_scores,
+        "feedback": _split_feedback(feedback),
+        "improved_version": str(payload.get("improved_version") or payload.get("version_amelioree") or "").strip(),
+        "complete": level is not None and all(v is not None for v in parsed_scores.values()),
+    }
+
+
 def parse_writing_evaluation_text(text: str) -> dict[str, Any]:
-    """Parse the streamed line format. Missing parts are None/empty; `complete` tells if all scores were found."""
+    """Parse the streamed line format, or a JSON object. `complete` tells if all scores were found."""
+    stripped = (text or "").strip()
+    if stripped.startswith("{"):
+        import json
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            parsed = _evaluation_from_json(payload)
+            if parsed and parsed["complete"]:
+                return parsed
     level: str | None = None
     scores: dict[str, int | None] = {key: None for key in _EVAL_SCORE_KEYS}
     feedback_lines: list[str] = []
@@ -805,12 +902,21 @@ def _apply_writing_guards(result: dict[str, Any], task_type: str, response_text:
     }
 
 
+_WRITING_EVAL_TEMPERATURE = float(os.getenv("WRITING_EVAL_TEMPERATURE", "0"))
+
+
 def stream_writing_evaluation_tokens(task_type: str, prompt_text: str, response_text: str):
     if not response_text.strip():
         return
+    cached = content_bank.get_writing_eval(content_bank.writing_eval_key(task_type, prompt_text, response_text))
+    if cached and cached.get("raw_text"):
+        yield cached["raw_text"]
+        return
     _ensure_api_key()
     for chunk in _gemini_generate(
-        _writing_eval_prompt(task_type, prompt_text, response_text), stream=True, temperature=0.2
+        _writing_eval_prompt(task_type, prompt_text, response_text),
+        stream=True,
+        temperature=_WRITING_EVAL_TEMPERATURE,
     ):
         token = getattr(chunk, "text", None)
         if token:
@@ -820,17 +926,31 @@ def stream_writing_evaluation_tokens(task_type: str, prompt_text: str, response_
 def finalize_writing_evaluation(
     streamed_text: str, task_type: str, prompt_text: str, response_text: str
 ) -> dict[str, object]:
-    """Normalize the streamed evaluation; one non-streamed retry if the stream was malformed."""
+    """Normalize the streamed evaluation; one non-streamed retry if the stream was malformed.
+
+    The first successful score for a given task, prompt and response is stored and reused, so a
+    second correction of the same text cannot drift from B1 to B2.
+    """
     if not response_text.strip():
         return _empty_writing_evaluation()
+    cache_key = content_bank.writing_eval_key(task_type, prompt_text, response_text)
+    cached = content_bank.get_writing_eval(cache_key)
+    if cached and cached.get("result"):
+        return cached["result"]
     parsed = parse_writing_evaluation_text(streamed_text)
+    raw_text = streamed_text
     if not parsed["complete"]:
-        retry_text = _generate_text(_writing_eval_prompt(task_type, prompt_text, response_text), temperature=0.1)
-        retry = parse_writing_evaluation_text(retry_text)
+        raw_text = _generate_text(
+            _writing_eval_prompt(task_type, prompt_text, response_text),
+            temperature=_WRITING_EVAL_TEMPERATURE,
+        )
+        retry = parse_writing_evaluation_text(raw_text)
         if not retry["complete"]:
             raise RuntimeError("Writing evaluation could not be parsed.")
         parsed = retry
-    return _apply_writing_guards(parsed, task_type, response_text)
+    result = _apply_writing_guards(parsed, task_type, response_text)
+    content_bank.put_writing_eval(cache_key, raw_text, result)
+    return result
 
 
 def evaluate_tcf_writing_task(
@@ -944,8 +1064,7 @@ def _build_speaking_prompt(
     examiner_name: str | None = None,
 ) -> tuple[str, str, str]:
     """Return (prompt, chosen_topic, examiner_name) for the examiner's next turn."""
-    topics = _SPEAKING_TOPIC_LISTS.get(task_type, TCF_OPINION_TOPICS)
-    chosen_topic = session_topic if session_topic else random.choice(topics)
+    chosen_topic = session_topic if session_topic else topic_bank.speaking_topic(task_type)
     task_brief = _SPEAKING_TASK_BRIEFS.get(task_type, _SPEAKING_TASK_BRIEFS["opinion"])
     name, title = _resolve_examiner(examiner_name, session_id)
 
@@ -1094,7 +1213,7 @@ def generate_tcf_speaking_opening(task_type: str, avoid_topics: list[str] | None
     """
     name, title = random.choice(TCF_EXAMINER_NAMES)
     brief = _SPEAKING_TASK_BRIEFS.get(task_type, _SPEAKING_TASK_BRIEFS["opinion"])
-    examples = "\n".join(f"- {t}" for t in _SPEAKING_TOPIC_LISTS.get(task_type, TCF_OPINION_TOPICS)[:4])
+    examples = "\n".join(f"- {topic_bank.speaking_topic(task_type)}" for _ in range(4))
     avoid = ""
     if avoid_topics:
         avoid = "\nSujets déjà utilisés (en choisir un TOUT AUTRE) :\n" + "\n".join(f"- {t[:140]}" for t in avoid_topics[-25:])

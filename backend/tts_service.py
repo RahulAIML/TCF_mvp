@@ -221,6 +221,52 @@ class AudioResult(TypedDict):
     provider: str
 
 
+def polish_mp3(mp3: bytes) -> bytes:
+    """
+    Decode an MP3, strip a full-scale noise burst at either end, fade, and encode again.
+    The burst is in the provider's audio (and sometimes survives the first encode). Re-encoding
+    after the PCM cleaner is what makes the file the learner hears end in silence.
+    If ffmpeg is missing or fails, the original bytes are returned.
+    """
+    if not mp3 or not audio_clean.enabled():
+        return mp3
+    import shutil
+    import subprocess
+    import tempfile
+    if shutil.which("ffmpeg") is None:
+        return mp3
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "in.mp3")
+            pcm_path = os.path.join(tmp, "in.pcm")
+            out = os.path.join(tmp, "out.mp3")
+            with open(src, "wb") as handle:
+                handle.write(mp3)
+            decoded = subprocess.run(
+                ["ffmpeg", "-v", "error", "-i", src, "-f", "s16le", "-ac", "1", "-ar", str(GEMINI_SAMPLE_RATE), pcm_path],
+                check=False, capture_output=True,
+            )
+            if decoded.returncode != 0 or not os.path.exists(pcm_path):
+                return mp3
+            with open(pcm_path, "rb") as handle:
+                pcm = handle.read()
+            cleaned, _report = audio_clean.clean_pcm(pcm, GEMINI_SAMPLE_RATE)
+            with open(pcm_path, "wb") as handle:
+                handle.write(cleaned)
+            encoded = subprocess.run(
+                ["ffmpeg", "-v", "error", "-f", "s16le", "-ar", str(GEMINI_SAMPLE_RATE), "-ac", "1",
+                 "-i", pcm_path, "-codec:a", "libmp3lame", "-b:a", "64k", "-y", out],
+                check=False, capture_output=True,
+            )
+            if encoded.returncode != 0 or not os.path.exists(out):
+                return mp3
+            with open(out, "rb") as handle:
+                return handle.read() or mp3
+    except Exception as exc:
+        logger.warning("MP3 polish skipped: %s", exc)
+        return mp3
+
+
 def _pcm_to_mp3(pcm_bytes: bytes) -> bytes | None:
     """Encode Gemini's raw PCM as MP3 so every file the platform produces is a real MP3. None if no encoder."""
     try:
@@ -276,7 +322,7 @@ def _generate_via_elevenlabs(text: str, voice: VoiceConfig) -> AudioResult:
     headers = {"xi-api-key": _ELEVENLABS_API_KEY, "Content-Type": "application/json"}
     logger.info("ElevenLabs TTS: voice=%s chars=%s", voice["id"], len(text))
     resp = elevenlabs_post(url, headers, payload, timeout=(5, 120))
-    return {"data": resp.content, "extension": "mp3", "mime_type": "audio/mpeg", "provider": "elevenlabs"}
+    return {"data": polish_mp3(resp.content), "extension": "mp3", "mime_type": "audio/mpeg", "provider": "elevenlabs"}
 
 
 def _clean_edges(pcm_bytes: bytes, voice_id: str) -> bytes:
@@ -347,7 +393,7 @@ def _generate_via_gemini(text: str, voice: VoiceConfig) -> AudioResult:
     pcm_bytes = _clean_edges(pcm_bytes, voice["id"])
     mp3 = _pcm_to_mp3(pcm_bytes)
     if mp3:
-        return {"data": mp3, "extension": "mp3", "mime_type": "audio/mpeg", "provider": "gemini"}
+        return {"data": polish_mp3(mp3), "extension": "mp3", "mime_type": "audio/mpeg", "provider": "gemini"}
     return {"data": _pcm_to_wav(pcm_bytes), "extension": "wav", "mime_type": "audio/wav", "provider": "gemini"}
 
 

@@ -275,6 +275,18 @@ def test_a_burst_with_codec_ramps_at_the_edges_is_still_found():
   assert edge_noise_ms(y, "head") == 0 and edge_noise_ms(y, "tail") == 0
 
 
+def test_a_full_scale_tail_burst_is_gone_from_the_mp3():
+  """The burst seen in production is ~0.06-0.18 s at the rails, after the last word."""
+  speech = sentence()
+  burst = np.clip(rng.standard_normal(int(RATE * 0.12)) * 22000, -32767, 32767)
+  dirty = pcm(np.concatenate([speech, burst]))
+  cleaned, report = ac.clean_pcm(dirty, RATE)
+  assert report.burst_tail_ms >= 60
+  assert edge_noise_ms(samples(cleaned), "tail") == 0
+  mp3 = tts.polish_mp3(tts._pcm_to_mp3(dirty))
+  assert edge_noise_ms(_decode(mp3), "tail") == 0
+
+
 def test_the_padding_around_the_speech_is_true_silence_never_leftover_noise():
   """A burst glued to the last word must not leak back in through the padding."""
   noisy = np.concatenate([noise_burst(90), sentence()[RATE // 4:], noise_burst(200)])   # no gap on either side

@@ -64,21 +64,7 @@ async function streamEvents(
   }
 }
 
-/** A stable anonymous id for this browser, so practice content is never repeated for the same learner. */
-export function getLearnerId(): string {
-  const key = "tcf_learner_id";
-  try {
-    const existing = window.localStorage.getItem(key);
-    if (existing) return existing;
-    const created = typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    window.localStorage.setItem(key, created);
-    return created;
-  } catch {
-    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  }
-}
+export { getLearnerId } from "@/lib/learner-id";
 
 function recordingFile(blob: Blob): { blob: Blob; name: string } {
   return { blob, name: `recording.${extensionForMime(blob.type)}` };

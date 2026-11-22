@@ -22,6 +22,7 @@ from routers.tcf_writing_routes import router as tcf_writing_router
 from routers.pronunciation_routes import router as pronunciation_router
 from routers.ai_chat_routes import router as ai_chat_router
 from routers.tts_routes import router as tts_router
+from learner import LearnerMiddleware
 from routers.mcp_routes import McpOpenCorsMiddleware, router as mcp_router
 
 load_dotenv()
@@ -56,6 +57,7 @@ app.add_middleware(
 )
 # Added after CORSMiddleware, so it runs first: /mcp is open to any origin (bearer token only, no cookies).
 app.add_middleware(McpOpenCorsMiddleware)
+app.add_middleware(LearnerMiddleware)
 
 app.include_router(dictionary_router)
 app.include_router(passage_router)

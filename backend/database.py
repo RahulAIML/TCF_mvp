@@ -8,7 +8,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./tcf.db")
 
 connect_args = {}
 if DATABASE_URL.startswith("sqlite"):
-  connect_args = {"check_same_thread": False}
+  connect_args = {"check_same_thread": False, "timeout": 30}
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -27,7 +27,8 @@ def init_db() -> None:
   from models import (
     ExamAttempt, ListeningAttempt, User, WritingSession, TcfWritingSession,
     SpeakingSession, UserAudioResponse, QuestionValidation, LearnSession,
-    PronunciationEvaluation, VocabularyWord, TtsAudioHistory, McpToken
+    PronunciationEvaluation, VocabularyWord, TtsAudioHistory, McpToken,
+    SeenItem, ContentRegistry, PregenItem, ExamSlot, WritingEvalCache,
   )
 
   Base.metadata.create_all(bind=engine)

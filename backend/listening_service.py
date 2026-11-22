@@ -20,8 +20,12 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Deque, Dict, List, Optional, Set, Tuple
 
 import answer_balance
-import pregen_pool
+import content_bank
+import content_dedupe as dedupe
+import quality_guard
+import topic_bank
 import tts_service
+from learner import active_learner
 from schemas import ListeningQuestionResponse
 
 logger = logging.getLogger("tcf.listening")
@@ -145,15 +149,12 @@ LISTENING_FORMATS: Dict[str, List[Tuple[str, bool]]] = {
     ],
 }
 
-DOMAINS = [
+DOMAINS = list(dict.fromkeys([
     "vie quotidienne", "logement", "transports", "travail", "santé", "éducation", "consommation",
     "loisirs et culture", "environnement", "alimentation", "technologie", "vie de quartier",
     "administration et services publics", "voyage", "sport", "immigration et intégration",
-]
-PLACES = [
-    "Montréal", "Québec", "Ottawa", "Gatineau", "Sherbrooke", "Moncton", "Winnipeg", "Toronto",
-    "Vancouver", "Trois-Rivières", "Lyon", "Bordeaux", "Lille", "Bruxelles", "Genève",
-]
+] + [d.split(",")[0] for d in topic_bank.DOMAINS]))
+PLACES = list(dict.fromkeys(topic_bank.PLACES))
 
 MALE_NAMES = [
     "Marc", "Thomas", "Pierre", "Julien", "Antoine", "Nicolas", "Luc", "Paul", "Simon", "David",
@@ -542,6 +543,7 @@ EXPLICATION (en français, 1 à 3 phrases) :
 - Justifie la bonne réponse en citant ou reformulant le passage du document qui la prouve.
 - {"Désigne les personnes par leur prénom." if is_dialogue else "Désigne la personne qui parle comme « le locuteur » ou « la locutrice » (c'est un monologue)."}
 - Ne mentionne JAMAIS de lettre (A, B, C, D) ni la position d'une option.
+- {quality_guard.stance_and_length_rules() if level in ("C1", "C2") else "Si la scène est au Canada, les prix sont en dollars, jamais en francs."}
 
 Réponds en JSON valide uniquement :
 {{
@@ -657,6 +659,13 @@ def build_question(level: str, question_number: Optional[int] = None, with_audio
             logger.info("Listening %s attempt rejected: %s", level, reason)
             continue
         HISTORY.record(fp, item["script"], level, item["theme"])
+        problems = quality_guard.item_problems(
+            level, item["options"], item["correct_answer"], item["explanation"], item["script"], item["question"],
+        )
+        if problems:
+            last_error = InvalidQuestion("; ".join(problems))
+            logger.info("Listening %s attempt rejected: %s", level, last_error)
+            continue
         audio_url = None
         if with_audio:
             try:
@@ -678,26 +687,56 @@ def build_question(level: str, question_number: Optional[int] = None, with_audio
     raise RuntimeError(f"Listening question generation failed for {level}: {last_error}")
 
 
-POOL: "pregen_pool.PregenPool[ListeningQuestionResponse]" = pregen_pool.PregenPool(
+def _listening_fp(item: ListeningQuestionResponse) -> tuple[str, Optional[str]]:
+    return item.question_id, dedupe.simhash_of(item.script)
+
+
+POOL: content_bank.DurablePool = content_bank.DurablePool(
     "listening",
     producer=lambda level: build_question(str(level), with_audio=True),
     target=POOL_TARGET,
     warm_keys=LEVELS,
+    module="listening",
+    fingerprint_of=lambda item: item.question_id,
+    simhash_of=lambda item: dedupe.simhash_of(item.script),
+    load=lambda payload: ListeningQuestionResponse.model_validate(payload),
 )
+
+
+def _listening_blocked(learner: str, session_id: Optional[str], item: ListeningQuestionResponse) -> bool:
+    fp, sim = _listening_fp(item)
+    return HISTORY.seen_by(session_id, item.question_id) or content_bank.is_seen(learner, "listening", fp, sim)
+
+
+def _listening_remember(learner: str, session_id: Optional[str], item: ListeningQuestionResponse) -> None:
+    fp, sim = _listening_fp(item)
+    HISTORY.mark_served(session_id, item.question_id)
+    content_bank.remember(learner, "listening", fp, sim, label=item.question[:180])
 
 
 def get_question(question_number: int, session_id: Optional[str] = None, defer_audio: bool = True,
                  target_level: Optional[str] = None) -> ListeningQuestionResponse:
-    """Serve a question: from the ready pool when possible (instant), otherwise generated now. Never repeats."""
+    """Serve a question from the durable pool when one is ready, otherwise generate one. Never repeats for this learner."""
+    learner = active_learner(session_id)
     level = target_level.upper() if target_level and target_level.upper() in LISTENING_SPECS else level_for_question(question_number)
-    for _ in range(POOL_TARGET + 1):
+    for _ in range(max(POOL_TARGET, 1) + 3):
         item = POOL.take(level)
         if item is None:
             break
-        if HISTORY.seen_by(session_id, item.question_id):
+        if _listening_blocked(learner, session_id, item):
             continue
-        HISTORY.mark_served(session_id, item.question_id)
+        _listening_remember(learner, session_id, item)
         return item
-    item = build_question(level, question_number, with_audio=not defer_audio)
-    HISTORY.mark_served(session_id, item.question_id)
-    return item
+    last_error: Exception | None = None
+    for _ in range(3):
+        try:
+            item = build_question(level, question_number, with_audio=not defer_audio)
+        except Exception as error:
+            last_error = error
+            continue
+        if _listening_blocked(learner, session_id, item):
+            last_error = RuntimeError("listening item already served to this learner")
+            continue
+        _listening_remember(learner, session_id, item)
+        return item
+    raise RuntimeError(f"No new listening question for {level}: {last_error}")
