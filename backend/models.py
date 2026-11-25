@@ -209,6 +209,21 @@ class TtsAudioHistory(Base):
   created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class TtsJob(Base):
+  """A text-to-speech job. Kept in the database so a server restart cannot make a running job vanish."""
+  __tablename__ = "tts_jobs"
+
+  id = Column(String(40), primary_key=True)
+  status = Column(String(12), nullable=False, default="pending")
+  audio_url = Column(String(500), nullable=True)
+  error = Column(String(300), nullable=True)
+  total_parts = Column(Integer, nullable=False, default=1)
+  done_parts = Column(Integer, nullable=False, default=0)
+  chars = Column(Integer, nullable=False, default=0)
+  created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+  updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class McpToken(Base):
   """
   A token an AI agent (Grok) uses to call the MCP server (/mcp) as this user. The token itself is shown once

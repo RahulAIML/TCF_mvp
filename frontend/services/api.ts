@@ -41,7 +41,7 @@ import type {
   TcfWritingSubmitResponse
 } from "@/types/tcf-writing";
 import type { AuthResponse, LoginRequest, SignupRequest } from "@/types/user";
-import type { TtsGenerateRequest, TtsJobResponse, TtsHistoryItem, TtsLanguage, TtsVoice } from "@/types/tts";
+import type { TtsGenerateRequest, TtsJobResponse, TtsJobStart, TtsHistoryItem, TtsLanguage, TtsVoice } from "@/types/tts";
 import type { McpCreatedToken, McpInfo, McpTokenRecord } from "@/types/mcp";
 import { getAuthToken } from "@/lib/auth";
 import { getLearnerId } from "@/lib/learner-id";
@@ -455,14 +455,14 @@ export async function deleteTtsHistoryItem(id: number): Promise<void> {
 
 export async function startTtsJob(
   payload: TtsGenerateRequest
-): Promise<{ job_id: string; status: string }> {
+): Promise<TtsJobStart> {
   const res = await apiFetch(`${API_BASE_URL}/api/tts/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
     cache: "no-store"
   });
-  return parseResponse<{ job_id: string; status: string }>(res);
+  return parseResponse<TtsJobStart>(res);
 }
 
 export async function pollTtsJob(jobId: string): Promise<TtsJobResponse> {
@@ -470,6 +470,10 @@ export async function pollTtsJob(jobId: string): Promise<TtsJobResponse> {
     headers: { ...authHeaders() },
     cache: "no-store"
   });
+  if (res.status === 404) {
+    // The server restarted and forgot this job: report it so the page can start it again.
+    return { status: "error", audio_url: null, error: "interrupted" };
+  }
   return parseResponse<TtsJobResponse>(res);
 }
 

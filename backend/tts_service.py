@@ -8,11 +8,12 @@ Languages: French, English, Spanish, Portuguese (see LANGUAGES / VOICE_REGISTRY)
 import io
 import logging
 import os
+import re
 import threading
 import time
 import uuid
 import wave
-from typing import TypedDict
+from typing import Callable, Optional, TypedDict
 
 import requests
 from dotenv import load_dotenv
@@ -36,7 +37,11 @@ _GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts")
 
 AUDIO_STORAGE_PATH = os.getenv("AUDIO_STORAGE_PATH", "data/audio")
 
-MAX_TEXT_LENGTH = 10000  # characters — caps ElevenLabs cost per request
+MAX_TEXT_LENGTH = 10000  # characters accepted by the single-request helpers (used by other tools)
+MAX_LONG_TEXT_LENGTH = 40000  # characters accepted by the text-to-speech page; voiced in pieces and joined
+# One provider call never carries more than this many characters. A single call for thousands of
+# characters is minutes of audio and exhausts the small server.
+TTS_CHUNK_CHARS = max(400, int(os.getenv("TTS_CHUNK_CHARS", "1800")))
 
 # ---------------------------------------------------------------------------
 # Languages and voice registry
@@ -565,6 +570,8 @@ def synthesize(text: str, voice_id: str) -> AudioResult:
         raise ValueError(f"Text exceeds maximum length of {MAX_TEXT_LENGTH} characters.")
 
     voice = get_voice(voice_id)
+    if len(text) > TTS_CHUNK_CHARS:
+        return synthesize_long(text, voice_id)
 
     try:
         return _generate_via_gemini(text, voice)
@@ -576,11 +583,124 @@ def synthesize(text: str, voice_id: str) -> AudioResult:
             raise RuntimeError(f"Audio generation failed (Gemini: {gemini_err}; ElevenLabs: {el_err})") from el_err
 
 
-def generate_tts_audio(text: str, voice_id: str) -> str:
+_CUT_MARKS = ((". ", 1), ("! ", 1), ("? ", 1), ("… ", 1), ("; ", 1), (": ", 1), (", ", 1), (" ", 0))
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+
+
+def _cut_point(sentence: str, limit: int) -> int:
+    """Index to cut an over-long sentence: the latest punctuation or space inside the limit."""
+    best = -1
+    for mark, keep in _CUT_MARKS:
+        i = sentence.rfind(mark, 0, limit)
+        if i != -1:
+            best = max(best, i + keep)
+    return best if best >= limit * 0.4 else limit
+
+
+def split_for_speech(text: str, limit: int | None = None) -> list[str]:
+    """Cut text into pieces of at most `limit` characters, at sentence ends where possible."""
+    limit = limit or TTS_CHUNK_CHARS
+    text = text.strip()
+    if len(text) <= limit:
+        return [text] if text else []
+    chunks: list[str] = []
+    current = ""
+
+    def flush() -> None:
+        nonlocal current
+        if current.strip():
+            chunks.append(current.strip())
+        current = ""
+
+    for paragraph in re.split(r"\n\s*\n", text):
+        for sentence in _SENTENCE_END.split(paragraph.strip()):
+            sentence = sentence.strip()
+            while len(sentence) > limit:
+                cut = _cut_point(sentence, limit)
+                flush()
+                chunks.append(sentence[:cut].strip())
+                sentence = sentence[cut:].strip()
+            if not sentence:
+                continue
+            if current and len(current) + 1 + len(sentence) > limit:
+                flush()
+            current = f"{current} {sentence}".strip()
+    flush()
+    return chunks
+
+
+def _synthesize_piece(text: str, voice: VoiceConfig, provider: str) -> AudioResult:
+    """One piece with one provider, tried twice: a single provider blip must not fail a long recording."""
+    last: Exception | None = None
+    for attempt in range(2):
+        try:
+            if provider == "gemini":
+                return _generate_via_gemini(text, voice)
+            return _generate_via_elevenlabs(text, voice)
+        except Exception as error:  # noqa: BLE001 - retried, then reported by the caller
+            last = error
+            logger.warning("%s piece failed (attempt %d): %s", provider, attempt + 1, error)
+            time.sleep(1.5)
+    raise RuntimeError(f"{provider} failed: {last}")
+
+
+def synthesize_long(
+    text: str,
+    voice_id: str,
+    on_progress: Optional[Callable[[int, int], None]] = None,
+) -> AudioResult:
+    """
+    Voice text of any allowed length one piece at a time, then join the MP3 pieces. Memory stays small because a
+    piece is encoded and kept as MP3 before the next one starts. The whole recording uses one provider (pieces from
+    two providers differ in sample rate), so if a piece cannot be made, the recording restarts on the other one.
+    """
+    text = text.strip()
+    if not text:
+        raise ValueError("Text must not be empty.")
+    if len(text) > MAX_LONG_TEXT_LENGTH:
+        raise ValueError(f"Text exceeds maximum length of {MAX_LONG_TEXT_LENGTH} characters.")
+    voice = get_voice(voice_id)
+    pieces = split_for_speech(text)
+    from listening_service import join_mp3
+
+    providers = ["gemini"] + (["elevenlabs"] if _ELEVENLABS_API_KEY else [])
+    failure: Exception | None = None
+    for provider in providers:
+        parts: list[bytes] = []
+        try:
+            for index, piece in enumerate(pieces):
+                if on_progress:
+                    on_progress(index, len(pieces))
+                result = _synthesize_piece(piece, voice, provider)
+                if result["extension"] != "mp3":
+                    raise RuntimeError("The MP3 encoder is not available for long audio.")
+                parts.append(result["data"])
+            if on_progress:
+                on_progress(len(pieces), len(pieces))
+            return {
+                "data": join_mp3(parts),
+                "extension": "mp3",
+                "mime_type": "audio/mpeg",
+                "provider": provider,
+                "provider_voice": voice["gemini_voice_name"] if provider == "gemini" else voice["elevenlabs_voice_id"],
+            }
+        except Exception as error:  # noqa: BLE001 - try the next provider from the start
+            failure = error
+            logger.warning("Long audio with %s failed after %d of %d pieces: %s", provider, len(parts), len(pieces), error)
+            del parts
+    raise RuntimeError(f"Audio generation failed: {failure}")
+
+
+def generate_tts_audio(text: str, voice_id: str, on_progress: Optional[Callable[[int, int], None]] = None) -> str:
     """
     Generate TTS audio for `text` using the requested voice.
     Returns the audio URL (e.g. /audio/tts_fr-FR-male-1_abc123.mp3).
     Raises ValueError for bad input, RuntimeError for provider failure.
     """
-    result = synthesize(text, voice_id)
+    if len(text.strip()) > TTS_CHUNK_CHARS:
+        result = synthesize_long(text, voice_id, on_progress)
+    else:
+        result = synthesize(text, voice_id)
+        if on_progress:
+            on_progress(1, 1)
     return save_audio(result, voice_id)[1]

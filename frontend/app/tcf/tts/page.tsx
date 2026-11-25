@@ -19,7 +19,7 @@ import type { PronunciationEvalResult } from "@/types/tcf-speaking";
 import type { TtsHistoryItem, TtsVoice } from "@/types/tts";
 import { getAuthToken } from "@/lib/auth";
 import { SLOW_MESSAGE, useSlow } from "@/lib/slow-load";
-import { createRecorder, extensionForMime, microphoneErrorMessage, recordedMime } from "@/lib/audio-mime";
+import { createRecorder, microphoneErrorMessage, recordedMime } from "@/lib/audio-mime";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const FALLBACK_VOICES: TtsVoice[] = [
@@ -28,8 +28,8 @@ const FALLBACK_VOICES: TtsVoice[] = [
   { id: "fr-FR-female-1", label: "French Female", language: "fr", gender: "female" },
   { id: "fr-FR-female-2", label: "French Female 2", language: "fr", gender: "female" },
 ];
-const MAX_CHARS = 10000;
-const MAX_WORDS = 1500;
+const MAX_CHARS = 40000;
+const EVAL_MAX_CHARS = 2000;
 const MAX_RECORD_SECS = 60;
 const HISTORY_KEY = "tts_audio_history_guest";
 const MAX_HISTORY = 20;
@@ -43,7 +43,7 @@ const LANGUAGES = [
 ] as const;
 type LanguageCode = (typeof LANGUAGES)[number]["code"];
 
-const wordCount = (s: string) => s.trim() === "" ? 0 : s.trim().split(/\s+/).length;
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const fmt = (s: number) =>
   `${Math.floor(s / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
 
@@ -101,68 +101,25 @@ function HighlightedText({ text, mistakes }: { text: string; mistakes: string[] 
   );
 }
 
-function formatClock(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds <= 0) return "";
-  const whole = Math.round(seconds);
-  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
-}
-
 function HistoryAudioPlayer({ src }: { src: string }) {
   const [expired, setExpired] = useState(false);
-  const [playable, setPlayable] = useState<string | null>(null);
-  const [duration, setDuration] = useState("");
-  useEffect(() => {
-    let cancelled = false;
-    let objectUrl = "";
-    setExpired(false);
-    setPlayable(null);
-    setDuration("");
-    fetch(src)
-      .then((res) => {
-        if (!res.ok) throw new Error(String(res.status));
-        return res.blob();
-      })
-      .then(async (blob) => {
-        if (cancelled) return;
-        objectUrl = URL.createObjectURL(blob);
-        setPlayable(objectUrl);
-        const ctx = new AudioContext();
-        try {
-          const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
-          if (!cancelled) setDuration(formatClock(decoded.duration));
-        } catch {
-          // The player still works; the native control will show the length once it can.
-        } finally {
-          void ctx.close();
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setExpired(true);
-      });
-    return () => {
-      cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [src]);
+  // preload="none": the page must not download every saved recording just by opening.
   if (expired) {
     return (
       <p className="text-xs text-slate-400 italic flex items-center gap-1 py-1">
         <AlertCircle className="h-3 w-3 text-amber-400 shrink-0" />
-        File expired — audio is stored temporarily on the server
+        This recording is no longer available. Generate it again.
       </p>
     );
   }
   return (
-    <div className="flex items-center gap-2">
-      <audio
-        src={playable ?? undefined}
-        controls
-        preload="metadata"
-        className="w-full"
-        onError={() => setExpired(true)}
-      />
-      {duration && <span className="shrink-0 text-xs tabular-nums text-slate-500">{duration}</span>}
-    </div>
+    <audio
+      src={src}
+      controls
+      preload="none"
+      className="w-full"
+      onError={() => setExpired(true)}
+    />
   );
 }
 
@@ -195,6 +152,9 @@ export default function TtsPage() {
   const [generating, setGenerating] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [ttsError, setTtsError] = useState("");
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [notice, setNotice] = useState("");
+  const [trimmed, setTrimmed] = useState(false);
 
   // Inventory
   const [history, setHistory] = useState<TtsHistoryItem[]>([]);
@@ -299,73 +259,99 @@ export default function TtsPage() {
         setTranscriptError(result.message ?? "Aucune parole détectée. Parlez plus près du micro et réessayez.");
         return;
       }
-      setText(result.transcript);
+      setText(result.transcript.slice(0, MAX_CHARS));
     } catch (e: unknown) {
       setTranscriptError(e instanceof Error ? e.message : "Transcription failed");
     } finally { setTranscribing(false); }
   }, [recordBlob, language]);
 
   // --- TTS generation (polling-based to bypass proxy timeout) ---
+  // Waits for a job. A server restart (network errors, or a job the server no longer knows) is not a failure:
+  // keep asking, and if the job was lost, start it again once.
+  const waitForJob = useCallback(async (jobId: string, totalParts: number) => {
+    const started = Date.now();
+    const maxTotalMs = Math.max(180_000, totalParts * 45_000);
+    const maxOutageMs = 180_000;
+    let outageSince: number | null = null;
+    for (;;) {
+      await sleep(2000);
+      if (Date.now() - started > maxTotalMs) throw new Error("Generation is taking too long. Try a shorter text.");
+      try {
+        const job = await pollTtsJob(jobId);
+        outageSince = null;
+        setNotice("");
+        if (job.total_parts && job.total_parts > 1) setProgress({ done: job.done_parts ?? 0, total: job.total_parts });
+        if (job.status === "done" && job.audio_url) return job.audio_url;
+        if (job.status === "error") throw Object.assign(new Error(job.error ?? "failed"), { fromJob: true });
+      } catch (e) {
+        if (e instanceof Error && (e as Error & { fromJob?: boolean }).fromJob) throw e;
+        outageSince ??= Date.now();
+        setNotice("Reconnecting to the server…");
+        if (Date.now() - outageSince > maxOutageMs) {
+          throw new Error("The connection to the server was lost. Please try again.");
+        }
+      }
+    }
+  }, []);
+
   const handleGenerate = useCallback(async () => {
     if (!text.trim()) return;
-    setGenerating(true); setTtsError(""); setAudioUrl(null);
+    setGenerating(true); setTtsError(""); setAudioUrl(null); setProgress(null); setNotice("");
     setEvalResult(null); setEvalError("");
     try {
       const voice = voices.find((v) => v.id === selectedVoice);
-      const { job_id } = await startTtsJob({ text, voice_id: selectedVoice });
-
-      // Poll every 2 s, up to 120 s total
-      for (let i = 0; i < 60; i++) {
-        await new Promise((r) => setTimeout(r, 2000));
-        const job = await pollTtsJob(job_id);
-
-        if (job.status === "done" && job.audio_url) {
-          const url = `${API_BASE_URL}${job.audio_url}`;
-          setAudioUrl(url);
-          if (getAuthToken()) {
-            getTtsHistory().then(setHistory).catch(() => {});
-          } else {
-            const entry: TtsHistoryItem = {
-              id: Date.now(),
-              audio_url: url,
-              voice_id: selectedVoice,
-              voice_label: voice?.label ?? selectedVoice,
-              text_preview: text.trim().slice(0, 200),
-              created_at: new Date().toISOString(),
-            };
-            setHistory((prev) => {
-              const next = [entry, ...prev].slice(0, MAX_HISTORY);
-              saveGuestHistory(next);
-              return next;
-            });
+      let audioPath: string | null = null;
+      for (let attempt = 0; attempt < 2 && !audioPath; attempt++) {
+        const { job_id, total_parts } = await startTtsJob({ text, voice_id: selectedVoice });
+        try {
+          audioPath = await waitForJob(job_id, total_parts ?? 1);
+        } catch (e) {
+          const interrupted = e instanceof Error && e.message === "interrupted";
+          if (!interrupted || attempt === 1) {
+            throw interrupted ? new Error("The server restarted while generating. Please try again.") : e;
           }
-          return;
-        }
-
-        if (job.status === "error") {
-          throw new Error("Audio generation failed. Please try again.");
+          setProgress(null);
+          setNotice("The server restarted. Starting again…");
         }
       }
-      throw new Error("Generation is taking too long. Try with shorter text.");
+      if (!audioPath) throw new Error("Generation failed. Please try again.");
+      const url = `${API_BASE_URL}${audioPath}`;
+      setAudioUrl(url);
+      if (getAuthToken()) {
+        getTtsHistory().then(setHistory).catch(() => {});
+      } else {
+        const entry: TtsHistoryItem = {
+          id: Date.now(),
+          audio_url: url,
+          voice_id: selectedVoice,
+          voice_label: voice?.label ?? selectedVoice,
+          text_preview: text.trim().slice(0, 200),
+          created_at: new Date().toISOString(),
+        };
+        setHistory((prev) => {
+          const next = [entry, ...prev].slice(0, MAX_HISTORY);
+          saveGuestHistory(next);
+          return next;
+        });
+      }
     } catch (e: unknown) {
       setTtsError(e instanceof Error ? e.message : "Generation failed. Please try again.");
-    } finally { setGenerating(false); }
-  }, [text, selectedVoice, voices]);
+    } finally { setGenerating(false); setProgress(null); setNotice(""); }
+  }, [text, selectedVoice, voices, waitForJob]);
 
   const handleDownload = useCallback(async (url: string, voiceId: string) => {
     setDownloadError("");
     try {
-      const r = await fetch(url);
-      if (r.status === 404) throw new Error("This audio file has expired. Generate it again to download it.");
-      if (!r.ok) throw new Error("The download failed. Please try again.");
-      const blob = await r.blob();
-      if (!blob.type.startsWith("audio/")) throw new Error("This audio file has expired. Generate it again to download it.");
-      const objectUrl = URL.createObjectURL(blob);
+      const head = await fetch(url, { method: "HEAD" });
+      if (head.status === 404) throw new Error("This audio file is no longer available. Generate it again to download it.");
+      if (!head.ok) throw new Error("The download failed. Please try again.");
       const a = document.createElement("a");
-      a.href = objectUrl;
-      a.download = `tts_${voiceId}_${Date.now()}.${extensionForMime(blob.type)}`;
+      a.href = `${url}${url.includes("?") ? "&" : "?"}download=1`;
+      a.download = `tts_${voiceId}_${Date.now()}`;
+      a.rel = "noopener";
+      document.body.appendChild(a);
       a.click();
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
+      a.remove();
     } catch (e: unknown) {
       setDownloadError(
         e instanceof TypeError
@@ -398,6 +384,10 @@ export default function TtsPage() {
   // --- Evaluation ---
   const handleEvaluate = useCallback(async () => {
     if (!recordBlob || !text.trim()) return;
+    if (text.length > EVAL_MAX_CHARS) {
+      setEvalError(`Pronunciation evaluation works on up to ${EVAL_MAX_CHARS.toLocaleString()} characters. Shorten the text to the passage you read.`);
+      return;
+    }
     setEvaluating(true); setEvalError(""); setEvalResult(null);
     setEvalUserText(""); setEvalFeedback(""); setEvalNotice("");
     let feedback = "";
@@ -417,7 +407,8 @@ export default function TtsPage() {
   const scoreLabel = overallScore === null ? "" : overallScore >= 8 ? "Excellent" : overallScore >= 6 ? "Good" : overallScore >= 4 ? "Fair" : "Needs work";
   const scoreLabelColor = overallScore === null ? "" : overallScore >= 8 ? "text-emerald-600" : overallScore >= 6 ? "text-amber-600" : "text-red-600";
 
-  const wc = wordCount(text);
+  const chars = text.length;
+  const nearLimit = chars > MAX_CHARS * 0.9;
 
   return (
     <TcfAppShell
@@ -564,17 +555,22 @@ export default function TtsPage() {
               <textarea
                 value={text}
                 onChange={(e) => {
-                  const val = e.target.value.slice(0, MAX_CHARS);
-                  const ws = val.trim() === "" ? [] : val.trim().split(/\s+/);
-                  setText(ws.length > MAX_WORDS ? ws.slice(0, MAX_WORDS).join(" ") : val);
+                  const val = e.target.value;
+                  setTrimmed(val.length > MAX_CHARS);
+                  setText(val.slice(0, MAX_CHARS));
                 }}
                 placeholder={inputMode === "type" ? currentLanguage.placeholder : "Transcript will appear here after recording…"}
                 rows={5}
                 className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
               />
-              <p className={`text-right text-xs ${wc > MAX_WORDS * 0.9 ? "text-amber-500" : "text-slate-400"}`}>
-                {wc} / {MAX_WORDS} words
+              <p className={`text-right text-xs ${chars >= MAX_CHARS ? "text-red-500" : nearLimit ? "text-amber-500" : "text-slate-400"}`}>
+                {chars.toLocaleString()} / {MAX_CHARS.toLocaleString()} characters
               </p>
+              {trimmed && (
+                <p className="text-right text-xs text-amber-600">
+                  The text was longer than {MAX_CHARS.toLocaleString()} characters and has been shortened.
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -583,8 +579,26 @@ export default function TtsPage() {
         <button onClick={handleGenerate} disabled={!text.trim() || generating || voices.length === 0}
           className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold flex items-center justify-center gap-2 transition-colors shadow-sm">
           {generating ? <Loader2 className="h-5 w-5 animate-spin" /> : <Volume2 className="h-5 w-5" />}
-          {generating ? "Generating…" : "Generate Audio"}
+          {generating
+            ? progress && progress.total > 1
+              ? `Generating part ${Math.min(progress.done + 1, progress.total)} of ${progress.total}…`
+              : "Generating…"
+            : "Generate Audio"}
         </button>
+
+        {generating && notice && (
+          <p className="text-xs text-amber-600 flex items-center gap-1.5">
+            <Loader2 className="h-3 w-3 animate-spin" /> {notice}
+          </p>
+        )}
+        {generating && progress && progress.total > 1 && (
+          <div className="h-1.5 w-full rounded-full bg-slate-200 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-emerald-500 transition-all"
+              style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }}
+            />
+          </div>
+        )}
 
         {ttsError && (
           <div className="flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 p-3 text-red-600 text-sm">

@@ -1,5 +1,4 @@
 import logging
-import threading
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,24 +9,14 @@ from database import SessionLocal, get_db
 from guest import is_guest
 from models import TtsAudioHistory, User
 from schemas import TtsGenerateRequest, TtsHistoryItem, TtsVoice
-from tts_service import generate_tts_audio, get_voice, list_active_voices, list_languages
+import tts_jobs
+from tts_service import (
+    MAX_LONG_TEXT_LENGTH, generate_tts_audio, get_voice, list_active_voices, list_languages,
+    split_for_speech,
+)
 
 logger = logging.getLogger("tts_routes")
 router = APIRouter(prefix="/api/tts", tags=["tts"])
-
-# ---------------------------------------------------------------------------
-# In-process job cache (single Render dyno → works fine)
-# ---------------------------------------------------------------------------
-_lock = threading.Lock()
-_jobs: dict[str, dict] = {}  # job_id → {status, audio_url, error}
-_MAX_JOBS = 500
-
-
-def _evict() -> None:
-    if len(_jobs) > _MAX_JOBS:
-        for k in list(_jobs.keys())[: _MAX_JOBS // 2]:
-            _jobs.pop(k, None)
-
 
 # ---------------------------------------------------------------------------
 # Endpoints
@@ -50,27 +39,31 @@ def post_generate_tts(
     payload: TtsGenerateRequest,
     user: User = Depends(get_optional_user),
 ) -> dict:
-    """Start generation in a background thread; return job_id immediately."""
+    """Start generation in the background and return a job_id at once; poll /job/{job_id} for progress."""
     try:
         voice = get_voice(payload.voice_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Cette voix n'est pas disponible.") from exc
-    if not payload.text.strip():
+    text = payload.text.strip()
+    if not text:
         raise HTTPException(status_code=400, detail="Le texte est vide.")
+    if len(text) > MAX_LONG_TEXT_LENGTH:
+        raise HTTPException(status_code=400, detail=f"The text is longer than {MAX_LONG_TEXT_LENGTH:,} characters.")
+
     job_id = str(uuid4())
-    with _lock:
-        _evict()
-        _jobs[job_id] = {"status": "pending", "audio_url": None, "error": None}
+    total_parts = max(1, len(split_for_speech(text)))
+    tts_jobs.create(job_id, total_parts, len(text))
 
     # Guests share one demo account: their history lives in the browser, not the database.
     user_id = None if is_guest(user) else user.id
 
+    def _progress(done: int, total: int) -> None:
+        tts_jobs.update(job_id, done_parts=min(done, total), total_parts=total)
+
     def _run() -> None:
         try:
-            audio_url = generate_tts_audio(payload.text, payload.voice_id)
-            with _lock:
-                _jobs[job_id]["audio_url"] = audio_url
-                _jobs[job_id]["status"] = "done"
+            audio_url = generate_tts_audio(text, payload.voice_id, _progress)
+            tts_jobs.update(job_id, audio_url=audio_url, status="done", done_parts=total_parts)
 
             if user_id is not None:
                 session = SessionLocal()
@@ -80,7 +73,7 @@ def post_generate_tts(
                         audio_url=audio_url,
                         voice_id=payload.voice_id,
                         voice_label=voice["label"],
-                        text_preview=payload.text.strip()[:200],
+                        text_preview=text[:200],
                     ))
                     session.commit()
                 except Exception as exc:
@@ -91,25 +84,25 @@ def post_generate_tts(
 
         except Exception as exc:
             logger.error("TTS job %s failed: %s", job_id, exc)
-            with _lock:
-                _jobs[job_id]["status"] = "error"
-                _jobs[job_id]["error"] = "La génération audio a échoué. Réessayez."
+            tts_jobs.update(job_id, status="error", error="The audio could not be generated. Please try again.")
 
     import limits
     try:
-        limits.submit(_run)
+        if total_parts > 1:
+            tts_jobs.submit_long(_run)
+        else:
+            limits.submit(_run)
+    except tts_jobs.LongBusy:
+        tts_jobs.update(job_id, status="error", error="Another long recording is being made. Please try again in a minute.")
     except limits.Busy:
-        with _lock:
-            _jobs[job_id]["status"] = "error"
-            _jobs[job_id]["error"] = "Audio is busy right now. Please try again."
-    return {"job_id": job_id, "status": "pending"}
+        tts_jobs.update(job_id, status="error", error="Audio is busy right now. Please try again.")
+    return {"job_id": job_id, "status": "pending", "total_parts": total_parts}
 
 
 @router.get("/job/{job_id}")
-async def get_tts_job(job_id: str) -> dict:
-    """Poll job status. Returns {status, audio_url, error}."""
-    with _lock:
-        job = _jobs.get(job_id)
+def get_tts_job(job_id: str) -> dict:
+    """Poll job status. Returns {status, audio_url, error, total_parts, done_parts}."""
+    job = tts_jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found or expired.")
     return job

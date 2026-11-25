@@ -29,6 +29,14 @@ export interface TtsJobResponse {
   status: "pending" | "done" | "error";
   audio_url: string | null;
   error: string | null;
+  total_parts?: number;
+  done_parts?: number;
+}
+
+export interface TtsJobStart {
+  job_id: string;
+  status: string;
+  total_parts?: number;
 }
 
 export interface TtsLanguage {

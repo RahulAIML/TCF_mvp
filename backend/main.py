@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import HTTPException
 from fastapi.responses import Response
@@ -34,15 +34,29 @@ AUDIO_DIR = Path(__file__).resolve().parent / "data" / "audio"
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
 
-@app.get("/audio/{file_name}")
-def serve_audio(file_name: str) -> Response:
-  """Serve a stored recording. If this instance's disk lost the file, the database copy is used."""
+@app.api_route("/audio/{file_name}", methods=["GET", "HEAD"])
+def serve_audio(file_name: str, request: Request, download: int = 0) -> Response:
+  """Serve a stored recording. If this instance's disk lost the file, the database copy is used.
+
+  HEAD answers whether the file exists without reading it; `?download=1` makes the browser save it.
+  """
   import audio_store
-  loaded = audio_store.load(file_name)
+  missing = HTTPException(status_code=404, detail="This audio is no longer on the server. Please generate it again.")
+  clean = audio_store.safe_name(file_name)
+  if clean is None:
+    raise missing
+  if request.method == "HEAD":
+    if not audio_store.available(clean):
+      raise missing
+    return Response(status_code=200, media_type=audio_store._mime_for(clean), headers={"Cache-Control": "no-store"})
+  loaded = audio_store.load(clean)
   if loaded is None:
-    raise HTTPException(status_code=404, detail="This audio is no longer on the server. Please generate it again.")
+    raise missing
   data, mime = loaded
-  return Response(content=data, media_type=mime, headers={"Cache-Control": "public, max-age=86400"})
+  headers = {"Cache-Control": "public, max-age=86400"}
+  if download:
+    headers["Content-Disposition"] = f'attachment; filename="{clean}"'
+  return Response(content=data, media_type=mime, headers=headers)
 
 configured_origins = [
   origin.strip()
